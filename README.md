@@ -37,7 +37,7 @@ npx opencode-adapter codex
 npx opencode-adapter codex --model gpt-5.6-luna
 ```
 
-The launcher injects `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1`, `OPENAI_API_KEY` with a temporary local token, and `OPENAI_MODEL`. Codex currently requires a model backed by the Responses protocol, such as `gpt-5.6-luna`; DeepSeek Chat Completions models remain available to Claude Code.
+The launcher injects `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1`, `OPENAI_API_KEY` with a temporary local token, and `OPENAI_MODEL`. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.
 
 ## Installation
 

@@ -4,6 +4,33 @@ function event(response: ServerResponse, type: string, data: unknown) {
   response.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+export async function pipeChatStreamToResponses(upstream: Response, response: ServerResponse, model: string) {
+  response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+  const id = `resp_${crypto.randomUUID()}`; let text = ""; let inputTokens = 0; let outputTokens = 0; const calls = new Map<number, { id: string; name: string; arguments: string }>();
+  event(response, "response.created", { type: "response.created", response: { id, object: "response", status: "in_progress", model, output: [] } });
+  const reader = upstream.body?.getReader(); if (!reader) throw new Error("Upstream returned no stream");
+  const decoder = new TextDecoder(); let buffer = "";
+  const consume = (line: string) => {
+    if (!line.startsWith("data:")) return; const value = line.slice(5).trim(); if (!value || value === "[DONE]") return;
+    try {
+      const item = JSON.parse(value); const choice = item.choices?.[0]; const delta = choice?.delta?.content;
+      if (typeof delta === "string" && delta) { text += delta; event(response, "response.output_text.delta", { type: "response.output_text.delta", item_id: id, output_index: 0, content_index: 0, delta }); }
+      for (const tool of choice?.delta?.tool_calls ?? []) {
+        const index = tool.index ?? 0; const call = calls.get(index) ?? { id: tool.id ?? `call_${index}`, name: tool.function?.name ?? "", arguments: "" }; calls.set(index, call);
+        if (tool.id || tool.function?.name) event(response, "response.output_item.added", { type: "response.output_item.added", output_index: index, item: { type: "function_call", call_id: call.id, name: call.name, arguments: "" } });
+        if (tool.function?.arguments) { call.arguments += tool.function.arguments; event(response, "response.function_call_arguments.delta", { type: "response.function_call_arguments.delta", call_id: call.id, delta: tool.function.arguments }); }
+      }
+      if (item.usage) { inputTokens = item.usage.prompt_tokens ?? inputTokens; outputTokens = item.usage.completion_tokens ?? outputTokens; }
+    } catch { /* Ignore incomplete provider events. */ }
+  };
+  while (true) { const { done, value } = await reader.read(); buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done }); const lines = buffer.split(/\r?\n/); buffer = lines.pop() ?? ""; lines.forEach(consume); if (done) break; }
+  if (text) event(response, "response.output_text.done", { type: "response.output_text.done", item_id: id, output_index: 0, content_index: 0, text });
+  const output: any[] = text ? [{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }] : [];
+  for (const call of calls.values()) { event(response, "response.function_call_arguments.done", { type: "response.function_call_arguments.done", call_id: call.id, arguments: call.arguments }); output.push({ type: "function_call", call_id: call.id, name: call.name, arguments: call.arguments, status: "completed" }); }
+  event(response, "response.completed", { type: "response.completed", response: { id, object: "response", status: "completed", model, output, usage: { input_tokens: inputTokens, output_tokens: outputTokens } } });
+  response.write("data: [DONE]\n\n"); response.end();
+}
+
 export async function pipeResponsesStream(upstream: Response, response: ServerResponse, model: string) {
   response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
   const id = `msg_${crypto.randomUUID()}`;
