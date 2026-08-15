@@ -6,7 +6,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Run Claude Code with OpenCode Go models through a local Anthropic-compatible adapter. The adapter translates Anthropic Messages API requests to the upstream Responses API or Chat Completions API, injects temporary credentials into the child process, and cleans up the local server when the child exits.
+Run Claude Code or Codex with OpenCode Go models through a local API adapter. Claude Code uses the local Anthropic-compatible Messages API; Codex uses the local OpenAI-compatible Responses API. The adapter translates requests to the upstream API, injects temporary credentials into the child process, and cleans up the local server when the child exits.
 
 > **Status:** Early-stage release. The protocol conversion layer and test suite are available, but real upstream API compatibility should be validated with your OpenCode Go account before production use.
 
@@ -17,6 +17,7 @@ Requirements:
 - Node.js 20 or newer
 - An OpenCode Go API key
 - Claude Code installed and available as `claude` on `PATH`
+- Codex installed and available as `codex` on `PATH` when using Codex
 
 ```bash
 export OPENCODE_GO_API_KEY="your-api-key"
@@ -26,6 +27,17 @@ npx opencode-adapter claude
 The command starts a loopback-only adapter, waits for it to listen, launches Claude Code with temporary `ANTHROPIC_*` variables, forwards the terminal streams, and shuts the adapter down after Claude Code exits.
 
 The real OpenCode Go key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
+
+## Codex
+
+Start Codex with an OpenAI-compatible local Responses endpoint:
+
+```bash
+npx opencode-adapter codex
+npx opencode-adapter codex --model gpt-5.6-luna
+```
+
+The launcher injects `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1`, `OPENAI_API_KEY` with a temporary local token, and `OPENAI_MODEL`. Codex currently requires a model backed by the Responses protocol, such as `gpt-5.6-luna`; DeepSeek Chat Completions models remain available to Claude Code.
 
 ## Installation
 
@@ -54,6 +66,14 @@ opencode-adapter claude --model deepseek-v4-flash
 opencode-adapter claude --port 9000 --host 127.0.0.1
 ```
 
+### `codex`
+
+Start the adapter and Codex together. Codex receives OpenAI-compatible environment variables:
+
+```bash
+opencode-adapter codex
+```
+
 ### `proxy`
 
 Start only the local adapter. Press `Ctrl+C` to stop it:
@@ -62,7 +82,7 @@ Start only the local adapter. Press `Ctrl+C` to stop it:
 opencode-adapter proxy
 ```
 
-The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`, `GET /v1/models`, and `POST /v1/messages`.
+The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`, `GET /v1/models`, `POST /v1/messages`, and `POST /v1/responses`.
 
 ### `exec`
 
@@ -171,7 +191,7 @@ The test suite covers request/response conversion, system instructions, streamin
 
 ## CI and Publishing
 
-GitHub Actions runs the build, tests, and package dry-run for every push and pull request against `main`. Publishing is configured in `.github/workflows/publish.yml`:
+GitHub Actions runs the build, tests, and package dry-run for every push and pull request against `main`. Release Please is configured in `.github/workflows/release-please.yml` and creates a release PR from conventional commits. Publishing is configured in `.github/workflows/publish.yml`:
 
 1. Add an `NPM_TOKEN` secret to the `npm` GitHub environment.
 2. Push a tag matching `v*.*.*`, or manually run **Publish package**.

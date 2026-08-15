@@ -23,6 +23,20 @@ export async function startAdapter(config: Config): Promise<Adapter> {
   const server = createServer(async (request, response) => {
     if (request.url === "/health" && request.method === "GET") return json(response, 200, { status: "ok" });
     if (request.url === "/v1/models" && request.method === "GET") return json(response, 200, { data: [{ id: config.model, object: "model" }] });
+    if (request.url === "/v1/responses" && request.method === "POST") {
+      if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
+      try {
+        const input = JSON.parse(await body(request));
+        const model = input.model ?? config.model;
+        const provider = providerFor(model);
+        if (provider.protocol !== "responses") return json(response, 400, { error: { message: `Model "${model}" is not available through the Codex Responses API.`, type: "invalid_request_error" } });
+        const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ ...input, model }) });
+        const contentType = upstream.headers.get("content-type") ?? "application/json";
+        response.writeHead(upstream.status, { "content-type": contentType });
+        if (upstream.body) { for await (const chunk of upstream.body as any) response.write(chunk); }
+        return response.end();
+      } catch (error) { return json(response, 400, { error: { message: error instanceof Error ? error.message : "Invalid request", type: "invalid_request_error" } }); }
+    }
     if (request.url !== "/v1/messages" || request.method !== "POST") return json(response, 404, { error: { message: "Not found", type: "not_found" } });
     if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
     try {

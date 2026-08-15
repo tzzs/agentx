@@ -8,10 +8,10 @@ function options(args: string[]) { const out: Record<string, string | undefined>
 async function main() {
   const [command = "help", ...args] = process.argv.slice(2);
   if (command === "version") return console.log("0.1.0");
-  if (command === "help") return console.log("Usage: opencode-adapter <claude|proxy|exec|doctor> [options]");
+  if (command === "help") return console.log("Usage: opencode-adapter <claude|codex|proxy|exec|doctor> [options]");
   if (command === "doctor") {
     const config = loadConfig(options(args)); const wsl = Boolean(process.env.WSL_INTEROP);
-    console.log(`OpenCode Adapter Doctor\nNode.js        ${process.version}\nPlatform       ${wsl ? "WSL" : process.platform}\nArchitecture   ${process.arch}\nAPI key        ${config.apiKey ? "found" : "missing"}\nModels         ${providers.map((item) => item.model).join(", ")}\nClaude Code    ${await executableExists("claude") ? "found" : "not found"}`);
+    console.log(`OpenCode Adapter Doctor\nNode.js        ${process.version}\nPlatform       ${wsl ? "WSL" : process.platform}\nArchitecture   ${process.arch}\nAPI key        ${config.apiKey ? "found" : "missing"}\nModels         ${providers.map((item) => item.model).join(", ")}\nClaude Code    ${await executableExists("claude") ? "found" : "not found"}\nCodex          ${await executableExists("codex") ? "found" : "not found"}`);
     if (!config.apiKey) { console.log("\nSet OPENCODE_GO_API_KEY before starting the adapter."); process.exitCode = 1; }
     return;
   }
@@ -20,9 +20,10 @@ async function main() {
   if (config.host !== "127.0.0.1" && config.host !== "localhost") console.error("Warning: Adapter will be accessible from the network.");
   if (command === "proxy") { console.error("Press Ctrl+C to stop."); await new Promise<void>((resolve) => { const close = async () => { await adapter.close(); resolve(); }; process.once("SIGINT", close); process.once("SIGTERM", close); }); return; }
   const separator = args.indexOf("--"); const adapterFlags = new Set(["--model", "--port", "--host", "--api-key", "--verbose"]); const commandArgs = separator >= 0 ? args.slice(separator + 1) : command === "claude" ? args.filter((arg, index) => !adapterFlags.has(arg) && !adapterFlags.has(args[index - 1] ?? "")) : [];
-  const executable = command === "claude" ? "claude" : command === "exec" ? commandArgs.shift() : undefined;
+  const executable = command === "claude" ? "claude" : command === "codex" ? "codex" : command === "exec" ? commandArgs.shift() : undefined;
   if (!executable) throw new Error("Usage: opencode-adapter exec [options] -- <command>");
-  try { process.exitCode = await runCommand(executable, commandArgs, config, adapter); } finally { await adapter.close(); }
+  const client = command === "codex" || executable === "codex" ? "openai" : "anthropic";
+  try { process.exitCode = await runCommand(executable, commandArgs, config, adapter, client); } finally { await adapter.close(); }
 }
 async function executableExists(command: string) { try { const child = (await import("node:child_process")).spawn(command, ["--version"], { stdio: "ignore", shell: process.platform === "win32" }); return await new Promise<boolean>((resolve) => { child.once("error", () => resolve(false)); child.once("exit", (code) => resolve(code === 0)); }); } catch { return false; } }
 main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });
