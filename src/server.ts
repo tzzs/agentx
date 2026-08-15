@@ -19,7 +19,9 @@ function json(response: ServerResponse, status: number, value: unknown) { respon
 
 export async function startAdapter(config: Config): Promise<Adapter> {
   if (!config.apiKey) throw new Error("OpenCode Go API key not found. Set OPENCODE_GO_API_KEY or use --api-key <key>.");
-  const token = randomBytes(32).toString("hex");
+  // Claude Code validates the key shape before sending a request. This is still
+  // a local-only random token and is never forwarded to the upstream provider.
+  const token = `sk-ant-api03-${randomBytes(32).toString("hex")}`;
   const server = createServer(async (request, response) => {
     if (request.url === "/health" && request.method === "GET") return json(response, 200, { status: "ok" });
     if (request.url === "/v1/models" && request.method === "GET") return json(response, 200, { data: [{ id: config.model, object: "model" }] });
