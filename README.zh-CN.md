@@ -6,7 +6,7 @@
 
 [English](README.md) | 简体中文
 
-通过本地 Anthropic 兼容适配器，让 Claude Code 使用 OpenCode Go 提供的模型。适配器负责将 Anthropic Messages API 请求转换为上游 Responses API 或 Chat Completions API 请求，为子进程注入临时认证信息，并在子进程退出后清理本地服务。
+通过本地 API 适配器，让 Claude Code 或 Codex 使用 OpenCode Go 提供的模型。Claude Code 使用本地 Anthropic 兼容 Messages API，Codex 使用本地 OpenAI 兼容 Responses API。适配器负责将请求转换为上游 API 请求，为子进程注入临时认证信息，并在子进程退出后清理本地服务。
 
 > **项目状态：** 当前为早期版本。项目包含协议转换层和自动化测试，但在生产使用前仍应使用自己的 OpenCode Go 账号验证真实上游 API 的兼容性。
 
@@ -17,6 +17,7 @@
 - Node.js 20 或更高版本
 - OpenCode Go API Key
 - 已安装且能在 `PATH` 中找到 `claude` 的 Claude Code
+- 使用 Codex 时，需要已安装且能在 `PATH` 中找到 `codex` 的 Codex
 
 ```bash
 export OPENCODE_GO_API_KEY="your-api-key"
@@ -26,6 +27,17 @@ npx opencode-adapter claude
 该命令会启动仅监听本机回环地址的适配器，等待服务就绪，然后使用临时 `ANTHROPIC_*` 环境变量启动 Claude Code，转发终端输入输出，并在 Claude Code 退出后关闭适配器。
 
 真实的 OpenCode Go Key 不会传给 Claude Code。Claude Code 每次只会收到一个随机生成的本地临时 Token。
+
+## Codex 支持
+
+使用本地 OpenAI 兼容 Responses API 启动 Codex：
+
+```bash
+npx opencode-adapter codex
+npx opencode-adapter codex --model gpt-5.6-luna
+```
+
+启动器会注入 `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1`、包含临时本地 Token 的 `OPENAI_API_KEY`，以及 `OPENAI_MODEL`。Codex 当前需要使用 Responses 协议的模型，例如 `gpt-5.6-luna`；DeepSeek Chat Completions 模型仍可供 Claude Code 使用。
 
 ## 安装
 
@@ -54,6 +66,14 @@ opencode-adapter claude --model deepseek-v4-flash
 opencode-adapter claude --port 9000 --host 127.0.0.1
 ```
 
+### `codex`
+
+同时启动适配器和 Codex。Codex 会收到 OpenAI 兼容环境变量：
+
+```bash
+opencode-adapter codex
+```
+
 ### `proxy`
 
 只启动本地适配器，按 `Ctrl+C` 停止：
@@ -62,7 +82,7 @@ opencode-adapter claude --port 9000 --host 127.0.0.1
 opencode-adapter proxy
 ```
 
-本地 API 地址为 `http://127.0.0.1:<port>`，提供 `GET /health`、`GET /v1/models` 和 `POST /v1/messages`。
+本地 API 地址为 `http://127.0.0.1:<port>`，提供 `GET /health`、`GET /v1/models`、`POST /v1/messages` 和 `POST /v1/responses`。
 
 ### `exec`
 
@@ -171,7 +191,7 @@ npm run build
 
 ## CI 与发布
 
-GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构建、测试和 npm 包内容检查。发布配置位于 `.github/workflows/publish.yml`：
+GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构建、测试和 npm 包内容检查。`.github/workflows/release-please.yml` 会根据 Conventional Commits 创建版本发布 PR。发布配置位于 `.github/workflows/publish.yml`：
 
 1. 在 GitHub 的 `npm` environment 中添加 `NPM_TOKEN` Secret。
 2. 推送匹配 `v*.*.*` 的版本标签，或手动运行 **Publish package** 工作流。
