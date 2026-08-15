@@ -17,7 +17,7 @@ export async function pipeResponsesStream(upstream: Response, response: ServerRe
     const value = line.slice(5).trim(); if (!value || value === "[DONE]") return;
     try {
       const item = JSON.parse(value); const delta = item.delta ?? item;
-      const text = delta?.text ?? (item.type === "response.output_text.delta" ? item.delta : undefined);
+      const text = delta?.text ?? (item.type === "response.output_text.delta" ? item.delta : undefined) ?? item.choices?.[0]?.delta?.content;
       if (typeof text === "string" && text) { outputTokens++; event(response, "content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }); }
       if (item.response?.usage) { inputTokens = item.response.usage.input_tokens ?? inputTokens; outputTokens = item.response.usage.output_tokens ?? outputTokens; }
     } catch { /* Ignore comments and incomplete provider events. */ }
