@@ -9,3 +9,7 @@ The adapter starts a local Anthropic Messages API, translates requests to OpenCo
 Set `OPENCODE_GO_API_KEY` before use. The adapter keeps the real key local and gives Claude Code a temporary local token. It supports streaming, tool calls, `claude`, `proxy`, `exec`, `doctor`, and `version` commands.
 
 Use `--model gpt-5.6-luna`, `--model deepseek-v4-pro`, `--model deepseek-v4-flash`, or `--model auto`. Configuration can be supplied with `OPENCODE_ADAPTER_HOST`, `OPENCODE_ADAPTER_PORT`, and `OPENCODE_ADAPTER_MODEL`, or the corresponding CLI flags. `doctor` reports platform, WSL, key, models, and Claude Code availability.
+
+## CI and Publishing
+
+GitHub Actions runs the build, test suite, and package dry-run on pushes to `main` and pull requests. To publish, add an `NPM_TOKEN` repository/environment secret and push a tag matching `v*.*.*`, or run the **Publish package** workflow manually. The workflow publishes to `https://registry.npmjs.org` with npm provenance.
