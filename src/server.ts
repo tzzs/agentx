@@ -24,7 +24,13 @@ export async function startAdapter(config: Config): Promise<Adapter> {
   const token = `sk-ant-api03-${randomBytes(32).toString("hex")}`;
   const server = createServer(async (request, response) => {
     if (request.url === "/health" && request.method === "GET") return json(response, 200, { status: "ok" });
-    if (request.url === "/v1/models" && request.method === "GET") return json(response, 200, { data: [{ id: config.model, object: "model" }] });
+    if (request.url === "/v1/models" && request.method === "GET") return json(response, 200, {
+      data: [
+        { id: config.model, object: "model" },
+        { id: "sonnet", object: "model" },
+        { id: "claude-sonnet-5", object: "model" }
+      ]
+    });
     if (request.url === "/v1/responses" && request.method === "POST") {
       if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
       try {
