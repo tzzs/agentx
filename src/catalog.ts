@@ -8,6 +8,11 @@ export const providers: ModelProvider[] = [
   { model: "deepseek-v4-flash", protocol: "chat-completions", endpoint: `${base}/chat/completions` }
 ];
 export function providerFor(model: string): ModelProvider { const provider = providers.find((item) => item.model === model); if (!provider) throw new Error(`Model "${model}" is not available. Available models: ${providers.map((item) => item.model).join(", ")}`); return provider; }
+export function selectModel(request: AnthropicRequest, configured: string): string {
+  if (configured !== "auto") return configured;
+  const size = JSON.stringify(request.messages).length;
+  return request.tools?.length || size > 10000 ? "gpt-5.6-luna" : size > 2000 ? "deepseek-v4-pro" : "deepseek-v4-flash";
+}
 export function toChatRequest(input: AnthropicRequest, model: string) {
   const messages = [...(input.system ? [{ role: "system", content: typeof input.system === "string" ? input.system : input.system.map((part) => part.text ?? "").join("\n") }] : []), ...input.messages];
   return { model, messages, ...(input.max_tokens === undefined ? {} : { max_tokens: input.max_tokens }), ...(input.stream ? { stream: true } : {}), ...(input.tools ? { tools: input.tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })) } : {}) };
