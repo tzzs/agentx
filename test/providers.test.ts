@@ -9,3 +9,7 @@ test("converts Responses response to Anthropic response", () => {
   const result = fromResponsesResponse({ id: "r1", output: [{ type: "message", content: [{ type: "output_text", text: "OK" }] }], usage: { input_tokens: 2, output_tokens: 1 } }, "gpt-5.6-luna");
   assert.deepEqual(result.content, [{ type: "text", text: "OK" }]); assert.equal(result.stop_reason, "end_turn");
 });
+test("converts Anthropic text blocks to Responses content blocks", () => {
+  const result = toResponsesRequest({ messages: [{ role: "user", content: [{ type: "text", text: "Hi" }] }] }, "gpt-5.6-luna") as any;
+  assert.deepEqual(result.input[0].content, [{ type: "input_text", text: "Hi" }]);
+});

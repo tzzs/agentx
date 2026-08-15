@@ -7,9 +7,10 @@ export interface AnthropicRequest {
   tools?: Array<{ name: string; description?: string; input_schema: unknown }>;
 }
 
-function convertContent(content: any): any {
+function convertContent(content: any, role: string): any {
   if (!Array.isArray(content)) return content;
   return content.map((part) => {
+    if (part.type === "text") return { type: role === "assistant" ? "output_text" : "input_text", text: part.text ?? "" };
     if (part.type === "tool_result") return { type: "function_call_output", call_id: part.tool_use_id, output: typeof part.content === "string" ? part.content : JSON.stringify(part.content) };
     if (part.type === "tool_use") return { type: "function_call", call_id: part.id, name: part.name, arguments: JSON.stringify(part.input ?? {}) };
     return part;
@@ -18,7 +19,7 @@ function convertContent(content: any): any {
 
 export function toResponsesRequest(input: AnthropicRequest, model: string): Record<string, unknown> {
   const body: Record<string, unknown> = {
-    model, input: input.messages.map((message) => ({ ...message, content: convertContent(message.content) })),
+    model, input: input.messages.map((message) => ({ ...message, content: convertContent(message.content, message.role) })),
     ...(input.max_tokens === undefined ? {} : { max_output_tokens: input.max_tokens }),
     ...(input.stream ? { stream: true } : {})
   };

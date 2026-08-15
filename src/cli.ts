@@ -23,7 +23,8 @@ async function main() {
   const executable = command === "claude" ? "claude" : command === "codex" ? "codex" : command === "exec" ? commandArgs.shift() : undefined;
   if (!executable) throw new Error("Usage: opencode-adapter exec [options] -- <command>");
   const client = command === "codex" || executable === "codex" ? "openai" : "anthropic";
-  try { process.exitCode = await runCommand(executable, commandArgs, config, adapter, client); } finally { await adapter.close(); }
+  const launchArgs = executable === "claude" && !commandArgs.includes("--bare") ? ["--bare", ...commandArgs] : commandArgs;
+  try { process.exitCode = await runCommand(executable, launchArgs, config, adapter, client); } finally { await adapter.close(); }
 }
 async function executableExists(command: string) { try { const child = (await import("node:child_process")).spawn(command, ["--version"], { stdio: "ignore", shell: process.platform === "win32" }); return await new Promise<boolean>((resolve) => { child.once("error", () => resolve(false)); child.once("exit", (code) => resolve(code === 0)); }); } catch { return false; } }
 main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

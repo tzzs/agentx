@@ -8,7 +8,9 @@ import { fromChatResponse, providerFor, selectModel, toChatRequest } from "./cat
 export interface Adapter { server: ReturnType<typeof createServer>; token: string; port: number; close(): Promise<void>; }
 
 function authorized(request: IncomingMessage, token: string): boolean {
-  const value = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+  const authorization = request.headers.authorization?.replace(/^Bearer\s+/i, "");
+  const apiKey = request.headers["x-api-key"];
+  const value = authorization ?? (Array.isArray(apiKey) ? apiKey[0] : apiKey) ?? "";
   const a = Buffer.from(value); const b = Buffer.from(token);
   return a.length === b.length && timingSafeEqual(a, b);
 }
@@ -16,6 +18,7 @@ function body(request: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => { let data = ""; request.setEncoding("utf8"); request.on("data", (chunk) => data += chunk); request.on("end", () => resolve(data)); request.on("error", reject); });
 }
 function json(response: ServerResponse, status: number, value: unknown) { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(value)); }
+function debug(config: Config, message: string) { if (config.logLevel === "debug") console.error(`[adapter] ${message}`); }
 
 export async function startAdapter(config: Config): Promise<Adapter> {
   if (!config.apiKey) throw new Error("OpenCode Go API key not found. Set OPENCODE_GO_API_KEY or use --api-key <key>.");
@@ -23,35 +26,42 @@ export async function startAdapter(config: Config): Promise<Adapter> {
   // a local-only random token and is never forwarded to the upstream provider.
   const token = `sk-ant-api03-${randomBytes(32).toString("hex")}`;
   const server = createServer(async (request, response) => {
-    if (request.url === "/health" && request.method === "GET") return json(response, 200, { status: "ok" });
-    if (request.url === "/v1/models" && request.method === "GET") return json(response, 200, {
+    debug(config, `${request.method} ${request.url}`);
+    const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+    if (pathname === "/health" && request.method === "GET") return json(response, 200, { status: "ok" });
+    if (pathname === "/api/hello" && (request.method === "HEAD" || request.method === "GET")) { response.writeHead(200); return response.end(); }
+    if (pathname === "/v1/models" && request.method === "GET") return json(response, 200, {
       data: [
         { id: config.model, object: "model" },
         { id: "sonnet", object: "model" },
         { id: "claude-sonnet-5", object: "model" }
       ]
     });
-    if (request.url === "/v1/responses" && request.method === "POST") {
+    if (pathname === "/v1/responses" && request.method === "POST") {
       if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
       try {
         const input = JSON.parse(await body(request));
         const model = input.model ?? config.model;
         const provider = providerFor(model);
+        debug(config, `POST /v1/responses model=${model}`);
         if (provider.protocol !== "responses") return json(response, 400, { error: { message: `Model "${model}" is not available through the Codex Responses API.`, type: "invalid_request_error" } });
         const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ ...input, model }) });
+        debug(config, `provider status=${upstream.status}`);
         const contentType = upstream.headers.get("content-type") ?? "application/json";
         response.writeHead(upstream.status, { "content-type": contentType });
         if (upstream.body) { for await (const chunk of upstream.body as any) response.write(chunk); }
         return response.end();
-      } catch (error) { return json(response, 400, { error: { message: error instanceof Error ? error.message : "Invalid request", type: "invalid_request_error" } }); }
+      } catch (error) { debug(config, `responses error=${error instanceof Error ? error.message : "unknown"}`); return json(response, 400, { error: { message: error instanceof Error ? error.message : "Invalid request", type: "invalid_request_error" } }); }
     }
-    if (request.url !== "/v1/messages" || request.method !== "POST") return json(response, 404, { error: { message: "Not found", type: "not_found" } });
+    if (pathname !== "/v1/messages" || request.method !== "POST") return json(response, 404, { error: { message: "Not found", type: "not_found" } });
     if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
     try {
       const input = JSON.parse(await body(request)) as AnthropicRequest;
       const model = selectModel(input, config.model); const provider = providerFor(model);
+      debug(config, `POST /v1/messages model=${model} stream=${Boolean(input.stream)}`);
       if (input.stream) {
         const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model)) });
+        debug(config, `provider status=${upstream.status}`);
         if (!upstream.ok) return json(response, upstream.status, { error: { message: `OpenCode Go returned HTTP ${upstream.status}`, type: "upstream_error" } });
         return pipeResponsesStream(upstream, response, input.model ?? "sonnet");
       }
@@ -59,9 +69,10 @@ export async function startAdapter(config: Config): Promise<Adapter> {
         method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
         body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model))
       });
+      debug(config, `provider status=${upstream.status}`);
       if (!upstream.ok) return json(response, upstream.status, { error: { message: `OpenCode Go returned HTTP ${upstream.status}`, type: "upstream_error" } });
       const value = await upstream.json(); return json(response, 200, provider.protocol === "responses" ? fromResponsesResponse(value, input.model ?? "sonnet") : fromChatResponse(value, input.model ?? "sonnet"));
-    } catch (error) { return json(response, 400, { error: { message: error instanceof Error ? error.message : "Invalid request", type: "invalid_request_error" } }); }
+    } catch (error) { debug(config, `messages error=${error instanceof Error ? error.message : "unknown"}`); return json(response, 400, { error: { message: error instanceof Error ? error.message : "Invalid request", type: "invalid_request_error" } }); }
   });
   let port = config.port;
   await new Promise<void>((resolve, reject) => {
