@@ -9,7 +9,8 @@ export interface AnthropicRequest {
 export function toResponsesRequest(input: AnthropicRequest, model: string): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model, input: input.messages,
-    ...(input.max_tokens === undefined ? {} : { max_output_tokens: input.max_tokens })
+    ...(input.max_tokens === undefined ? {} : { max_output_tokens: input.max_tokens }),
+    ...(input.stream ? { stream: true } : {})
   };
   if (input.system !== undefined) {
     body.instructions = typeof input.system === "string"

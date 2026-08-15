@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
 import { fromResponsesResponse, toResponsesRequest, type AnthropicRequest } from "./providers.js";
+import { pipeResponsesStream } from "./streaming.js";
 
 export interface Adapter { server: ReturnType<typeof createServer>; token: string; port: number; close(): Promise<void>; }
 
@@ -25,7 +26,11 @@ export async function startAdapter(config: Config): Promise<Adapter> {
     if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
     try {
       const input = JSON.parse(await body(request)) as AnthropicRequest;
-      if (input.stream) return json(response, 400, { error: { message: "Streaming is not available in Phase 1", type: "invalid_request_error" } });
+      if (input.stream) {
+        const upstream = await fetch("https://opencode.ai/zen/go/v1/responses", { method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" }, body: JSON.stringify(toResponsesRequest(input, config.model)) });
+        if (!upstream.ok) return json(response, upstream.status, { error: { message: `OpenCode Go returned HTTP ${upstream.status}`, type: "upstream_error" } });
+        return pipeResponsesStream(upstream, response, config.model);
+      }
       const upstream = await fetch("https://opencode.ai/zen/go/v1/responses", {
         method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
         body: JSON.stringify(toResponsesRequest(input, config.model))
