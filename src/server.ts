@@ -47,14 +47,14 @@ export async function startAdapter(config: Config): Promise<Adapter> {
       if (input.stream) {
         const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model)) });
         if (!upstream.ok) return json(response, upstream.status, { error: { message: `OpenCode Go returned HTTP ${upstream.status}`, type: "upstream_error" } });
-        return pipeResponsesStream(upstream, response, model);
+        return pipeResponsesStream(upstream, response, input.model ?? "sonnet");
       }
       const upstream = await fetch(provider.endpoint, {
         method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
         body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model))
       });
       if (!upstream.ok) return json(response, upstream.status, { error: { message: `OpenCode Go returned HTTP ${upstream.status}`, type: "upstream_error" } });
-      const value = await upstream.json(); return json(response, 200, provider.protocol === "responses" ? fromResponsesResponse(value, model) : fromChatResponse(value, model));
+      const value = await upstream.json(); return json(response, 200, provider.protocol === "responses" ? fromResponsesResponse(value, input.model ?? "sonnet") : fromChatResponse(value, input.model ?? "sonnet"));
     } catch (error) { return json(response, 400, { error: { message: error instanceof Error ? error.message : "Invalid request", type: "invalid_request_error" } }); }
   });
   let port = config.port;
