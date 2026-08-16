@@ -28,6 +28,12 @@ The command starts a loopback-only adapter, waits for it to listen, launches Cla
 
 The real OpenCode Go key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
 
+## Credentials and Profiles
+
+On first use, the model/provider selector identifies the upstream provider and the adapter asks for its API key if it is not already available. Credentials are resolved in this order: `--api-key`, the provider environment variable, the OS credential store, then a hidden interactive prompt.
+
+The optional `keytar` integration stores credentials in macOS Keychain, Windows Credential Manager, or Linux Secret Service. Non-secret provider profiles and model mappings are stored in `~/.config/opencode-adapter/profiles.json`; API keys are never written to that file. If a credential store is unavailable, the key is used for the current process only and a warning is shown.
+
 ## Providers
 
 The adapter has three layers: a client layer for Claude Code/Codex, protocol adapters for Anthropic Messages and OpenAI Responses/Chat Completions, and a provider layer for upstream platforms.

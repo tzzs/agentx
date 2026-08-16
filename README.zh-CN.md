@@ -28,6 +28,12 @@ npx opencode-adapter claude
 
 真实的 OpenCode Go Key 不会传给 Claude Code。Claude Code 每次只会收到一个随机生成的本地临时 Token。
 
+## 凭据与 Provider Profile
+
+首次使用时，模型/Provider 选择菜单会确定上游平台；如果该平台没有可用 API Key，适配器会隐藏输入 Key。凭据查找优先级为：`--api-key`、Provider 环境变量、系统凭据存储、交互式输入。
+
+可选的 `keytar` 集成会将凭据保存到 macOS Keychain、Windows Credential Manager 或 Linux Secret Service。非敏感的 Provider Profile 和模型映射保存在 `~/.config/opencode-adapter/profiles.json`，API Key 不会写入该文件。如果系统凭据存储不可用，Key 只在当前进程中使用，并显示警告。
+
 ## Provider 架构
 
 适配器分为三层：面向 Claude Code/Codex 的客户端层、负责 Anthropic Messages 与 OpenAI Responses/Chat Completions 的协议适配层，以及负责上游平台接入的 Provider 层。
