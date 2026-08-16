@@ -69,7 +69,7 @@ export async function startAdapter(config: Config): Promise<Adapter> {
         const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model)) });
         debug(config, `provider status=${upstream.status}`);
         if (!upstream.ok) return upstreamError(response, upstream, upstream.status);
-        return pipeResponsesStream(upstream, response, input.model ?? "sonnet");
+        return pipeResponsesStream(upstream, response, model);
       }
       const upstream = await fetch(provider.endpoint, {
         method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
@@ -77,7 +77,7 @@ export async function startAdapter(config: Config): Promise<Adapter> {
       });
       debug(config, `provider status=${upstream.status}`);
       if (!upstream.ok) return upstreamError(response, upstream, upstream.status);
-      const value = await upstream.json(); return json(response, 200, provider.protocol === "responses" ? fromResponsesResponse(value, input.model ?? "sonnet") : fromChatResponse(value, input.model ?? "sonnet"));
+      const value = await upstream.json(); return json(response, 200, provider.protocol === "responses" ? fromResponsesResponse(value, model) : fromChatResponse(value, model));
     } catch (error) { debug(config, `messages error=${error instanceof Error ? error.message : "unknown"}`); return json(response, 400, { error: { message: error instanceof Error ? error.message : "Invalid request", type: "invalid_request_error" } }); }
   });
   let port = config.port;

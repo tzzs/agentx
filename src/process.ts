@@ -6,7 +6,7 @@ export function clientEnvironment(config: Config, adapter: Adapter, client: "ant
   const baseUrl = `http://${config.host}:${adapter.port}`;
   return client === "openai"
     ? { ...process.env, OPENAI_BASE_URL: `${baseUrl}/v1`, OPENAI_API_KEY: adapter.token, OPENAI_MODEL: config.model }
-    : { ...process.env, OPENCODE_ADAPTER_MODEL: config.model, ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_API_KEY: adapter.token, ANTHROPIC_MODEL: "sonnet" };
+    : { ...process.env, OPENCODE_ADAPTER_MODEL: config.model, ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_API_KEY: adapter.token, ANTHROPIC_MODEL: config.model };
 }
 
 export async function runCommand(command: string, args: string[], config: Config, adapter: Adapter, client: "anthropic" | "openai" = "anthropic"): Promise<number> {
