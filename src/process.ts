@@ -4,9 +4,12 @@ import type { Config } from "./config.js";
 
 export function clientEnvironment(config: Config, adapter: Adapter, client: "anthropic" | "openai"): NodeJS.ProcessEnv {
   const baseUrl = `http://${config.host}:${adapter.port}`;
+  const inherited = { ...process.env };
+  delete inherited.ANTHROPIC_API_KEY;
+  delete inherited.ANTHROPIC_AUTH_TOKEN;
   return client === "openai"
-    ? { ...process.env, OPENAI_BASE_URL: `${baseUrl}/v1`, OPENAI_API_KEY: adapter.token, OPENAI_MODEL: config.model }
-    : { ...process.env, OPENCODE_ADAPTER_MODEL: config.model, ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_API_KEY: adapter.token, ANTHROPIC_MODEL: config.model };
+    ? { ...inherited, OPENAI_BASE_URL: `${baseUrl}/v1`, OPENAI_API_KEY: adapter.token, OPENAI_MODEL: config.model }
+    : { ...inherited, OPENCODE_ADAPTER_MODEL: config.model, ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: adapter.token, ANTHROPIC_MODEL: config.model, ANTHROPIC_DEFAULT_OPUS_MODEL: config.model, ANTHROPIC_DEFAULT_SONNET_MODEL: config.model, ANTHROPIC_DEFAULT_HAIKU_MODEL: config.model, CLAUDE_CODE_SUBAGENT_MODEL: config.model };
 }
 
 export async function runCommand(command: string, args: string[], config: Config, adapter: Adapter, client: "anthropic" | "openai" = "anthropic"): Promise<number> {

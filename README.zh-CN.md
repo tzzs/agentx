@@ -28,6 +28,8 @@ npx opencode-adapter claude
 
 真实的 OpenCode Go Key 不会传给 Claude Code。Claude Code 每次只会收到一个随机生成的本地临时 Token。
 
+对于 Claude Code，本地 Token 会注入为 `ANTHROPIC_AUTH_TOKEN`，而不是 `ANTHROPIC_API_KEY`。这与 DeepSeek 等 Provider 的接入方式一致，可以避免 Claude Code 弹出自定义 API Key 确认页面；上游真实 Key 始终只保留在 Adapter 中。
+
 如果启动 `claude` 或 `codex` 时没有指定 `--model`，且没有设置 `OPENCODE_ADAPTER_MODEL`，适配器会显示支持上下键操作的模型选择菜单。选中的上游模型会显示在启动横幅中，并通过 `OPENCODE_ADAPTER_MODEL` 注入子进程。非交互场景会自动使用目录中的默认模型。
 
 ## Codex 支持
