@@ -5,6 +5,8 @@ import { runCommand } from "./process.js";
 import { providers } from "./catalog.js";
 import { selectableProviders, selectModel } from "./ui.js";
 import { providerById } from "./providers/registry.js";
+import { resolveCredential } from "./credentials.js";
+import { saveProfile } from "./profiles.js";
 
 function options(args: string[]) { const out: Record<string, string | undefined> = {}; for (let i = 0; i < args.length; i++) { const key = args[i]; if (key?.startsWith("--")) out[key.slice(2)] = args[++i]; } return out; }
 async function main() {
@@ -20,7 +22,9 @@ async function main() {
   const opts = options(args);
   const clientCommand = command === "claude" || command === "codex" ? command : undefined;
   if (clientCommand && opts.model === undefined && !process.env.OPENCODE_ADAPTER_MODEL) { const selected = await selectModel(clientCommand, selectableProviders(clientCommand)); opts.model = selected.model; opts.provider = selected.provider; }
-  const config = loadConfig(opts); const adapter = await startAdapter(config);
+  const config = loadConfig(opts); const selectedProvider = providerById(config.provider ?? "opencode"); config.apiKey = await resolveCredential(selectedProvider, config.apiKey);
+  await saveProfile({ id: `${selectedProvider.id}/${config.model}`, provider: selectedProvider.id, model: config.model, displayName: `${selectedProvider.name} / ${config.model}`, clientModels: { claude: config.model, codex: config.model } });
+  const adapter = await startAdapter(config);
   console.error(`OpenCode Adapter\n✓ Client: ${command === "codex" ? "Codex" : command === "claude" ? "Claude Code" : "command"}\n✓ Provider: ${config.provider ?? "opencode"}\n✓ Adapter started on ${config.host}:${adapter.port}\n✓ Model: ${config.model}`);
   if (config.host !== "127.0.0.1" && config.host !== "localhost") console.error("Warning: Adapter will be accessible from the network.");
   if (command === "proxy") { console.error("Press Ctrl+C to stop."); await new Promise<void>((resolve) => { const close = async () => { await adapter.close(); resolve(); }; process.once("SIGINT", close); process.once("SIGTERM", close); }); return; }
