@@ -28,6 +28,8 @@ The command starts a loopback-only adapter, waits for it to listen, launches Cla
 
 The real OpenCode Go key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
 
+When `claude` or `codex` is started without `--model` and without `OPENCODE_ADAPTER_MODEL`, an interactive arrow-key model selector is shown. The selected upstream model is printed in the startup banner and is also exposed as `OPENCODE_ADAPTER_MODEL` to the child process. Non-interactive sessions select the first/default catalog model.
+
 ## Codex
 
 Start Codex with an OpenAI-compatible local Responses endpoint:

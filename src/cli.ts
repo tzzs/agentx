@@ -3,6 +3,7 @@ import { loadConfig } from "./config.js";
 import { startAdapter } from "./server.js";
 import { runCommand } from "./process.js";
 import { providers } from "./catalog.js";
+import { selectableProviders, selectModel } from "./ui.js";
 
 function options(args: string[]) { const out: Record<string, string | undefined> = {}; for (let i = 0; i < args.length; i++) { const key = args[i]; if (key?.startsWith("--")) out[key.slice(2)] = args[++i]; } return out; }
 async function main() {
@@ -15,8 +16,11 @@ async function main() {
     if (!config.apiKey) { console.log("\nSet OPENCODE_GO_API_KEY before starting the adapter."); process.exitCode = 1; }
     return;
   }
-  const opts = options(args); const config = loadConfig(opts); const adapter = await startAdapter(config);
-  console.error(`OpenCode Adapter\n✓ Adapter started on ${config.host}:${adapter.port}\n✓ Model: ${config.model}`);
+  const opts = options(args);
+  const clientCommand = command === "claude" || command === "codex" ? command : undefined;
+  if (clientCommand && opts.model === undefined && !process.env.OPENCODE_ADAPTER_MODEL) opts.model = await selectModel(clientCommand, selectableProviders(clientCommand));
+  const config = loadConfig(opts); const adapter = await startAdapter(config);
+  console.error(`OpenCode Adapter\n✓ Client: ${command === "codex" ? "Codex" : command === "claude" ? "Claude Code" : "command"}\n✓ Adapter started on ${config.host}:${adapter.port}\n✓ OpenCode model: ${config.model}`);
   if (config.host !== "127.0.0.1" && config.host !== "localhost") console.error("Warning: Adapter will be accessible from the network.");
   if (command === "proxy") { console.error("Press Ctrl+C to stop."); await new Promise<void>((resolve) => { const close = async () => { await adapter.close(); resolve(); }; process.once("SIGINT", close); process.once("SIGTERM", close); }); return; }
   const separator = args.indexOf("--"); const adapterFlags = new Set(["--model", "--port", "--host", "--api-key", "--verbose"]); const commandArgs = separator >= 0 ? args.slice(separator + 1) : command === "claude" ? args.filter((arg, index) => !adapterFlags.has(arg) && !adapterFlags.has(args[index - 1] ?? "")) : [];
