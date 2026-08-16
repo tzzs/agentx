@@ -6,7 +6,7 @@ export const providers: ModelProvider[] = [
   { model: "gpt-5.6-luna", protocol: "responses", endpoint: `${base}/responses` },
   { model: "deepseek-v4-pro", protocol: "chat-completions", endpoint: `${base}/chat/completions` },
   { model: "deepseek-v4-flash", protocol: "chat-completions", endpoint: `${base}/chat/completions` },
-  ...["minimax-m3", "minimax-m2.7", "minimax-m2.5", "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "kimi-k2.5", "glm-5.2", "glm-5.3", "glm-5.1", "glm-5", "qwen3.7-max", "qwen3.8-max", "qwen3.7-plus", "qwen3.6-plus", "qwen3.5-plus", "mimo-v2-pro", "mimo-v2-omni", "mimo-v2.5-pro", "mimo-v2.5", "hy3", "hy3-preview", "grok-4.5"].map((model) => ({ model, protocol: "chat-completions" as const, endpoint: `${base}/chat/completions` }))
+  ...["minimax-m3", "minimax-m2.7", "minimax-m2.5", "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "kimi-k2.5", "glm-5.2", "glm-5.3", "glm-5.1", "glm-5", "mimo-v2.5-pro", "mimo-v2.5", "hy3"].map((model) => ({ model, protocol: "chat-completions" as const, endpoint: `${base}/chat/completions` }))
 ];
 export function providerFor(model: string): ModelProvider { const provider = providers.find((item) => item.model === model); if (!provider) throw new Error(`Model "${model}" is not available. Available models: ${providers.map((item) => item.model).join(", ")}`); return provider; }
 export function selectModel(request: AnthropicRequest, configured: string): string {
