@@ -1,3 +1,4 @@
+import { emitKeypressEvents } from "node:readline";
 import { providers, type ModelProvider } from "./catalog.js";
 
 export function selectableProviders(client: "claude" | "codex"): ModelProvider[] {
@@ -26,6 +27,7 @@ export async function selectModel(client: "claude" | "codex", choices: ModelProv
       if (key.name === "return" || key.name === "enter") { const model = choices[selected].model; cleanup(); process.stdout.write("\x1b[2J\x1b[H"); resolve(model); return; }
       render();
     };
+    emitKeypressEvents(process.stdin);
     const cleanup = () => { process.stdin.off("keypress", onKeypress); if (process.stdin.isTTY) process.stdin.setRawMode(false); process.stdin.pause(); };
     process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.on("keypress", onKeypress); render();
   });
