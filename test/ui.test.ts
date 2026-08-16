@@ -9,5 +9,5 @@ test("offers the configured catalog to both clients", () => {
 });
 
 test("falls back to the first model in non-interactive mode", async () => {
-  assert.equal(await selectModel("claude", providers.slice(0, 2)), providers[0].model);
+  assert.equal((await selectModel("claude", providers.slice(0, 2))).model, providers[0].model);
 });

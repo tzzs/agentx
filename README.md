@@ -28,6 +28,27 @@ The command starts a loopback-only adapter, waits for it to listen, launches Cla
 
 The real OpenCode Go key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
 
+## Providers
+
+The adapter has three layers: a client layer for Claude Code/Codex, protocol adapters for Anthropic Messages and OpenAI Responses/Chat Completions, and a provider layer for upstream platforms.
+
+Supported upstream providers:
+
+| Provider | Credential | Example |
+| --- | --- | --- |
+| OpenCode Go | `OPENCODE_GO_API_KEY` | `gpt-5.6-luna` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
+| OpenRouter | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
+
+Choose a provider explicitly when model names overlap:
+
+```bash
+opencode-adapter claude --provider deepseek --model deepseek-v4-pro
+opencode-adapter codex --provider openrouter --model anthropic/claude-sonnet-4
+```
+
+The equivalent environment variable is `OPENCODE_ADAPTER_PROVIDER`. Provider credentials are only used by the adapter and are never injected into the client process.
+
 For Claude Code, the local token is injected as `ANTHROPIC_AUTH_TOKEN` rather than `ANTHROPIC_API_KEY`, matching provider integrations such as DeepSeek and avoiding Claude Code's custom API-key confirmation screen. The upstream key remains private to the adapter.
 
 When `claude` or `codex` is started without `--model` and without `OPENCODE_ADAPTER_MODEL`, an interactive arrow-key model selector is shown. The selected upstream model is printed in the startup banner and is also exposed as `OPENCODE_ADAPTER_MODEL` to the child process. Non-interactive sessions select the first/default catalog model.

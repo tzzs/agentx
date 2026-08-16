@@ -28,6 +28,27 @@ npx opencode-adapter claude
 
 真实的 OpenCode Go Key 不会传给 Claude Code。Claude Code 每次只会收到一个随机生成的本地临时 Token。
 
+## Provider 架构
+
+适配器分为三层：面向 Claude Code/Codex 的客户端层、负责 Anthropic Messages 与 OpenAI Responses/Chat Completions 的协议适配层，以及负责上游平台接入的 Provider 层。
+
+当前支持的上游 Provider：
+
+| Provider | 凭据 | 示例模型 |
+| --- | --- | --- |
+| OpenCode Go | `OPENCODE_GO_API_KEY` | `gpt-5.6-luna` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
+| OpenRouter | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
+
+当模型名可能重复时，可以显式选择 Provider：
+
+```bash
+opencode-adapter claude --provider deepseek --model deepseek-v4-pro
+opencode-adapter codex --provider openrouter --model anthropic/claude-sonnet-4
+```
+
+也可以使用环境变量 `OPENCODE_ADAPTER_PROVIDER`。Provider 凭据只由 Adapter 使用，不会注入客户端进程。
+
 对于 Claude Code，本地 Token 会注入为 `ANTHROPIC_AUTH_TOKEN`，而不是 `ANTHROPIC_API_KEY`。这与 DeepSeek 等 Provider 的接入方式一致，可以避免 Claude Code 弹出自定义 API Key 确认页面；上游真实 Key 始终只保留在 Adapter 中。
 
 如果启动 `claude` 或 `codex` 时没有指定 `--model`，且没有设置 `OPENCODE_ADAPTER_MODEL`，适配器会显示支持上下键操作的模型选择菜单。选中的上游模型会显示在启动横幅中，并通过 `OPENCODE_ADAPTER_MODEL` 注入子进程。非交互场景会自动使用目录中的默认模型。

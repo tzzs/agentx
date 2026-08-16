@@ -4,6 +4,7 @@ import type { Config } from "./config.js";
 import { fromResponsesResponse, toResponsesRequest, type AnthropicRequest } from "./providers.js";
 import { pipeChatStreamToResponses, pipeResponsesStream } from "./streaming.js";
 import { fromChatResponse, fromChatResponseToResponses, providerFor, selectModel, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
+import { apiKeyFor } from "./providers/registry.js";
 
 export interface Adapter { server: ReturnType<typeof createServer>; token: string; port: number; close(): Promise<void>; }
 
@@ -26,7 +27,8 @@ async function upstreamError(response: ServerResponse, upstream: Response, statu
 }
 
 export async function startAdapter(config: Config): Promise<Adapter> {
-  if (!config.apiKey) throw new Error("OpenCode Go API key not found. Set OPENCODE_GO_API_KEY or use --api-key <key>.");
+  const initialProvider = providerFor(config.model, config.provider); const initialApiKey = apiKeyFor(initialProvider, config.apiKey);
+  if (!initialApiKey) throw new Error(`API key not found for provider "${initialProvider.provider}". Set the provider API key environment variable or use --api-key <key>.`);
   // Claude Code validates the key shape before sending a request. This is still
   // a local-only random token and is never forwarded to the upstream provider.
   const token = `sk-ant-api03-${randomBytes(32).toString("hex")}`;
@@ -47,9 +49,9 @@ export async function startAdapter(config: Config): Promise<Adapter> {
       try {
         const input = JSON.parse(await body(request));
         const model = input.model ?? config.model;
-        const provider = providerFor(model);
+        const provider = providerFor(model, config.provider); const apiKey = apiKeyFor(provider, config.apiKey);
         debug(config, `POST /v1/responses model=${model}`);
-        const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model)) });
+        const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model)) });
         debug(config, `provider status=${upstream.status}`);
         if (input.stream && provider.protocol === "chat-completions") return pipeChatStreamToResponses(upstream, response, model);
         const contentType = upstream.headers.get("content-type") ?? "application/json";
@@ -63,16 +65,16 @@ export async function startAdapter(config: Config): Promise<Adapter> {
     if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
     try {
       const input = JSON.parse(await body(request)) as AnthropicRequest;
-      const model = selectModel(input, config.model); const provider = providerFor(model);
+      const model = selectModel(input, config.model); const provider = providerFor(model, config.provider); const apiKey = apiKeyFor(provider, config.apiKey);
       debug(config, `POST /v1/messages model=${model} stream=${Boolean(input.stream)}`);
       if (input.stream) {
-        const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model)) });
+        const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model)) });
         debug(config, `provider status=${upstream.status}`);
         if (!upstream.ok) return upstreamError(response, upstream, upstream.status);
         return pipeResponsesStream(upstream, response, model);
       }
       const upstream = await fetch(provider.endpoint, {
-        method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
+        method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
         body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model))
       });
       debug(config, `provider status=${upstream.status}`);
