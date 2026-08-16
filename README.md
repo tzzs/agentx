@@ -36,6 +36,15 @@ agentx auth status --provider deepseek
 agentx auth logout --provider deepseek
 ```
 
+Query provider quota where the upstream documents a quota endpoint:
+
+```bash
+agentx usage --provider deepseek
+agentx usage --provider openrouter
+```
+
+OpenCode Go currently reports an explicit unsupported result because it does not expose a documented public quota endpoint.
+
 The `pi` client is also supported through the OpenAI-compatible environment:
 
 ```bash

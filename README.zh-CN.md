@@ -36,6 +36,15 @@ agentx auth status --provider deepseek
 agentx auth logout --provider deepseek
 ```
 
+对于上游已公开额度接口的 Provider，可以查询额度：
+
+```bash
+agentx usage --provider deepseek
+agentx usage --provider openrouter
+```
+
+OpenCode Go 当前会返回明确的不支持结果，因为它没有公开、文档化的额度接口。
+
 同时支持通过 OpenAI 兼容环境启动 Pi Agent：
 
 ```bash

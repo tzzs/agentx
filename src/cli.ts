@@ -7,6 +7,7 @@ import { selectableProviders, selectModel } from "./ui.js";
 import { providerById } from "./providers/registry.js";
 import { credentialStoreAvailable, deleteCredential, promptAndSaveCredential, resolveCredential, storedCredential } from "./credentials.js";
 import { saveProfile } from "./profiles.js";
+import { queryProviderUsage, usageProvider } from "./usage.js";
 
 function options(args: string[]) { const out: Record<string, string | undefined> = {}; for (let i = 0; i < args.length; i++) { const key = args[i]; if (key?.startsWith("--")) out[key.slice(2)] = args[++i]; } return out; }
 async function main() {
@@ -19,6 +20,10 @@ if (command === "version") return console.log("1.0.0");
     if (action === "logout") { if (!(await deleteCredential(provider))) console.log("Secure credential storage is unavailable."); else console.log(`Removed credentials for ${provider.id}.`); return; }
     if (action === "status") { console.log(`Provider: ${provider.name}\nCredential store: ${credentialStoreAvailable() ? "available" : "unavailable"}\nCredential: ${(await storedCredential(provider)) ? "configured" : "missing"}`); return; }
     throw new Error("Usage: agentx auth <login|status|logout> --provider <provider>");
+  }
+  if (command === "usage") {
+    const provider = usageProvider(options(args).provider); const key = provider.id === "opencode" ? "" : await resolveCredential(provider);
+    const result = await queryProviderUsage(provider.id, key); console.log(JSON.stringify(result, null, 2)); if (!result.success && result.supported) process.exitCode = 1; return;
   }
   if (command === "doctor") {
     const config = loadConfig(options(args)); const wsl = Boolean(process.env.WSL_INTEROP); const provider = providerById(config.provider ?? "opencode"); const keyFound = Boolean(config.apiKey || process.env[provider.apiKeyEnv]);
