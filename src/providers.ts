@@ -19,7 +19,7 @@ function convertContent(content: any, role: string): any {
 
 export function toResponsesRequest(input: AnthropicRequest, model: string): Record<string, unknown> {
   const body: Record<string, unknown> = {
-    model, input: input.messages.map((message) => ({ ...message, content: convertContent(message.content, message.role) })),
+    model, input: toResponsesInput(input.messages),
     ...(input.max_tokens === undefined ? {} : { max_output_tokens: input.max_tokens }),
     ...(input.stream ? { stream: true } : {})
   };
@@ -30,6 +30,21 @@ export function toResponsesRequest(input: AnthropicRequest, model: string): Reco
       : input.system.map((part) => part.text ?? "").join("\n");
   }
   return body;
+}
+
+function toResponsesInput(messages: AnthropicMessage[]): any[] {
+  const output: any[] = [];
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) { output.push({ ...message, content: convertContent(message.content, message.role) }); continue; }
+    const textParts: any[] = [];
+    for (const part of message.content as any[]) {
+      if (part.type === "tool_use") { output.push({ type: "function_call", call_id: part.id, name: part.name, arguments: JSON.stringify(part.input ?? {}) }); continue; }
+      if (part.type === "tool_result") { output.push({ type: "function_call_output", call_id: part.tool_use_id, output: typeof part.content === "string" ? part.content : JSON.stringify(part.content ?? "") }); continue; }
+      const converted = convertContent([part], message.role)[0]; if (converted) textParts.push(converted);
+    }
+    if (textParts.length) output.push({ role: message.role, content: textParts });
+  }
+  return output;
 }
 
 export function fromResponsesResponse(response: any, model: string): Record<string, unknown> {

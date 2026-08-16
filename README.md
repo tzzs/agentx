@@ -28,6 +28,10 @@ The command starts a loopback-only adapter, waits for it to listen, launches Cla
 
 The real OpenCode Go key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
 
+For Claude Code, the local token is injected as `ANTHROPIC_AUTH_TOKEN` rather than `ANTHROPIC_API_KEY`, matching provider integrations such as DeepSeek and avoiding Claude Code's custom API-key confirmation screen. The upstream key remains private to the adapter.
+
+When `claude` or `codex` is started without `--model` and without `OPENCODE_ADAPTER_MODEL`, an interactive arrow-key model selector is shown. The selected upstream model is printed in the startup banner and is also exposed as `OPENCODE_ADAPTER_MODEL` to the child process. Non-interactive sessions select the first/default catalog model.
+
 ## Codex
 
 Start Codex with an OpenAI-compatible local Responses endpoint:

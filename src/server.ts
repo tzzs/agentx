@@ -19,6 +19,11 @@ function body(request: IncomingMessage): Promise<string> {
 }
 function json(response: ServerResponse, status: number, value: unknown) { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(value)); }
 function debug(config: Config, message: string) { if (config.logLevel === "debug") console.error(`[adapter] ${message}`); }
+async function upstreamError(response: ServerResponse, upstream: Response, status: number) {
+  let message = `OpenCode Go returned HTTP ${status}`;
+  try { const value = await upstream.json(); message = value?.error?.message ?? message; } catch { /* Keep the status fallback. */ }
+  return json(response, status, { error: { message, type: "upstream_error" } });
+}
 
 export async function startAdapter(config: Config): Promise<Adapter> {
   if (!config.apiKey) throw new Error("OpenCode Go API key not found. Set OPENCODE_GO_API_KEY or use --api-key <key>.");
@@ -63,16 +68,16 @@ export async function startAdapter(config: Config): Promise<Adapter> {
       if (input.stream) {
         const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model)) });
         debug(config, `provider status=${upstream.status}`);
-        if (!upstream.ok) return json(response, upstream.status, { error: { message: `OpenCode Go returned HTTP ${upstream.status}`, type: "upstream_error" } });
-        return pipeResponsesStream(upstream, response, input.model ?? "sonnet");
+        if (!upstream.ok) return upstreamError(response, upstream, upstream.status);
+        return pipeResponsesStream(upstream, response, model);
       }
       const upstream = await fetch(provider.endpoint, {
         method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
         body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model))
       });
       debug(config, `provider status=${upstream.status}`);
-      if (!upstream.ok) return json(response, upstream.status, { error: { message: `OpenCode Go returned HTTP ${upstream.status}`, type: "upstream_error" } });
-      const value = await upstream.json(); return json(response, 200, provider.protocol === "responses" ? fromResponsesResponse(value, input.model ?? "sonnet") : fromChatResponse(value, input.model ?? "sonnet"));
+      if (!upstream.ok) return upstreamError(response, upstream, upstream.status);
+      const value = await upstream.json(); return json(response, 200, provider.protocol === "responses" ? fromResponsesResponse(value, model) : fromChatResponse(value, model));
     } catch (error) { debug(config, `messages error=${error instanceof Error ? error.message : "unknown"}`); return json(response, 400, { error: { message: error instanceof Error ? error.message : "Invalid request", type: "invalid_request_error" } }); }
   });
   let port = config.port;
