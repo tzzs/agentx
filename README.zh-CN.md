@@ -37,7 +37,7 @@ npx opencode-adapter codex
 npx opencode-adapter codex --model gpt-5.6-luna
 ```
 
-启动器会注入 `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1`、包含临时本地 Token 的 `OPENAI_API_KEY`，以及 `OPENAI_MODEL`。Codex 当前需要使用 Responses 协议的模型，例如 `gpt-5.6-luna`；DeepSeek Chat Completions 模型仍可供 Claude Code 使用。
+启动器会注入 `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1`、包含临时本地 Token 的 `OPENAI_API_KEY`，以及 `OPENAI_MODEL`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
 
 ## 安装
 

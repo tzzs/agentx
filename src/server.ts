@@ -2,8 +2,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
 import { fromResponsesResponse, toResponsesRequest, type AnthropicRequest } from "./providers.js";
-import { pipeResponsesStream } from "./streaming.js";
-import { fromChatResponse, providerFor, selectModel, toChatRequest } from "./catalog.js";
+import { pipeChatStreamToResponses, pipeResponsesStream } from "./streaming.js";
+import { fromChatResponse, fromChatResponseToResponses, providerFor, selectModel, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
 
 export interface Adapter { server: ReturnType<typeof createServer>; token: string; port: number; close(): Promise<void>; }
 
@@ -44,12 +44,13 @@ export async function startAdapter(config: Config): Promise<Adapter> {
         const model = input.model ?? config.model;
         const provider = providerFor(model);
         debug(config, `POST /v1/responses model=${model}`);
-        if (provider.protocol !== "responses") return json(response, 400, { error: { message: `Model "${model}" is not available through the Codex Responses API.`, type: "invalid_request_error" } });
-        const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ ...input, model }) });
+        const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model)) });
         debug(config, `provider status=${upstream.status}`);
+        if (input.stream && provider.protocol === "chat-completions") return pipeChatStreamToResponses(upstream, response, model);
         const contentType = upstream.headers.get("content-type") ?? "application/json";
         response.writeHead(upstream.status, { "content-type": contentType });
-        if (upstream.body) { for await (const chunk of upstream.body as any) response.write(chunk); }
+        if (provider.protocol === "responses" && upstream.body) { for await (const chunk of upstream.body as any) response.write(chunk); return response.end(); }
+        if (upstream.body) return response.end(JSON.stringify(fromChatResponseToResponses(await upstream.json(), model)));
         return response.end();
       } catch (error) { debug(config, `responses error=${error instanceof Error ? error.message : "unknown"}`); return json(response, 400, { error: { message: error instanceof Error ? error.message : "Invalid request", type: "invalid_request_error" } }); }
     }
