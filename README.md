@@ -1,7 +1,7 @@
 # agentx
 
 [![CI](https://github.com/tzzs/agentx/actions/workflows/ci.yml/badge.svg)](https://github.com/tzzs/agentx/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/agentx)](https://www.npmjs.com/package/agentx)
+[![npm](https://img.shields.io/npm/v/@tzzs%2fagentx)](https://www.npmjs.com/package/@tzzs/agentx)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 English | [简体中文](README.zh-CN.md)
@@ -81,7 +81,7 @@ npx agentx claude
 Install globally:
 
 ```bash
-npm install --global agentx
+npm install --global @tzzs/agentx
 agentx claude
 ```
 
