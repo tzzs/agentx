@@ -10,7 +10,7 @@ export interface ProviderProfile {
   clientModels?: { claude?: string; codex?: string };
 }
 
-const profilePath = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "opencode-adapter", "profiles.json");
+const profilePath = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "agentx", "profiles.json");
 
 export async function loadProfiles(): Promise<ProviderProfile[]> {
   try { return JSON.parse(await readFile(profilePath, "utf8")) as ProviderProfile[]; } catch { return []; }

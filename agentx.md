@@ -1,6 +1,6 @@
-# 项目：opencode-adapter
+# 项目：agentx
 
-请实现一个生产可用的 npm CLI 工具 **`opencode-adapter`**。
+请实现一个生产可用的 npm CLI 工具 **`agentx`**。
 
 项目的核心目标是：
 
@@ -9,7 +9,7 @@
 最终用户只需要：
 
 ```bash
-npx opencode-adapter claude
+npx agentx claude
 ```
 
 即可自动：
@@ -33,19 +33,19 @@ npx opencode-adapter claude
 项目名称：
 
 ```text
-opencode-adapter
+agentx
 ```
 
 npm 包：
 
 ```text
-opencode-adapter
+agentx
 ```
 
 CLI：
 
 ```text
-opencode-adapter
+agentx
 ```
 
 项目不是 OpenCode 的 fork，也不是 Claude Code 的 fork。
@@ -68,7 +68,7 @@ Provider Router
                          │ Anthropic Messages API
                          ▼
                 ┌──────────────────┐
-                │ opencode-adapter │
+                │ agentx │
                 │                  │
                 │ Local Proxy      │
                 │ Process Manager  │
@@ -97,7 +97,7 @@ Provider Router
 最重要的命令：
 
 ```bash
-npx opencode-adapter claude
+npx agentx claude
 ```
 
 这个命令必须完成全部操作。
@@ -131,7 +131,7 @@ claude
 实现以下命令：
 
 ```text
-opencode-adapter
+agentx
 ├── claude
 ├── proxy
 ├── exec
@@ -142,7 +142,7 @@ opencode-adapter
 ## 3.1 `claude`
 
 ```bash
-npx opencode-adapter claude
+npx agentx claude
 ```
 
 行为：
@@ -170,7 +170,7 @@ Claude Code 退出
 ## 3.2 `proxy`
 
 ```bash
-npx opencode-adapter proxy
+npx agentx proxy
 ```
 
 只启动 Adapter，不启动 Claude Code。
@@ -178,7 +178,7 @@ npx opencode-adapter proxy
 输出类似：
 
 ```text
-OpenCode Adapter
+AgentX
 
 ✓ Provider: OpenCode Go
 ✓ Model: gpt-5.6-luna
@@ -200,19 +200,19 @@ Press Ctrl+C to stop.
 支持：
 
 ```bash
-npx opencode-adapter exec -- claude
+npx agentx exec -- claude
 ```
 
 也支持：
 
 ```bash
-npx opencode-adapter exec -- opencode
+npx agentx exec -- opencode
 ```
 
 以及：
 
 ```bash
-npx opencode-adapter exec -- <任意命令>
+npx agentx exec -- <任意命令>
 ```
 
 行为：
@@ -238,7 +238,7 @@ npx opencode-adapter exec -- <任意命令>
 ## 3.4 `doctor`
 
 ```bash
-npx opencode-adapter doctor
+npx agentx doctor
 ```
 
 检查：
@@ -262,7 +262,7 @@ npx opencode-adapter doctor
 输出：
 
 ```text
-OpenCode Adapter Doctor
+AgentX Doctor
 
 Environment
 ✓ Node.js        v24.x
@@ -301,18 +301,18 @@ Status: Ready
 
 ```text
 OPENCODE_GO_API_KEY
-OPENCODE_ADAPTER_PORT
-OPENCODE_ADAPTER_HOST
-OPENCODE_ADAPTER_MODEL
-OPENCODE_ADAPTER_LOG_LEVEL
+AGENTX_PORT
+AGENTX_HOST
+AGENTX_MODEL
+AGENTX_LOG_LEVEL
 ```
 
 默认：
 
 ```text
-OPENCODE_ADAPTER_HOST=127.0.0.1
-OPENCODE_ADAPTER_PORT=8787
-OPENCODE_ADAPTER_MODEL=gpt-5.6-luna
+AGENTX_HOST=127.0.0.1
+AGENTX_PORT=8787
+AGENTX_MODEL=gpt-5.6-luna
 ```
 
 如果默认端口被占用：
@@ -777,7 +777,7 @@ claude.exe
 在 WSL 中：
 
 ```bash
-npx opencode-adapter claude
+npx agentx claude
 ```
 
 应该直接：
@@ -831,7 +831,7 @@ Platform: WSL
 支持：
 
 ```bash
-OPENCODE_ADAPTER_LOG_LEVEL=debug
+AGENTX_LOG_LEVEL=debug
 ```
 
 debug 模式可以输出：
@@ -851,13 +851,13 @@ debug 模式可以输出：
 支持：
 
 ```bash
-npx opencode-adapter claude --model gpt-5.6-luna
+npx agentx claude --model gpt-5.6-luna
 ```
 
 以及：
 
 ```bash
-npx opencode-adapter claude --model deepseek-v4-flash
+npx agentx claude --model deepseek-v4-flash
 ```
 
 默认：
@@ -869,7 +869,7 @@ gpt-5.6-luna
 未来支持：
 
 ```bash
-npx opencode-adapter claude --model auto
+npx agentx claude --model auto
 ```
 
 其中：
@@ -898,7 +898,7 @@ explicit model selection
 ```text
 CLI argument
     >
-OPENCODE_ADAPTER_MODEL
+AGENTX_MODEL
     >
 default
 ```
@@ -918,7 +918,7 @@ interactive prompt
 ```text
 CLI argument
     >
-OPENCODE_ADAPTER_PORT
+AGENTX_PORT
     >
 8787
     >
@@ -932,7 +932,7 @@ automatic fallback
 实现：
 
 ```bash
-opencode-adapter claude [options]
+agentx claude [options]
 
 Options:
   --model <model>
@@ -945,19 +945,19 @@ Options:
 Proxy：
 
 ```bash
-opencode-adapter proxy [options]
+agentx proxy [options]
 ```
 
 Exec：
 
 ```bash
-opencode-adapter exec [options] -- <command>
+agentx exec [options] -- <command>
 ```
 
 Doctor：
 
 ```bash
-opencode-adapter doctor
+agentx doctor
 ```
 
 ---
@@ -967,7 +967,7 @@ opencode-adapter doctor
 建议：
 
 ```text
-opencode-adapter/
+agentx/
 │
 ├── package.json
 ├── package-lock.json
@@ -1044,7 +1044,7 @@ CLI 可以使用轻量 CLI library，但如果原生实现足够简单，也可�
 目标：
 
 ```text
-npx opencode-adapter
+npx agentx
 ```
 
 首次运行即可使用。
@@ -1100,7 +1100,7 @@ Set:
   OPENCODE_GO_API_KEY=...
 
 or run:
-  opencode-adapter claude --api-key <key>
+  agentx claude --api-key <key>
 ```
 
 如果 OpenCode Go 不可用：
@@ -1109,7 +1109,7 @@ or run:
 Unable to connect to OpenCode Go.
 
 Run:
-  opencode-adapter doctor
+  agentx doctor
 ```
 
 如果模型不存在：
@@ -1127,7 +1127,7 @@ Available models:
 Claude Code was not found.
 
 Install Claude Code first, then run:
-  npx opencode-adapter claude
+  npx agentx claude
 ```
 
 ---
@@ -1137,7 +1137,7 @@ Install Claude Code first, then run:
 README 必须首先展示最简单的用法：
 
 ```bash
-npx opencode-adapter claude
+npx agentx claude
 ```
 
 然后说明：
@@ -1145,7 +1145,7 @@ npx opencode-adapter claude
 ```text
 Claude Code
      ↓
-opencode-adapter
+agentx
      ↓
 OpenCode Go
 ```
@@ -1267,7 +1267,7 @@ curl https://opencode.ai/zen/go/v1/responses \
 ```text
 Claude Code
 ↓
-opencode-adapter
+agentx
 ↓
 OpenCode Go
 ↓
@@ -1305,7 +1305,7 @@ non-streaming
 完成：
 
 ```bash
-npx opencode-adapter claude
+npx agentx claude
 ```
 
 可以运行 Claude Code。
@@ -1351,7 +1351,7 @@ DeepSeek V4 Flash
 支持：
 
 ```bash
-npx opencode-adapter claude --model deepseek-v4-flash
+npx agentx claude --model deepseek-v4-flash
 ```
 
 ---
@@ -1361,7 +1361,7 @@ npx opencode-adapter claude --model deepseek-v4-flash
 实现：
 
 ```bash
-npx opencode-adapter claude --model auto
+npx agentx claude --model auto
 ```
 
 建立 Model Router。
@@ -1373,13 +1373,13 @@ npx opencode-adapter claude --model auto
 最终用户体验必须做到：
 
 ```bash
-npx opencode-adapter claude
+npx agentx claude
 ```
 
 然后用户看到：
 
 ```text
-OpenCode Adapter
+AgentX
 
 ✓ OpenCode Go connected
 ✓ Model: gpt-5.6-luna
@@ -1401,7 +1401,7 @@ Adapter port
 Proxy lifecycle
 ```
 
-这些全部由 `opencode-adapter` 管理。
+这些全部由 `agentx` 管理。
 
 最终架构：
 
@@ -1409,7 +1409,7 @@ Proxy lifecycle
                          User
                           │
                           │
-             npx opencode-adapter claude
+             npx agentx claude
                           │
                           ▼
                ┌────────────────────┐

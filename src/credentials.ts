@@ -4,7 +4,7 @@ import { stdin as input, stdout as output } from "node:process";
 import type { ProviderDefinition } from "./providers/types.js";
 
 const require = createRequire(import.meta.url);
-const SERVICE = "opencode-adapter";
+const SERVICE = "agentx";
 
 function keytar(): any | undefined { try { return require("keytar"); } catch { return undefined; } }
 
