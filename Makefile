@@ -34,8 +34,8 @@ install-local: build ## Install the current package tarball globally
 link: build ## Create a global symlink to the local CLI
 	$(NPM) link
 
-unlink: ## Remove the global opencode-adapter symlink
-	$(NPM) unlink --global opencode-adapter
+unlink: ## Remove the global agentx symlink
+	$(NPM) unlink --global agentx
 
 claude: build ## Start Claude Code through the local adapter
 	$(CLI) claude

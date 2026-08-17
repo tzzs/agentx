@@ -1,10 +1,10 @@
 {
-  "name": "opencode-adapter",
+  "name": "agentx",
   "version": "1.0.0",
   "description": "Local Anthropic-compatible adapter for OpenCode Go",
   "type": "module",
   "bin": {
-    "opencode-adapter": "dist/src/cli.js"
+    "agentx": "dist/src/cli.js"
   },
   "engines": {
     "node": ">=20"

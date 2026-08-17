@@ -1,7 +1,7 @@
-# opencode-adapter
+# agentx
 
-[![CI](https://github.com/tzzs/opencode-adapter/actions/workflows/ci.yml/badge.svg)](https://github.com/tzzs/opencode-adapter/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/opencode-adapter)](https://www.npmjs.com/package/opencode-adapter)
+[![CI](https://github.com/tzzs/agentx/actions/workflows/ci.yml/badge.svg)](https://github.com/tzzs/agentx/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/agentx)](https://www.npmjs.com/package/agentx)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 English | [简体中文](README.zh-CN.md)
@@ -21,7 +21,7 @@ Requirements:
 
 ```bash
 export OPENCODE_GO_API_KEY="your-api-key"
-npx opencode-adapter claude
+npx agentx claude
 ```
 
 The command starts a loopback-only adapter, waits for it to listen, launches Claude Code with temporary `ANTHROPIC_*` variables, forwards the terminal streams, and shuts the adapter down after Claude Code exits.
@@ -32,7 +32,7 @@ The real OpenCode Go key is never passed to Claude Code. Claude Code receives a 
 
 On first use, the model/provider selector identifies the upstream provider and the adapter asks for its API key if it is not already available. Credentials are resolved in this order: `--api-key`, the provider environment variable, the OS credential store, then a hidden interactive prompt.
 
-The optional `keytar` integration stores credentials in macOS Keychain, Windows Credential Manager, or Linux Secret Service. Non-secret provider profiles and model mappings are stored in `~/.config/opencode-adapter/profiles.json`; API keys are never written to that file. If a credential store is unavailable, the key is used for the current process only and a warning is shown.
+The optional `keytar` integration stores credentials in macOS Keychain, Windows Credential Manager, or Linux Secret Service. Non-secret provider profiles and model mappings are stored in `~/.config/agentx/profiles.json`; API keys are never written to that file. If a credential store is unavailable, the key is used for the current process only and a warning is shown.
 
 ## Providers
 
@@ -49,23 +49,23 @@ Supported upstream providers:
 Choose a provider explicitly when model names overlap:
 
 ```bash
-opencode-adapter claude --provider deepseek --model deepseek-v4-pro
-opencode-adapter codex --provider openrouter --model anthropic/claude-sonnet-4
+agentx claude --provider deepseek --model deepseek-v4-pro
+agentx codex --provider openrouter --model anthropic/claude-sonnet-4
 ```
 
-The equivalent environment variable is `OPENCODE_ADAPTER_PROVIDER`. Provider credentials are only used by the adapter and are never injected into the client process.
+The equivalent environment variable is `AGENTX_PROVIDER`. Provider credentials are only used by the adapter and are never injected into the client process.
 
 For Claude Code, the local token is injected as `ANTHROPIC_AUTH_TOKEN` rather than `ANTHROPIC_API_KEY`, matching provider integrations such as DeepSeek and avoiding Claude Code's custom API-key confirmation screen. The upstream key remains private to the adapter.
 
-When `claude` or `codex` is started without `--model` and without `OPENCODE_ADAPTER_MODEL`, an interactive arrow-key model selector is shown. The selected upstream model is printed in the startup banner and is also exposed as `OPENCODE_ADAPTER_MODEL` to the child process. Non-interactive sessions select the first/default catalog model.
+When `claude` or `codex` is started without `--model` and without `AGENTX_MODEL`, an interactive arrow-key model selector is shown. The selected upstream model is printed in the startup banner and is also exposed as `AGENTX_MODEL` to the child process. Non-interactive sessions select the first/default catalog model.
 
 ## Codex
 
 Start Codex with an OpenAI-compatible local Responses endpoint:
 
 ```bash
-npx opencode-adapter codex
-npx opencode-adapter codex --model gpt-5.6-luna
+npx agentx codex
+npx agentx codex --model gpt-5.6-luna
 ```
 
 The launcher injects `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1`, `OPENAI_API_KEY` with a temporary local token, and `OPENAI_MODEL`. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.
@@ -75,14 +75,14 @@ The launcher injects `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1`, `OPENAI_API_K
 Use without installation:
 
 ```bash
-npx opencode-adapter claude
+npx agentx claude
 ```
 
 Install globally:
 
 ```bash
-npm install --global opencode-adapter
-opencode-adapter claude
+npm install --global agentx
+agentx claude
 ```
 
 ## Commands
@@ -92,9 +92,9 @@ opencode-adapter claude
 Start the adapter and Claude Code together:
 
 ```bash
-opencode-adapter claude
-opencode-adapter claude --model deepseek-v4-flash
-opencode-adapter claude --port 9000 --host 127.0.0.1
+agentx claude
+agentx claude --model deepseek-v4-flash
+agentx claude --port 9000 --host 127.0.0.1
 ```
 
 ### `codex`
@@ -102,7 +102,7 @@ opencode-adapter claude --port 9000 --host 127.0.0.1
 Start the adapter and Codex together. Codex receives OpenAI-compatible environment variables:
 
 ```bash
-opencode-adapter codex
+agentx codex
 ```
 
 ### `proxy`
@@ -110,7 +110,7 @@ opencode-adapter codex
 Start only the local adapter. Press `Ctrl+C` to stop it:
 
 ```bash
-opencode-adapter proxy
+agentx proxy
 ```
 
 The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`, `GET /v1/models`, `POST /v1/messages`, and `POST /v1/responses`.
@@ -120,9 +120,9 @@ The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`
 Run any command with the temporary Anthropic environment:
 
 ```bash
-opencode-adapter exec -- claude
-opencode-adapter exec -- opencode
-opencode-adapter exec -- my-command --argument
+agentx exec -- claude
+agentx exec -- opencode
+agentx exec -- my-command --argument
 ```
 
 The command's stdin, stdout, stderr, exit code, and termination signals are forwarded where supported by the host platform.
@@ -132,7 +132,7 @@ The command's stdin, stdout, stderr, exit code, and termination signals are forw
 Inspect the local environment and configuration:
 
 ```bash
-opencode-adapter doctor
+agentx doctor
 ```
 
 The report includes Node.js, platform/WSL status, architecture, API key presence, supported models, and Claude Code discovery.
@@ -140,7 +140,7 @@ The report includes Node.js, platform/WSL status, architecture, API key presence
 ### `version`
 
 ```bash
-opencode-adapter version
+agentx version
 ```
 
 ## Configuration
@@ -150,15 +150,15 @@ CLI options take precedence over environment variables. The default model is `gp
 | CLI option | Environment variable | Default | Description |
 | --- | --- | --- | --- |
 | `--api-key <key>` | `OPENCODE_GO_API_KEY` | none | OpenCode Go credential |
-| `--host <host>` | `OPENCODE_ADAPTER_HOST` | `127.0.0.1` | Local bind address |
-| `--port <port>` | `OPENCODE_ADAPTER_PORT` | `8787` | Preferred local port |
-| `--model <model>` | `OPENCODE_ADAPTER_MODEL` | `gpt-5.6-luna` | Model or `auto` |
-| `--verbose` | `OPENCODE_ADAPTER_LOG_LEVEL` | `info` | Reserved for verbose logging |
+| `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | Local bind address |
+| `--port <port>` | `AGENTX_PORT` | `8787` | Preferred local port |
+| `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Model or `auto` |
+| `--verbose` | `AGENTX_LOG_LEVEL` | `info` | Reserved for verbose logging |
 
 If the preferred port is already in use, the adapter tries subsequent ports. A non-loopback host is intentionally opt-in and should only be used on a trusted network:
 
 ```bash
-opencode-adapter proxy --host 0.0.0.0
+agentx proxy --host 0.0.0.0
 ```
 
 ## Models and Routing
@@ -174,7 +174,7 @@ The built-in provider catalog currently contains:
 Select a model explicitly:
 
 ```bash
-opencode-adapter claude --model gpt-5.6-luna
+agentx claude --model gpt-5.6-luna
 ```
 
 With `--model auto`, short requests use `deepseek-v4-flash`, larger requests use `deepseek-v4-pro`, and requests containing tools or a large context use `gpt-5.6-luna`. This is a deliberately simple first-pass router, not a benchmark-based recommendation system.
@@ -209,8 +209,8 @@ The launcher is designed for Linux, macOS, Windows, and WSL. WSL is detected usi
 ## Development
 
 ```bash
-git clone https://github.com/tzzs/opencode-adapter.git
-cd opencode-adapter
+git clone https://github.com/tzzs/agentx.git
+cd agentx
 npm ci
 npm test
 npm run build
@@ -236,7 +236,7 @@ Set `OPENCODE_GO_API_KEY` or pass `--api-key <key>`. The key is required before 
 
 **`Claude Code was not found`**
 
-Install Claude Code and ensure `claude` is available in the same shell's `PATH`, then run `opencode-adapter doctor`.
+Install Claude Code and ensure `claude` is available in the same shell's `PATH`, then run `agentx doctor`.
 
 **The port is busy**
 
@@ -244,7 +244,7 @@ The adapter automatically tries the next ports after the configured port. Use `-
 
 **Upstream requests fail**
 
-Run `opencode-adapter doctor`, verify the API key and model availability, and check network access to the OpenCode Go API. Do not paste API keys or authorization headers into issue reports.
+Run `agentx doctor`, verify the API key and model availability, and check network access to the OpenCode Go API. Do not paste API keys or authorization headers into issue reports.
 
 ## Contributing
 
@@ -252,4 +252,4 @@ Issues and pull requests are welcome. Keep changes focused, add or update tests 
 
 ## License
 
-MIT © opencode-adapter contributors
+MIT © agentx contributors

@@ -1,7 +1,7 @@
-# opencode-adapter
+# agentx
 
-[![CI](https://github.com/tzzs/opencode-adapter/actions/workflows/ci.yml/badge.svg)](https://github.com/tzzs/opencode-adapter/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/opencode-adapter)](https://www.npmjs.com/package/opencode-adapter)
+[![CI](https://github.com/tzzs/agentx/actions/workflows/ci.yml/badge.svg)](https://github.com/tzzs/agentx/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/agentx)](https://www.npmjs.com/package/agentx)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 [English](README.md) | 简体中文
@@ -21,7 +21,7 @@
 
 ```bash
 export OPENCODE_GO_API_KEY="your-api-key"
-npx opencode-adapter claude
+npx agentx claude
 ```
 
 该命令会启动仅监听本机回环地址的适配器，等待服务就绪，然后使用临时 `ANTHROPIC_*` 环境变量启动 Claude Code，转发终端输入输出，并在 Claude Code 退出后关闭适配器。
@@ -32,7 +32,7 @@ npx opencode-adapter claude
 
 首次使用时，模型/Provider 选择菜单会确定上游平台；如果该平台没有可用 API Key，适配器会隐藏输入 Key。凭据查找优先级为：`--api-key`、Provider 环境变量、系统凭据存储、交互式输入。
 
-可选的 `keytar` 集成会将凭据保存到 macOS Keychain、Windows Credential Manager 或 Linux Secret Service。非敏感的 Provider Profile 和模型映射保存在 `~/.config/opencode-adapter/profiles.json`，API Key 不会写入该文件。如果系统凭据存储不可用，Key 只在当前进程中使用，并显示警告。
+可选的 `keytar` 集成会将凭据保存到 macOS Keychain、Windows Credential Manager 或 Linux Secret Service。非敏感的 Provider Profile 和模型映射保存在 `~/.config/agentx/profiles.json`，API Key 不会写入该文件。如果系统凭据存储不可用，Key 只在当前进程中使用，并显示警告。
 
 ## Provider 架构
 
@@ -49,23 +49,23 @@ npx opencode-adapter claude
 当模型名可能重复时，可以显式选择 Provider：
 
 ```bash
-opencode-adapter claude --provider deepseek --model deepseek-v4-pro
-opencode-adapter codex --provider openrouter --model anthropic/claude-sonnet-4
+agentx claude --provider deepseek --model deepseek-v4-pro
+agentx codex --provider openrouter --model anthropic/claude-sonnet-4
 ```
 
-也可以使用环境变量 `OPENCODE_ADAPTER_PROVIDER`。Provider 凭据只由 Adapter 使用，不会注入客户端进程。
+也可以使用环境变量 `AGENTX_PROVIDER`。Provider 凭据只由 Adapter 使用，不会注入客户端进程。
 
 对于 Claude Code，本地 Token 会注入为 `ANTHROPIC_AUTH_TOKEN`，而不是 `ANTHROPIC_API_KEY`。这与 DeepSeek 等 Provider 的接入方式一致，可以避免 Claude Code 弹出自定义 API Key 确认页面；上游真实 Key 始终只保留在 Adapter 中。
 
-如果启动 `claude` 或 `codex` 时没有指定 `--model`，且没有设置 `OPENCODE_ADAPTER_MODEL`，适配器会显示支持上下键操作的模型选择菜单。选中的上游模型会显示在启动横幅中，并通过 `OPENCODE_ADAPTER_MODEL` 注入子进程。非交互场景会自动使用目录中的默认模型。
+如果启动 `claude` 或 `codex` 时没有指定 `--model`，且没有设置 `AGENTX_MODEL`，适配器会显示支持上下键操作的模型选择菜单。选中的上游模型会显示在启动横幅中，并通过 `AGENTX_MODEL` 注入子进程。非交互场景会自动使用目录中的默认模型。
 
 ## Codex 支持
 
 使用本地 OpenAI 兼容 Responses API 启动 Codex：
 
 ```bash
-npx opencode-adapter codex
-npx opencode-adapter codex --model gpt-5.6-luna
+npx agentx codex
+npx agentx codex --model gpt-5.6-luna
 ```
 
 启动器会注入 `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1`、包含临时本地 Token 的 `OPENAI_API_KEY`，以及 `OPENAI_MODEL`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
@@ -75,14 +75,14 @@ npx opencode-adapter codex --model gpt-5.6-luna
 无需安装，直接使用：
 
 ```bash
-npx opencode-adapter claude
+npx agentx claude
 ```
 
 全局安装：
 
 ```bash
-npm install --global opencode-adapter
-opencode-adapter claude
+npm install --global agentx
+agentx claude
 ```
 
 ## 命令
@@ -92,9 +92,9 @@ opencode-adapter claude
 同时启动适配器和 Claude Code：
 
 ```bash
-opencode-adapter claude
-opencode-adapter claude --model deepseek-v4-flash
-opencode-adapter claude --port 9000 --host 127.0.0.1
+agentx claude
+agentx claude --model deepseek-v4-flash
+agentx claude --port 9000 --host 127.0.0.1
 ```
 
 ### `codex`
@@ -102,7 +102,7 @@ opencode-adapter claude --port 9000 --host 127.0.0.1
 同时启动适配器和 Codex。Codex 会收到 OpenAI 兼容环境变量：
 
 ```bash
-opencode-adapter codex
+agentx codex
 ```
 
 ### `proxy`
@@ -110,7 +110,7 @@ opencode-adapter codex
 只启动本地适配器，按 `Ctrl+C` 停止：
 
 ```bash
-opencode-adapter proxy
+agentx proxy
 ```
 
 本地 API 地址为 `http://127.0.0.1:<port>`，提供 `GET /health`、`GET /v1/models`、`POST /v1/messages` 和 `POST /v1/responses`。
@@ -120,9 +120,9 @@ opencode-adapter proxy
 使用临时 Anthropic 环境变量执行任意命令：
 
 ```bash
-opencode-adapter exec -- claude
-opencode-adapter exec -- opencode
-opencode-adapter exec -- my-command --argument
+agentx exec -- claude
+agentx exec -- opencode
+agentx exec -- my-command --argument
 ```
 
 在当前平台支持的范围内，命令的 stdin、stdout、stderr、退出码和终止信号都会被转发。
@@ -132,7 +132,7 @@ opencode-adapter exec -- my-command --argument
 检查本地环境和配置：
 
 ```bash
-opencode-adapter doctor
+agentx doctor
 ```
 
 报告包含 Node.js、平台/WSL 状态、CPU 架构、API Key 是否存在、支持的模型，以及 Claude Code 是否可被发现。
@@ -140,7 +140,7 @@ opencode-adapter doctor
 ### `version`
 
 ```bash
-opencode-adapter version
+agentx version
 ```
 
 ## 配置
@@ -150,15 +150,15 @@ CLI 参数优先于环境变量。默认模型为 `gpt-5.6-luna`。
 | CLI 参数 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `--api-key <key>` | `OPENCODE_GO_API_KEY` | 无 | OpenCode Go 凭据 |
-| `--host <host>` | `OPENCODE_ADAPTER_HOST` | `127.0.0.1` | 本地监听地址 |
-| `--port <port>` | `OPENCODE_ADAPTER_PORT` | `8787` | 首选本地端口 |
-| `--model <model>` | `OPENCODE_ADAPTER_MODEL` | `gpt-5.6-luna` | 模型名或 `auto` |
-| `--verbose` | `OPENCODE_ADAPTER_LOG_LEVEL` | `info` | 预留的详细日志选项 |
+| `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | 本地监听地址 |
+| `--port <port>` | `AGENTX_PORT` | `8787` | 首选本地端口 |
+| `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | 模型名或 `auto` |
+| `--verbose` | `AGENTX_LOG_LEVEL` | `info` | 预留的详细日志选项 |
 
 如果首选端口已被占用，适配器会依次尝试后续端口。非回环监听必须显式指定，并且只应在可信网络中使用：
 
 ```bash
-opencode-adapter proxy --host 0.0.0.0
+agentx proxy --host 0.0.0.0
 ```
 
 ## 模型和路由
@@ -174,7 +174,7 @@ opencode-adapter proxy --host 0.0.0.0
 显式选择模型：
 
 ```bash
-opencode-adapter claude --model gpt-5.6-luna
+agentx claude --model gpt-5.6-luna
 ```
 
 使用 `--model auto` 时，短请求使用 `deepseek-v4-flash`，较大请求使用 `deepseek-v4-pro`，包含工具或较大上下文的请求使用 `gpt-5.6-luna`。这是一个简单的初版路由器，不是基于基准测试的模型推荐系统。
@@ -209,8 +209,8 @@ opencode-adapter claude --model gpt-5.6-luna
 ## 开发
 
 ```bash
-git clone https://github.com/tzzs/opencode-adapter.git
-cd opencode-adapter
+git clone https://github.com/tzzs/agentx.git
+cd agentx
 npm ci
 npm test
 npm run build
@@ -236,7 +236,7 @@ GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构�
 
 **找不到 Claude Code**
 
-安装 Claude Code，确保在同一个 shell 的 `PATH` 中可以执行 `claude`，然后运行 `opencode-adapter doctor`。
+安装 Claude Code，确保在同一个 shell 的 `PATH` 中可以执行 `claude`，然后运行 `agentx doctor`。
 
 **端口被占用**
 
@@ -244,7 +244,7 @@ GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构�
 
 **上游请求失败**
 
-运行 `opencode-adapter doctor`，确认 API Key 和模型可用，并检查到 OpenCode Go API 的网络访问。提交 Issue 时不要粘贴 API Key 或 Authorization Header。
+运行 `agentx doctor`，确认 API Key 和模型可用，并检查到 OpenCode Go API 的网络访问。提交 Issue 时不要粘贴 API Key 或 Authorization Header。
 
 ## 参与贡献
 
@@ -252,4 +252,4 @@ GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构�
 
 ## 许可证
 
-MIT © opencode-adapter contributors
+MIT © agentx contributors

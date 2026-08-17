@@ -9,4 +9,4 @@ test("provider credentials use provider-specific environment variables", async (
   assert.equal(await storedCredential(providerById("deepseek")), "test-key");
   delete process.env.DEEPSEEK_API_KEY;
 });
-test("profiles are stored outside the project", () => { assert.match(profileFile(), /opencode-adapter[\\/]profiles\.json$/); });
+test("profiles are stored outside the project", () => { assert.match(profileFile(), /agentx[\\/]profiles\.json$/); });
