@@ -9,10 +9,10 @@ function providersForResponses() {
   return providers;
 }
 
-export async function selectModel(client: "claude" | "codex", choices: ModelProvider[]): Promise<ModelProvider> {
+export async function selectModel(client: "claude" | "codex", choices: ModelProvider[], preselect?: ModelProvider): Promise<ModelProvider> {
   if (!choices.length) throw new Error("No OpenCode models are configured.");
-  if (!process.stdin.isTTY || !process.stdout.isTTY) return choices[0];
-  let selected = 0;
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return preselect ?? choices[0];
+  let selected = Math.max(0, choices.findIndex((choice) => preselect && choice.model === preselect.model && choice.provider === preselect.provider));
   const render = () => {
     process.stdout.write("\x1b[2J\x1b[H");
     process.stdout.write(`Select OpenCode model for ${client === "claude" ? "Claude Code" : "Codex"}\n\n`);
