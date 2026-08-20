@@ -166,6 +166,35 @@ The report includes Node.js, platform/WSL status, architecture, API key presence
 agentx version
 ```
 
+### `auth`
+
+Manage stored provider credentials:
+
+```bash
+agentx auth login --provider deepseek
+agentx auth status --provider deepseek
+agentx auth logout --provider deepseek
+```
+
+### `usage`
+
+Query provider quota where the upstream exposes a quota endpoint:
+
+```bash
+agentx usage --provider deepseek
+agentx usage --provider openrouter
+```
+
+OpenCode Go currently reports an explicit unsupported result because it does not expose a documented public quota endpoint.
+
+### `pi`
+
+Launch Pi Agent through the OpenAI-compatible local environment:
+
+```bash
+agentx pi --provider openrouter --model anthropic/claude-sonnet-4
+```
+
 ## Configuration
 
 CLI options take precedence over environment variables. The default model is `gpt-5.6-luna`.
@@ -176,6 +205,7 @@ CLI options take precedence over environment variables. The default model is `gp
 | `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | Local bind address |
 | `--port <port>` | `AGENTX_PORT` | `8787` | Preferred local port |
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Model or `auto` |
+| `--provider <id>` | `AGENTX_PROVIDER` | none | Upstream provider (`opencode`, `deepseek`, `openrouter`) |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | Reserved for verbose logging |
 
 If the preferred port is already in use, the adapter tries subsequent ports. A non-loopback host is intentionally opt-in and should only be used on a trusted network:
@@ -193,6 +223,12 @@ The built-in provider catalog currently contains:
 | `gpt-5.6-luna` | Responses API |
 | `deepseek-v4-pro` | Chat Completions API |
 | `deepseek-v4-flash` | Chat Completions API |
+| `minimax-m3`, `minimax-m2.7`, `minimax-m2.5` | Chat Completions API |
+| `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6`, `kimi-k2.5` | Chat Completions API |
+| `glm-5.3`, `glm-5.2`, `glm-5.1`, `glm-5` | Chat Completions API |
+| `mimo-v2.5-pro`, `mimo-v2.5`, `hy3` | Chat Completions API |
+
+The OpenRouter provider accepts any model id (defaulting to `OPENROUTER_MODEL` or `openai/gpt-4o-mini`).
 
 Select a model explicitly:
 

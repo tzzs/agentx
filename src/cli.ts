@@ -2,9 +2,9 @@
 import { loadConfig } from "./config.js";
 import { startAdapter } from "./server.js";
 import { runCommand } from "./process.js";
-import { providers } from "./catalog.js";
 import { selectableProviders, selectModel } from "./ui.js";
 import { providerById } from "./providers/registry.js";
+import { runDoctor, renderDoctor } from "./doctor.js";
 import { credentialStoreAvailable, deleteCredential, promptAndSaveCredential, resolveCredential, storedCredential } from "./credentials.js";
 import { saveProfile } from "./profiles.js";
 import { queryProviderUsage, usageProvider } from "./usage.js";
@@ -13,7 +13,7 @@ function options(args: string[]) { const out: Record<string, string | undefined>
 async function main() {
   const [command = "help", ...args] = process.argv.slice(2);
 if (command === "version") return console.log("1.0.0");
-  if (command === "help") return console.log("Usage: agentx <claude|codex|pi|proxy|exec|auth|doctor> [options]");
+  if (command === "help") return console.log("Usage: agentx <claude|codex|pi|proxy|exec|auth|usage|doctor|version> [options]");
   if (command === "auth") {
     const action = args[0] ?? "status"; const provider = providerById(options(args).provider ?? process.env.AGENTX_PROVIDER ?? "opencode");
     if (action === "login") { await promptAndSaveCredential(provider); console.log(`Saved credentials for ${provider.id}.`); return; }
@@ -26,9 +26,9 @@ if (command === "version") return console.log("1.0.0");
     const result = await queryProviderUsage(provider.id, key); console.log(JSON.stringify(result, null, 2)); if (!result.success && result.supported) process.exitCode = 1; return;
   }
   if (command === "doctor") {
-    const config = loadConfig(options(args)); const wsl = Boolean(process.env.WSL_INTEROP); const provider = providerById(config.provider ?? "opencode"); const keyFound = Boolean(config.apiKey || process.env[provider.apiKeyEnv]);
-    console.log(`AgentX Doctor\nNode.js        ${process.version}\nPlatform       ${wsl ? "WSL" : process.platform}\nArchitecture   ${process.arch}\nProvider       ${provider.name}\nAPI key        ${keyFound ? "found" : "missing"}\nModels         ${providers.map((item) => `${item.provider}/${item.model}`).join(", ")}\nClaude Code    ${await executableExists("claude") ? "found" : "not found"}\nCodex          ${await executableExists("codex") ? "found" : "not found"}`);
-    if (!keyFound) { console.log(`\nSet ${provider.apiKeyEnv} before starting the adapter.`); process.exitCode = 1; }
+    const result = await runDoctor(options(args));
+    console.log(renderDoctor(result));
+    if (result.issues.length) process.exitCode = 1;
     return;
   }
   const opts = options(args);
@@ -47,5 +47,4 @@ const executable = command === "claude" ? "claude" : command === "codex" ? "code
   const launchArgs = executable === "claude" && !commandArgs.includes("--bare") ? ["--bare", ...commandArgs] : commandArgs;
   try { process.exitCode = await runCommand(executable, launchArgs, config, adapter, client); } finally { await adapter.close(); }
 }
-async function executableExists(command: string) { try { const child = (await import("node:child_process")).spawn(command, ["--version"], { stdio: "ignore", shell: process.platform === "win32" }); return await new Promise<boolean>((resolve) => { child.once("error", () => resolve(false)); child.once("exit", (code) => resolve(code === 0)); }); } catch { return false; } }
 main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });
