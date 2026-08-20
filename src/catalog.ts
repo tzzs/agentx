@@ -1,4 +1,4 @@
-import type { AnthropicRequest } from "./providers.js";
+import type { AnthropicMessage, AnthropicRequest } from "./providers.js";
 import { allModels, providerFor as resolveProvider } from "./providers/registry.js";
 import type { ProviderModel } from "./providers/types.js";
 
@@ -11,8 +11,31 @@ export function selectModel(request: AnthropicRequest, configured: string): stri
   return request.tools?.length || size > 10000 ? "gpt-5.6-luna" : size > 2000 ? "deepseek-v4-pro" : "deepseek-v4-flash";
 }
 export function toChatRequest(input: AnthropicRequest, model: string) {
-  const messages = [...(input.system ? [{ role: "system", content: typeof input.system === "string" ? input.system : input.system.map((part) => part.text ?? "").join("\n") }] : []), ...input.messages];
+  const messages: any[] = [];
+  if (input.system) messages.push({ role: "system", content: typeof input.system === "string" ? input.system : input.system.map((part) => part.text ?? "").join("\n") });
+  for (const message of input.messages) messages.push(...toChatMessages(message));
   return { model, messages, ...(input.max_tokens === undefined ? {} : { max_tokens: input.max_tokens }), ...(input.stream ? { stream: true } : {}), ...(input.tools ? { tools: input.tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })) } : {}) };
+}
+
+function toChatMessages(message: AnthropicMessage): any[] {
+  if (!Array.isArray(message.content)) return [{ role: message.role, content: message.content ?? "" }];
+  const textParts: string[] = [];
+  const toolCalls: any[] = [];
+  const toolResults: any[] = [];
+  for (const part of message.content) {
+    if (part.type === "tool_use") {
+      toolCalls.push({ id: part.id, type: "function", function: { name: part.name, arguments: JSON.stringify(part.input ?? {}) } });
+    } else if (part.type === "tool_result") {
+      toolResults.push({ role: "tool", tool_call_id: part.tool_use_id, content: typeof part.content === "string" ? part.content : JSON.stringify(part.content ?? "") });
+    } else if (part.type === "text") {
+      textParts.push(part.text ?? "");
+    }
+  }
+  const output: any[] = [];
+  if (textParts.length) output.push({ role: message.role, content: textParts.join("") });
+  if (toolCalls.length) output.push({ role: "assistant", content: null, tool_calls: toolCalls });
+  output.push(...toolResults);
+  return output;
 }
 export function fromChatResponse(response: any, model: string): Record<string, unknown> {
   const message = response.choices?.[0]?.message ?? {}; const content = [];
