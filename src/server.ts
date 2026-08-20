@@ -36,7 +36,6 @@ export async function startAdapter(config: Config): Promise<Adapter> {
     debug(config, `${request.method} ${request.url}`);
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
     if (pathname === "/health" && request.method === "GET") return json(response, 200, { status: "ok" });
-    if (pathname === "/api/hello" && (request.method === "HEAD" || request.method === "GET")) { response.writeHead(200); return response.end(); }
     if (pathname === "/v1/models" && request.method === "GET") return json(response, 200, {
       data: providers.filter((item) => !config.provider || item.provider === config.provider).map((item) => ({ id: item.model, object: "model", owned_by: item.provider }))
     });

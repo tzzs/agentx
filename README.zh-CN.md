@@ -166,6 +166,35 @@ agentx doctor
 agentx version
 ```
 
+### `auth`
+
+管理已保存的 Provider 凭据：
+
+```bash
+agentx auth login --provider deepseek
+agentx auth status --provider deepseek
+agentx auth logout --provider deepseek
+```
+
+### `usage`
+
+查询已公开额度接口的 Provider 额度：
+
+```bash
+agentx usage --provider deepseek
+agentx usage --provider openrouter
+```
+
+OpenCode Go 当前会返回明确的不支持结果，因为它没有公开、文档化的额度接口。
+
+### `pi`
+
+通过 OpenAI 兼容本地环境启动 Pi Agent：
+
+```bash
+agentx pi --provider openrouter --model anthropic/claude-sonnet-4
+```
+
 ## 配置
 
 CLI 参数优先于环境变量。默认模型为 `gpt-5.6-luna`。
@@ -176,6 +205,7 @@ CLI 参数优先于环境变量。默认模型为 `gpt-5.6-luna`。
 | `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | 本地监听地址 |
 | `--port <port>` | `AGENTX_PORT` | `8787` | 首选本地端口 |
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | 模型名或 `auto` |
+| `--provider <id>` | `AGENTX_PROVIDER` | 无 | 上游 Provider（`opencode`、`deepseek`、`openrouter`） |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | 预留的详细日志选项 |
 
 如果首选端口已被占用，适配器会依次尝试后续端口。非回环监听必须显式指定，并且只应在可信网络中使用：
@@ -193,6 +223,12 @@ agentx proxy --host 0.0.0.0
 | `gpt-5.6-luna` | Responses API |
 | `deepseek-v4-pro` | Chat Completions API |
 | `deepseek-v4-flash` | Chat Completions API |
+| `minimax-m3`、`minimax-m2.7`、`minimax-m2.5` | Chat Completions API |
+| `kimi-k3`、`kimi-k2.7-code`、`kimi-k2.6`、`kimi-k2.5` | Chat Completions API |
+| `glm-5.3`、`glm-5.2`、`glm-5.1`、`glm-5` | Chat Completions API |
+| `mimo-v2.5-pro`、`mimo-v2.5`、`hy3` | Chat Completions API |
+
+OpenRouter Provider 接受任意模型 id（默认使用 `OPENROUTER_MODEL` 或 `openai/gpt-4o-mini`）。
 
 显式选择模型：
 
