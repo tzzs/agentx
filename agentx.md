@@ -300,7 +300,7 @@ Status: Ready
 支持以下环境变量：
 
 ```text
-OPENCODE_GO_API_KEY
+OPENCODE_API_KEY
 AGENTX_PORT
 AGENTX_HOST
 AGENTX_MODEL
@@ -333,7 +333,7 @@ AGENTX_MODEL=gpt-5.6-luna
 真实的 OpenCode Go API Key：
 
 ```text
-OPENCODE_GO_API_KEY
+OPENCODE_API_KEY
 ```
 
 只应该由 Adapter 使用。
@@ -908,7 +908,7 @@ API Key：
 ```text
 CLI argument
     >
-OPENCODE_GO_API_KEY
+OPENCODE_API_KEY
     >
 interactive prompt
 ```
@@ -1097,7 +1097,7 @@ Warning: Adapter will be accessible from the network.
 OpenCode Go API key not found.
 
 Set:
-  OPENCODE_GO_API_KEY=...
+  OPENCODE_API_KEY=...
 
 or run:
   agentx claude --api-key <key>
@@ -1239,7 +1239,7 @@ Responses SSE
 
 ```bash
 curl https://opencode.ai/zen/go/v1/models \
-  -H "Authorization: Bearer $OPENCODE_GO_API_KEY"
+  -H "Authorization: Bearer $OPENCODE_API_KEY"
 ```
 
 确认：
@@ -1254,7 +1254,7 @@ gpt-5.6-luna
 
 ```bash
 curl https://opencode.ai/zen/go/v1/responses \
-  -H "Authorization: Bearer $OPENCODE_GO_API_KEY" \
+  -H "Authorization: Bearer $OPENCODE_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gpt-5.6-luna",

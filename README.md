@@ -20,7 +20,7 @@ Requirements:
 - Codex installed and available as `codex` on `PATH` when using Codex
 
 ```bash
-export OPENCODE_GO_API_KEY="your-api-key"
+export OPENCODE_API_KEY="your-api-key"
 npx agentx claude
 ```
 
@@ -65,7 +65,7 @@ Supported upstream providers:
 
 | Provider | Credential | Example |
 | --- | --- | --- |
-| OpenCode Go | `OPENCODE_GO_API_KEY` | `gpt-5.6-luna` |
+| OpenCode Go | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
 | OpenRouter | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
 
@@ -201,7 +201,7 @@ CLI options take precedence over environment variables. The default model is `gp
 
 | CLI option | Environment variable | Default | Description |
 | --- | --- | --- | --- |
-| `--api-key <key>` | `OPENCODE_GO_API_KEY` | none | OpenCode Go credential |
+| `--api-key <key>` | `OPENCODE_API_KEY` | none | OpenCode Go credential |
 | `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | Local bind address |
 | `--port <port>` | `AGENTX_PORT` | `8787` | Preferred local port |
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Model or `auto` |
@@ -291,7 +291,7 @@ GitHub Actions runs the build, tests, and package dry-run for every push and pul
 
 **`OpenCode Go API key not found`**
 
-Set `OPENCODE_GO_API_KEY` or pass `--api-key <key>`. The key is required before the local server starts.
+Set `OPENCODE_API_KEY` or pass `--api-key <key>`. The key is required before the local server starts.
 
 **`Claude Code was not found`**
 

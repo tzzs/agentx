@@ -20,7 +20,7 @@
 - 使用 Codex 时，需要已安装且能在 `PATH` 中找到 `codex` 的 Codex
 
 ```bash
-export OPENCODE_GO_API_KEY="your-api-key"
+export OPENCODE_API_KEY="your-api-key"
 npx agentx claude
 ```
 
@@ -65,7 +65,7 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 | Provider | 凭据 | 示例模型 |
 | --- | --- | --- |
-| OpenCode Go | `OPENCODE_GO_API_KEY` | `gpt-5.6-luna` |
+| OpenCode Go | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
 | OpenRouter | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
 
@@ -201,7 +201,7 @@ CLI 参数优先于环境变量。默认模型为 `gpt-5.6-luna`。
 
 | CLI 参数 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `--api-key <key>` | `OPENCODE_GO_API_KEY` | 无 | OpenCode Go 凭据 |
+| `--api-key <key>` | `OPENCODE_API_KEY` | 无 | OpenCode Go 凭据 |
 | `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | 本地监听地址 |
 | `--port <port>` | `AGENTX_PORT` | `8787` | 首选本地端口 |
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | 模型名或 `auto` |
@@ -291,7 +291,7 @@ GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构�
 
 **`OpenCode Go API key not found`**
 
-设置 `OPENCODE_GO_API_KEY`，或传入 `--api-key <key>`。本地服务启动前必须提供 Key。
+设置 `OPENCODE_API_KEY`，或传入 `--api-key <key>`。本地服务启动前必须提供 Key。
 
 **找不到 Claude Code**
 
