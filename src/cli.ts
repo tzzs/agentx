@@ -5,14 +5,26 @@ import { runCommand } from "./process.js";
 import { providers } from "./catalog.js";
 import { selectableProviders, selectModel } from "./ui.js";
 import { providerById } from "./providers/registry.js";
-import { resolveCredential } from "./credentials.js";
+import { credentialStoreAvailable, deleteCredential, promptAndSaveCredential, resolveCredential, storedCredential } from "./credentials.js";
 import { saveProfile } from "./profiles.js";
+import { queryProviderUsage, usageProvider } from "./usage.js";
 
 function options(args: string[]) { const out: Record<string, string | undefined> = {}; for (let i = 0; i < args.length; i++) { const key = args[i]; if (key?.startsWith("--")) out[key.slice(2)] = args[++i]; } return out; }
 async function main() {
   const [command = "help", ...args] = process.argv.slice(2);
-  if (command === "version") return console.log("0.1.0");
-  if (command === "help") return console.log("Usage: agentx <claude|codex|proxy|exec|doctor> [options]");
+if (command === "version") return console.log("1.0.0");
+  if (command === "help") return console.log("Usage: agentx <claude|codex|pi|proxy|exec|auth|doctor> [options]");
+  if (command === "auth") {
+    const action = args[0] ?? "status"; const provider = providerById(options(args).provider ?? process.env.AGENTX_PROVIDER ?? "opencode");
+    if (action === "login") { await promptAndSaveCredential(provider); console.log(`Saved credentials for ${provider.id}.`); return; }
+    if (action === "logout") { if (!(await deleteCredential(provider))) console.log("Secure credential storage is unavailable."); else console.log(`Removed credentials for ${provider.id}.`); return; }
+    if (action === "status") { console.log(`Provider: ${provider.name}\nCredential store: ${credentialStoreAvailable() ? "available" : "unavailable"}\nCredential: ${(await storedCredential(provider)) ? "configured" : "missing"}`); return; }
+    throw new Error("Usage: agentx auth <login|status|logout> --provider <provider>");
+  }
+  if (command === "usage") {
+    const provider = usageProvider(options(args).provider); const key = provider.id === "opencode" ? "" : await resolveCredential(provider);
+    const result = await queryProviderUsage(provider.id, key); console.log(JSON.stringify(result, null, 2)); if (!result.success && result.supported) process.exitCode = 1; return;
+  }
   if (command === "doctor") {
     const config = loadConfig(options(args)); const wsl = Boolean(process.env.WSL_INTEROP); const provider = providerById(config.provider ?? "opencode"); const keyFound = Boolean(config.apiKey || process.env[provider.apiKeyEnv]);
     console.log(`AgentX Doctor\nNode.js        ${process.version}\nPlatform       ${wsl ? "WSL" : process.platform}\nArchitecture   ${process.arch}\nProvider       ${provider.name}\nAPI key        ${keyFound ? "found" : "missing"}\nModels         ${providers.map((item) => `${item.provider}/${item.model}`).join(", ")}\nClaude Code    ${await executableExists("claude") ? "found" : "not found"}\nCodex          ${await executableExists("codex") ? "found" : "not found"}`);
@@ -29,9 +41,9 @@ async function main() {
   if (config.host !== "127.0.0.1" && config.host !== "localhost") console.error("Warning: Adapter will be accessible from the network.");
   if (command === "proxy") { console.error("Press Ctrl+C to stop."); await new Promise<void>((resolve) => { const close = async () => { await adapter.close(); resolve(); }; process.once("SIGINT", close); process.once("SIGTERM", close); }); return; }
   const separator = args.indexOf("--"); const adapterFlags = new Set(["--model", "--provider", "--port", "--host", "--api-key", "--verbose"]); const commandArgs = separator >= 0 ? args.slice(separator + 1) : command === "claude" ? args.filter((arg, index) => !adapterFlags.has(arg) && !adapterFlags.has(args[index - 1] ?? "")) : [];
-  const executable = command === "claude" ? "claude" : command === "codex" ? "codex" : command === "exec" ? commandArgs.shift() : undefined;
+const executable = command === "claude" ? "claude" : command === "codex" ? "codex" : command === "pi" ? "pi" : command === "exec" ? commandArgs.shift() : undefined;
   if (!executable) throw new Error("Usage: agentx exec [options] -- <command>");
-  const client = command === "codex" || executable === "codex" ? "openai" : "anthropic";
+  const client = command === "codex" || executable === "codex" || command === "pi" || executable === "pi" ? "openai" : "anthropic";
   const launchArgs = executable === "claude" && !commandArgs.includes("--bare") ? ["--bare", ...commandArgs] : commandArgs;
   try { process.exitCode = await runCommand(executable, launchArgs, config, adapter, client); } finally { await adapter.close(); }
 }

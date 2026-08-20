@@ -28,6 +28,29 @@ The command starts a loopback-only adapter, waits for it to listen, launches Cla
 
 The real OpenCode Go key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
 
+Manage stored credentials explicitly:
+
+```bash
+agentx auth login --provider deepseek
+agentx auth status --provider deepseek
+agentx auth logout --provider deepseek
+```
+
+Query provider quota where the upstream documents a quota endpoint:
+
+```bash
+agentx usage --provider deepseek
+agentx usage --provider openrouter
+```
+
+OpenCode Go currently reports an explicit unsupported result because it does not expose a documented public quota endpoint.
+
+The `pi` client is also supported through the OpenAI-compatible environment:
+
+```bash
+agentx pi --provider openrouter --model anthropic/claude-sonnet-4
+```
+
 ## Credentials and Profiles
 
 On first use, the model/provider selector identifies the upstream provider and the adapter asks for its API key if it is not already available. Credentials are resolved in this order: `--api-key`, the provider environment variable, the OS credential store, then a hidden interactive prompt.

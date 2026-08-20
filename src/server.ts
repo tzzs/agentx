@@ -3,7 +3,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
 import { fromResponsesResponse, toResponsesRequest, type AnthropicRequest } from "./providers.js";
 import { pipeChatStreamToResponses, pipeResponsesStream } from "./streaming.js";
-import { fromChatResponse, fromChatResponseToResponses, providerFor, selectModel, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
+import { fromChatResponse, fromChatResponseToResponses, providerFor, providers, selectModel, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
 import { apiKeyFor } from "./providers/registry.js";
 
 export interface Adapter { server: ReturnType<typeof createServer>; token: string; port: number; close(): Promise<void>; }
@@ -38,11 +38,7 @@ export async function startAdapter(config: Config): Promise<Adapter> {
     if (pathname === "/health" && request.method === "GET") return json(response, 200, { status: "ok" });
     if (pathname === "/api/hello" && (request.method === "HEAD" || request.method === "GET")) { response.writeHead(200); return response.end(); }
     if (pathname === "/v1/models" && request.method === "GET") return json(response, 200, {
-      data: [
-        { id: config.model, object: "model" },
-        { id: "sonnet", object: "model" },
-        { id: "claude-sonnet-5", object: "model" }
-      ]
+      data: providers.filter((item) => !config.provider || item.provider === config.provider).map((item) => ({ id: item.model, object: "model", owned_by: item.provider }))
     });
     if (pathname === "/v1/responses" && request.method === "POST") {
       if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
@@ -53,6 +49,7 @@ export async function startAdapter(config: Config): Promise<Adapter> {
         debug(config, `POST /v1/responses model=${model}`);
         const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model)) });
         debug(config, `provider status=${upstream.status}`);
+        if (!upstream.ok) return upstreamError(response, upstream, upstream.status);
         if (input.stream && provider.protocol === "chat-completions") return pipeChatStreamToResponses(upstream, response, model);
         const contentType = upstream.headers.get("content-type") ?? "application/json";
         response.writeHead(upstream.status, { "content-type": contentType });

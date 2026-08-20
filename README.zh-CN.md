@@ -28,6 +28,29 @@ npx agentx claude
 
 真实的 OpenCode Go Key 不会传给 Claude Code。Claude Code 每次只会收到一个随机生成的本地临时 Token。
 
+也可以显式管理已保存的凭据：
+
+```bash
+agentx auth login --provider deepseek
+agentx auth status --provider deepseek
+agentx auth logout --provider deepseek
+```
+
+对于上游已公开额度接口的 Provider，可以查询额度：
+
+```bash
+agentx usage --provider deepseek
+agentx usage --provider openrouter
+```
+
+OpenCode Go 当前会返回明确的不支持结果，因为它没有公开、文档化的额度接口。
+
+同时支持通过 OpenAI 兼容环境启动 Pi Agent：
+
+```bash
+agentx pi --provider openrouter --model anthropic/claude-sonnet-4
+```
+
 ## 凭据与 Provider Profile
 
 首次使用时，模型/Provider 选择菜单会确定上游平台；如果该平台没有可用 API Key，适配器会隐藏输入 Key。凭据查找优先级为：`--api-key`、Provider 环境变量、系统凭据存储、交互式输入。
