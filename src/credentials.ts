@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { stdin as input, stdout as output } from "node:process";
 import type { ProviderDefinition } from "./providers/types.js";
+import { enterRawMode, exitRawMode } from "./rawMode.js";
 
 const require = createRequire(import.meta.url);
 const SERVICE = "agentx";
@@ -21,10 +22,10 @@ export async function deleteCredential(provider: ProviderDefinition): Promise<bo
 export function credentialStoreAvailable(): boolean { return Boolean(keytar()); }
 async function promptSecret(label: string): Promise<string> {
   if (!input.isTTY || !output.isTTY) throw new Error("Secret input requires an interactive terminal.");
-  output.write(label); input.setRawMode(true); input.resume();
+  output.write(label); enterRawMode();
   return new Promise((resolve, reject) => {
     let value = "";
-    const cleanup = () => { input.setRawMode(false); input.pause(); input.off("data", onData); output.write("\n"); };
+    const cleanup = () => { exitRawMode(); input.off("data", onData); output.write("\n"); };
     const onData = (chunk: Buffer) => { for (const byte of chunk) { if (byte === 3) { cleanup(); reject(new Error("Credential input cancelled.")); return; } if (byte === 13 || byte === 10) { cleanup(); resolve(value); return; } if (byte === 127 || byte === 8) value = value.slice(0, -1); else if (byte >= 32) value += String.fromCharCode(byte); } };
     input.on("data", onData);
   });

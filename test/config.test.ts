@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadConfig } from "../src/config.js";
+import { defaultModelFor } from "../src/selection.js";
 
 let configDir: string;
 
@@ -12,6 +13,9 @@ test.before(async () => {
   const agentxDir = join(configDir, "agentx");
   await mkdir(agentxDir, { recursive: true });
   process.env.XDG_CONFIG_HOME = configDir;
+  // Isolate these tests from AGENTX_* set by the outer shell.
+  delete process.env.AGENTX_PROVIDER;
+  delete process.env.AGENTX_MODEL;
 });
 
 test.after(async () => { delete process.env.XDG_CONFIG_HOME; await rm(configDir, { recursive: true, force: true }); });
@@ -33,6 +37,11 @@ test("remembers the last used model only for the matching provider", async () =>
 test("explicit --model takes precedence over the remembered model", async () => {
   await writeFile(join(configDir, "agentx", "profiles.json"), JSON.stringify([{ id: "opencode/deepseek-v4-flash", provider: "opencode", model: "deepseek-v4-flash" }], null, 2));
   assert.equal(loadConfig({ model: "gpt-5.6-luna" }).model, "gpt-5.6-luna");
+});
+
+test("default model comes from the registry as the single source", () => {
+  assert.equal(loadConfig({ provider: "openrouter" }).model, defaultModelFor("openrouter"));
+  assert.equal(loadConfig({ provider: "deepseek" }).model, defaultModelFor("deepseek"));
 });
 
 test("AGENTX_MODEL takes precedence over the remembered model", async () => {

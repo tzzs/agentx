@@ -61,9 +61,9 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## Credentials and Profiles
 
-On first use, the model/provider selector identifies the upstream provider and the adapter asks for its API key if it is not already available. Credentials are resolved in this order: `--api-key`, the provider environment variable, the OS credential store, then a hidden interactive prompt.
+On first use, the inline runtime launcher identifies the upstream provider (automatically when only one is configured) and the adapter asks for its API key if it is not already available. Credentials are resolved in this order: `--api-key`, the provider environment variable, the OS credential store, then a hidden interactive prompt.
 
-The optional `keytar` integration stores credentials in macOS Keychain, Windows Credential Manager, or Linux Secret Service. Non-secret provider profiles and model mappings are stored in `~/.config/agentx/profiles.json`; API keys are never written to that file. If a credential store is unavailable, the key is used for the current process only and a warning is shown.
+The optional `keytar` integration stores credentials in macOS Keychain, Windows Credential Manager, or Linux Secret Service. Non-secret provider profiles and model mappings are stored in `~/.config/agentx/profiles.json`; the default runtime per client and the last model per provider are stored in `~/.config/agentx/runtime.json`. API keys are never written to either file. If a credential store is unavailable, the key is used for the current process only and a warning is shown.
 
 ## Providers
 
@@ -77,18 +77,31 @@ Supported upstream providers:
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
 | OpenRouter | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
 
-Choose a provider explicitly when model names overlap:
+For scripts and advanced usage, `--provider`/`--model` override the configured runtime for a single invocation:
 
 ```bash
 agentx claude --provider deepseek --model deepseek-v4-pro
 agentx codex --provider openrouter --model anthropic/claude-sonnet-4
 ```
 
-The equivalent environment variable is `AGENTX_PROVIDER`. Provider credentials are only used by the adapter and are never injected into the client process.
+These flags are the Advanced / Automation API: ordinary day-to-day provider switching happens in the interactive runtime configuration. The equivalent environment variables are `AGENTX_PROVIDER` and `AGENTX_MODEL` (they also bypass the interactive launcher). Provider credentials are only used by the adapter and are never injected into the client process.
 
 For Claude Code, the local token is injected as `ANTHROPIC_AUTH_TOKEN` rather than `ANTHROPIC_API_KEY`, matching provider integrations such as DeepSeek and avoiding Claude Code's custom API-key confirmation screen. The upstream key remains private to the adapter.
 
-When `claude` or `codex` is started without `--model` and without `AGENTX_MODEL`, an interactive arrow-key model selector is shown. The selected upstream model is printed in the startup banner and is also exposed as `AGENTX_MODEL` to the child process. Non-interactive sessions select the first/default catalog model.
+### Runtime configuration
+
+When `claude`, `codex`, or `pi` is started on an interactive terminal without `--provider`/`--model` and without `AGENTX_PROVIDER`/`AGENTX_MODEL`, AgentX shows an inline runtime configuration instead of requiring you to pick anything:
+
+```
+Claude Code — AgentX
+
+Provider  DeepSeek         ›
+Model     deepseek-v4-pro  ›
+
+          [ Start ]
+```
+
+The current runtime is loaded from the saved default. Press Enter to start, or press Space / → on a row to open a selector. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Temporary switches never overwrite the saved default unless you press `s` to save it as default. Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
 
 ## Codex
 
@@ -217,7 +230,15 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## Configuration
 
-CLI options take precedence over environment variables. The default model is `gpt-5.6-luna`.
+Config is resolved in this order:
+
+1. Explicit CLI options (`--provider`, `--model`, `--api-key`, …)
+2. Interactive temporary selection (only when no CLI/env override is present)
+3. Saved default runtime for the client (from `runtime.json`)
+4. Environment variables (`AGENTX_PROVIDER`, `AGENTX_MODEL`)
+5. Built-in defaults (`opencode` / `gpt-5.6-luna`)
+
+Only `s` (set as default) in the interactive launcher persists a runtime change; a temporary switch affects the current invocation only.
 
 | CLI option | Environment variable | Default | Description |
 | --- | --- | --- | --- |
