@@ -36,7 +36,7 @@ function streamOptions(provider: ProviderModel, sessionId: string, onUsage?: (us
   return { provider: provider.provider, model: provider.model, protocol: provider.protocol, sessionId, onUsage };
 }
 async function upstreamError(response: ServerResponse, upstream: Response, status: number) {
-  let message = `OpenCode Go returned HTTP ${status}`;
+  let message = `OpenCode returned HTTP ${status}`;
   try { const value = await upstream.json(); message = value?.error?.message ?? message; } catch { /* Keep the status fallback. */ }
   return json(response, status, { error: { message, type: "upstream_error" } });
 }

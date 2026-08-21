@@ -6,16 +6,16 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Run Claude Code or Codex with OpenCode Go models through a local API adapter. Claude Code uses the local Anthropic-compatible Messages API; Codex uses the local OpenAI-compatible Responses API. The adapter translates requests to the upstream API, injects temporary credentials into the child process, and cleans up the local server when the child exits.
+Run Claude Code or Codex with OpenCode models through a local API adapter. Claude Code uses the local Anthropic-compatible Messages API; Codex uses the local OpenAI-compatible Responses API. The adapter translates requests to the upstream API, injects temporary credentials into the child process, and cleans up the local server when the child exits.
 
-> **Status:** Early-stage release. The protocol conversion layer and test suite are available, but real upstream API compatibility should be validated with your OpenCode Go account before production use.
+> **Status:** Early-stage release. The protocol conversion layer and test suite are available, but real upstream API compatibility should be validated with your OpenCode account before production use.
 
 ## Quick Start
 
 Requirements:
 
 - Node.js 20 or newer
-- An OpenCode Go API key
+- An OpenCode API key
 - Claude Code installed and available as `claude` on `PATH`
 - Codex installed and available as `codex` on `PATH` when using Codex
 
@@ -26,7 +26,7 @@ npx agentx claude
 
 The command starts a loopback-only adapter, waits for it to listen, launches Claude Code with temporary `ANTHROPIC_*` variables, forwards the terminal streams, and shuts the adapter down after Claude Code exits.
 
-The real OpenCode Go key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
+The real OpenCode key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
 
 Manage stored credentials explicitly:
 
@@ -51,7 +51,7 @@ agentx usage
 agentx usage --period today
 ```
 
-OpenCode Go currently reports an explicit unsupported result because it does not expose a documented public quota endpoint.
+OpenCode currently reports an explicit unsupported result because it does not expose a documented public quota endpoint.
 
 The `pi` client is also supported through the OpenAI-compatible environment:
 
@@ -73,7 +73,7 @@ Supported upstream providers:
 
 | Provider | Credential | Example |
 | --- | --- | --- |
-| OpenCode Go | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
+| OpenCode | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
 | OpenRouter | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
 
@@ -218,7 +218,7 @@ agentx usage --provider deepseek
 agentx usage --provider openrouter
 ```
 
-OpenCode Go currently reports an explicit unsupported result because it does not expose a documented public quota endpoint.
+OpenCode currently reports an explicit unsupported result because it does not expose a documented public quota endpoint.
 
 ### `pi`
 
@@ -242,7 +242,7 @@ Only `s` (set as default) in the interactive launcher persists a runtime change;
 
 | CLI option | Environment variable | Default | Description |
 | --- | --- | --- | --- |
-| `--api-key <key>` | `OPENCODE_API_KEY` | none | OpenCode Go credential |
+| `--api-key <key>` | `OPENCODE_API_KEY` | none | OpenCode credential |
 | `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | Local bind address |
 | `--port <port>` | `AGENTX_PORT` | `8787` | Preferred local port |
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Model or `auto` |
@@ -342,7 +342,7 @@ report uses the pricing layer only for display.
 
 ## Security and Privacy
 
-- The upstream API key is read from the CLI or environment and sent only to OpenCode Go.
+- The upstream API key is read from the CLI or environment and sent only to OpenCode.
 - Claude Code receives a random, non-persisted local bearer token for each adapter process.
 - The default listener is `127.0.0.1`; no shell profile or permanent OS environment variable is modified.
 - The `/usage/*` query endpoints are unauthenticated; they expose aggregated token counts only and are safe to reach from localhost, but do not expose them when the adapter is bound to a non-loopback interface.
@@ -377,7 +377,7 @@ GitHub Actions runs the build, tests, and package dry-run for every push and pul
 
 ## Troubleshooting
 
-**`OpenCode Go API key not found`**
+**`OpenCode API key not found`**
 
 Set `OPENCODE_API_KEY` or pass `--api-key <key>`. The key is required before the local server starts.
 
@@ -391,7 +391,7 @@ The adapter automatically tries the next ports after the configured port. Use `-
 
 **Upstream requests fail**
 
-Run `agentx doctor`, verify the API key and model availability, and check network access to the OpenCode Go API. Do not paste API keys or authorization headers into issue reports.
+Run `agentx doctor`, verify the API key and model availability, and check network access to the OpenCode API. Do not paste API keys or authorization headers into issue reports.
 
 ## Contributing
 

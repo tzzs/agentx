@@ -57,7 +57,7 @@ export function defaultModel(provider: string): string {
  * Shows the inline configuration
  *
  *     Claude Code
- *     Provider   OpenCode Go      ›
+ *     Provider   OpenCode      ›
  *     Model      gpt-5.6-luna     ›
  *                [ Start ]
  *

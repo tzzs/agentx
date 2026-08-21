@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-`agentx` 是一个本地 Anthropic/OpenAI 兼容的 API 适配器，让 Claude Code、Codex 或 Pi 可以对接 OpenCode Go 以及其他上游模型提供商。它会启动一个回环（loopback）HTTP 服务器，将临时凭据注入到被启动的客户端进程中，并在客户端退出后关闭。
+`agentx` 是一个本地 Anthropic/OpenAI 兼容的 API 适配器，让 Claude Code、Codex 或 Pi 可以对接 OpenCode 以及其他上游模型提供商。它会启动一个回环（loopback）HTTP 服务器，将临时凭据注入到被启动的客户端进程中，并在客户端退出后关闭。
 
 ## 常用命令
 

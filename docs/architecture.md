@@ -82,7 +82,7 @@ Claude Code (Anthropic Messages API)
   → /v1/chat/completions
                                          │
                                          ▼
-                                  上游 API（OpenCode Go / DeepSeek / OpenRouter）
+                                  上游 API（OpenCode / DeepSeek / OpenRouter）
 ```
 
 ## 核心设计要点（实际实现）
@@ -92,7 +92,7 @@ Claude Code (Anthropic Messages API)
 - **工具调用**：只做协议转换（`tool_use`↔`function_call`、`tool_result`↔`function_call_output`），不在 Adapter 内执行
 - **模型路由**：`catalog.ts` 的 `selectModel` 实现 `--model auto` 短请求→flash、大请求→pro、含工具→luna 的初版路由器
 - **命令覆盖**：`claude`/`codex`/`pi`/`proxy`/`exec`/`auth`/`usage`/`doctor`/`version`/`help`
-- **可选集成**：`keytar` 系统凭据存储；`usage` 查询 DeepSeek/OpenRouter 额度（OpenCode Go 返回"不支持"）
+- **可选集成**：`keytar` 系统凭据存储；`usage` 查询 DeepSeek/OpenRouter 额度（OpenCode 返回"不支持"）
 
 ## 模块 → 职责映射
 

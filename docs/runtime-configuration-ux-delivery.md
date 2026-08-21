@@ -178,7 +178,7 @@ Claude Code — AgentX
 ```text
 Claude Code
 Choose runtime
-❯ OpenCode Go — connected · 18 models
+❯ OpenCode — connected · 18 models
   DeepSeek — connected · 2 models
 ```
 在 `runInteractiveLauncher` 中调用 `chooseRuntime`，已配置 provider 优先；选中后进入内联配置界面。
@@ -199,7 +199,7 @@ Enter 直接启动，无任何额外选择。
 ↓ → Provider 行 → → 打开 Change Provider
 Change Provider
 ❯ ✓ DeepSeek — connected · 2 models
-    OpenCode Go — not configured
+    OpenCode — not configured
 ```
 选择新 provider 后，model 自动解析，回到内联配置界面。
 

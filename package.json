@@ -1,7 +1,7 @@
 {
   "name": "@tzzs/agentx",
   "version": "1.0.0",
-  "description": "Local Anthropic-compatible adapter for OpenCode Go",
+  "description": "Local Anthropic-compatible adapter for OpenCode",
   "type": "module",
   "bin": {
     "agentx": "dist/src/cli.js"

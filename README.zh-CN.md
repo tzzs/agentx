@@ -6,16 +6,16 @@
 
 [English](README.md) | 简体中文
 
-通过本地 API 适配器，让 Claude Code 或 Codex 使用 OpenCode Go 提供的模型。Claude Code 使用本地 Anthropic 兼容 Messages API，Codex 使用本地 OpenAI 兼容 Responses API。适配器负责将请求转换为上游 API 请求，为子进程注入临时认证信息，并在子进程退出后清理本地服务。
+通过本地 API 适配器，让 Claude Code 或 Codex 使用 OpenCode 提供的模型。Claude Code 使用本地 Anthropic 兼容 Messages API，Codex 使用本地 OpenAI 兼容 Responses API。适配器负责将请求转换为上游 API 请求，为子进程注入临时认证信息，并在子进程退出后清理本地服务。
 
-> **项目状态：** 当前为早期版本。项目包含协议转换层和自动化测试，但在生产使用前仍应使用自己的 OpenCode Go 账号验证真实上游 API 的兼容性。
+> **项目状态：** 当前为早期版本。项目包含协议转换层和自动化测试，但在生产使用前仍应使用自己的 OpenCode 账号验证真实上游 API 的兼容性。
 
 ## 快速开始
 
 依赖环境：
 
 - Node.js 20 或更高版本
-- OpenCode Go API Key
+- OpenCode API Key
 - 已安装且能在 `PATH` 中找到 `claude` 的 Claude Code
 - 使用 Codex 时，需要已安装且能在 `PATH` 中找到 `codex` 的 Codex
 
@@ -26,7 +26,7 @@ npx agentx claude
 
 该命令会启动仅监听本机回环地址的适配器，等待服务就绪，然后使用临时 `ANTHROPIC_*` 环境变量启动 Claude Code，转发终端输入输出，并在 Claude Code 退出后关闭适配器。
 
-真实的 OpenCode Go Key 不会传给 Claude Code。Claude Code 每次只会收到一个随机生成的本地临时 Token。
+真实的 OpenCode Key 不会传给 Claude Code。Claude Code 每次只会收到一个随机生成的本地临时 Token。
 
 也可以显式管理已保存的凭据：
 
@@ -51,7 +51,7 @@ agentx usage
 agentx usage --period today
 ```
 
-OpenCode Go 当前会返回明确的不支持结果，因为它没有公开、文档化的额度接口。
+OpenCode 当前会返回明确的不支持结果，因为它没有公开、文档化的额度接口。
 
 同时支持通过 OpenAI 兼容环境启动 Pi Agent：
 
@@ -73,7 +73,7 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 | Provider | 凭据 | 示例模型 |
 | --- | --- | --- |
-| OpenCode Go | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
+| OpenCode | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
 | OpenRouter | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
 
@@ -203,7 +203,7 @@ agentx usage --provider deepseek
 agentx usage --provider openrouter
 ```
 
-OpenCode Go 当前会返回明确的不支持结果，因为它没有公开、文档化的额度接口。
+OpenCode 当前会返回明确的不支持结果，因为它没有公开、文档化的额度接口。
 
 ### `pi`
 
@@ -219,7 +219,7 @@ CLI 参数优先于环境变量。默认模型为 `gpt-5.6-luna`。
 
 | CLI 参数 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `--api-key <key>` | `OPENCODE_API_KEY` | 无 | OpenCode Go 凭据 |
+| `--api-key <key>` | `OPENCODE_API_KEY` | 无 | OpenCode 凭据 |
 | `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | 本地监听地址 |
 | `--port <port>` | `AGENTX_PORT` | `8787` | 首选本地端口 |
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | 模型名或 `auto` |
@@ -314,7 +314,7 @@ agentx claude --model gpt-5.6-luna
 
 ## 安全与隐私
 
-- 上游 API Key 只从 CLI 或环境变量读取，并只发送给 OpenCode Go。
+- 上游 API Key 只从 CLI 或环境变量读取，并只发送给 OpenCode。
 - Claude Code 每次只收到适配器进程生成的随机本地 Bearer Token，该 Token 不会持久化。
 - 默认监听 `127.0.0.1`，不会修改 shell profile 或永久操作系统环境变量。
 - `/usage/*` 查询端点无需认证；它们只暴露聚合后的 Token 数量，在本地回环地址访问是安全的，但适配器绑定到非回环接口时请勿暴露这些端点。
@@ -349,7 +349,7 @@ GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构�
 
 ## 故障排查
 
-**`OpenCode Go API key not found`**
+**`OpenCode API key not found`**
 
 设置 `OPENCODE_API_KEY`，或传入 `--api-key <key>`。本地服务启动前必须提供 Key。
 
@@ -363,7 +363,7 @@ GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构�
 
 **上游请求失败**
 
-运行 `agentx doctor`，确认 API Key 和模型可用，并检查到 OpenCode Go API 的网络访问。提交 Issue 时不要粘贴 API Key 或 Authorization Header。
+运行 `agentx doctor`，确认 API Key 和模型可用，并检查到 OpenCode API 的网络访问。提交 Issue 时不要粘贴 API Key 或 Authorization Header。
 
 ## 参与贡献
 
