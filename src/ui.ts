@@ -1,5 +1,5 @@
-import { emitKeypressEvents } from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
+import { enterRawMode, exitRawMode } from "./rawMode.js";
 import { providerRegistry } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
 import { storedCredential, promptAndSaveCredential } from "./credentials.js";
@@ -7,8 +7,16 @@ import {
   clientDisplayName, defaultModelFor, modelAvailable, resolveModelForProvider, type RuntimeDecision,
 } from "./selection.js";
 import {
-  saveDefaultRuntime, saveLastModel, type RuntimeSelection,
+  saveDefaultRuntime, type RuntimeSelection,
 } from "./runtime.js";
+
+/** Thrown when the user cancels the launcher (q / Ctrl+C) instead of launching. */
+export class LaunchCancelledError extends Error {
+  constructor(readonly exitCode: number, message = "Launch cancelled.") {
+    super(message);
+    this.name = "LaunchCancelledError";
+  }
+}
 
 export interface LauncherOutcome extends RuntimeSelection {
   /** True when the user explicitly saved this runtime as the default. */
@@ -99,7 +107,6 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
     await saveDefaultRuntime(client, selection);
   });
 
-  await saveLastModel(provider, model);
   return { provider, model, madeDefault, defaultApplied: startWithDefault, changed };
 }
 
@@ -133,7 +140,12 @@ async function runUi(
   render(frame());
 
   return new Promise((resolve, reject) => {
-    const cleanup = () => { input.off("keypress", onKeypress); if (input.isTTY) input.setRawMode(false); input.pause(); output.write("\x1b[2J\x1b[H"); };
+    const cleanup = () => { input.off("keypress", onKeypress); exitRawMode(); output.write("\x1b[2J\x1b[H"); };
+
+    // While a nested selector or secret prompt owns the screen, suppress the
+    // outer key handling so it cannot move focus, re-render over the picker,
+    // or re-open another selector.
+    let locked = false;
 
     const move = (delta: 1 | -1) => {
       const index = focusOrder.indexOf(focus);
@@ -142,8 +154,9 @@ async function runUi(
     };
 
     const onKeypress = (_: string, key: { name?: string; ctrl?: boolean; sequence?: string }) => {
-      if (key.ctrl && key.name === "c") { cleanup(); reject(new Error("Launch cancelled.")); return; }
-      if (key.name === "q") { cleanup(); process.exitCode = 0; reject(new Error("Launch cancelled.")); return; }
+      if (locked) return;
+      if (key.ctrl && key.name === "c") { cleanup(); reject(new LaunchCancelledError(130)); return; }
+      if (key.name === "q") { cleanup(); reject(new LaunchCancelledError(0)); return; }
       if (focus !== "start" && (key.name === "space" || key.name === "right")) {
         // Space / → always opens the focused row's selector, matching the plan.
         if (focus === "provider") void openProviderSelector();
@@ -161,37 +174,45 @@ async function runUi(
     };
 
     async function openProviderSelector() {
-      const current = get().provider;
-      const selector = providerSelectorEntries(providers, current);
-      const selected = await chooseFromList(selector.entries, `${title}\nChange Provider\n`, selector.currentIndex);
-      if (selected === undefined) { render(frame()); return; }
-      const nextProvider = selected.value;
-      const entry = providers.find((item) => item.definition.id === nextProvider);
-      // Provider has no credential yet: enter the configuration flow.
-      if (entry && !entry.configured) {
-        const configured = await configureProvider(entry.definition);
-        if (!configured) { render(frame()); return; }
+      locked = true;
+      try {
+        const current = get().provider;
+        const selector = providerSelectorEntries(providers, current);
+        const selected = await chooseFromList(selector.entries, `${title}\nChange Provider\n`, selector.currentIndex);
+        if (selected === undefined) return;
+        const nextProvider = selected.value;
+        const entry = providers.find((item) => item.definition.id === nextProvider);
+        // Provider has no credential yet: enter the configuration flow.
+        if (entry && !entry.configured) {
+          const configured = await configureProvider(entry.definition);
+          if (!configured) return;
+        }
+        const currentModel = get().model;
+        // Restore the provider's last model unless the current model still works.
+        const nextModel = modelAvailable(nextProvider, currentModel) ? currentModel : await resolveModelForProvider(nextProvider);
+        await set({ provider: nextProvider, model: nextModel });
+      } finally {
+        locked = false;
+        render(frame());
       }
-      const currentModel = get().model;
-      // Restore the provider's last model unless the current model still works.
-      const nextModel = modelAvailable(nextProvider, currentModel) ? currentModel : await resolveModelForProvider(nextProvider);
-      await set({ provider: nextProvider, model: nextModel });
-      render(frame());
     }
 
     async function openModelSelector() {
-      const provider = get().provider;
-      const models = modelsFor(provider);
-      const entries = [{ value: "auto", label: "● Auto — Automatically choose a suitable model" }, ...models.map((entry) => ({ value: entry.model, label: entry.model }))];
-      const selected = await chooseFromList(entries, `${title}\nChange Model\n`);
-      if (selected === undefined) { render(frame()); return; }
-      await set({ provider, model: selected.value });
-      render(frame());
+      locked = true;
+      try {
+        const provider = get().provider;
+        const models = modelsFor(provider);
+        const entries = [{ value: "auto", label: "● Auto — Automatically choose a suitable model" }, ...models.map((entry) => ({ value: entry.model, label: entry.model }))];
+        const selected = await chooseFromList(entries, `${title}\nChange Model\n`);
+        if (selected === undefined) return;
+        await set({ provider, model: selected.value });
+      } finally {
+        locked = false;
+        render(frame());
+      }
     }
 
-    emitKeypressEvents(input);
-    input.setRawMode(true);
-    input.resume();
+    enterRawMode();
     input.on("keypress", onKeypress);
   });
 }
@@ -284,7 +305,7 @@ async function chooseFromList<T extends { label: string }>(entries: Array<T & { 
   };
   paint();
   return new Promise((resolve) => {
-    const cleanup = () => { input.off("keypress", onKey); if (input.isTTY) input.setRawMode(false); input.pause(); };
+    const cleanup = () => { input.off("keypress", onKey); exitRawMode(); };
     const onKey = (_: string, key: { name?: string; ctrl?: boolean }) => {
       if (key.ctrl && key.name === "c") { cleanup(); resolve(undefined); return; }
       if (key.name === "escape") { cleanup(); resolve(undefined); return; }
@@ -292,9 +313,7 @@ async function chooseFromList<T extends { label: string }>(entries: Array<T & { 
       if (key.name === "down") { selected = (selected + 1) % entries.length; paint(); return; }
       if (key.name === "return" || key.name === "enter") { const chosen = entries[selected]; cleanup(); resolve(chosen); return; }
     };
-    emitKeypressEvents(input);
-    input.setRawMode(true);
-    input.resume();
+    enterRawMode();
     input.on("keypress", onKey);
   });
 }

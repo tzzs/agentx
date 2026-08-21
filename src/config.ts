@@ -1,4 +1,5 @@
 import { loadLastProfile } from "./profiles.js";
+import { defaultModelFor } from "./selection.js";
 
 export interface Config {
   host: string;
@@ -12,7 +13,7 @@ export interface Config {
 export function loadConfig(options: Record<string, string | undefined> = {}): Config {
   const apiKey = options.apiKey ?? options["api-key"] ?? "";
   const provider = options.provider ?? process.env.AGENTX_PROVIDER;
-  const defaultModel = provider === "deepseek" ? "deepseek-v4-pro" : provider === "openrouter" ? process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini" : "gpt-5.6-luna";
+  const defaultModel = provider ? defaultModelFor(provider) : "gpt-5.6-luna";
   const port = Number(options.port ?? process.env.AGENTX_PORT ?? 8787);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid port");
   const remembered = loadLastProfile();

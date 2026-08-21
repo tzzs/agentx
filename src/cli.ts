@@ -2,7 +2,7 @@
 import { loadConfig } from "./config.js";
 import { startAdapter } from "./server.js";
 import { runCommand } from "./process.js";
-import { runInteractiveLauncher } from "./ui.js";
+import { runInteractiveLauncher, LaunchCancelledError } from "./ui.js";
 import { providerById } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
 import { runDoctor, renderDoctor } from "./doctor.js";
@@ -178,6 +178,7 @@ async function main() {
 }
 
 main().catch((error) => {
+  if (error instanceof LaunchCancelledError) { process.exitCode = error.exitCode; return; }
   const message = error instanceof Error ? error.message : error;
   console.error(message);
   process.exitCode = 1;
