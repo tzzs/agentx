@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createUsageStore, periodStart, sqliteAvailable } from "../src/usage/storage.js";
+import { createUsageStore, defaultUsageStore, defaultUsageLocation, periodStart, sqliteAvailable } from "../src/usage/storage.js";
 import { TokenUsageCollector, normalizeUsage } from "../src/usage/collector.js";
+import { loadStatsStore } from "../src/usage/cli.js";
 import type { TokenUsage } from "../src/usage/types.js";
 
 const now = Date.now();
@@ -64,4 +65,40 @@ test("normalizeUsage fills missing defaults", () => {
   const row = normalizeUsage({ provider: "p", model: "m", inputTokens: 100, outputTokens: 50 });
   assert.deepEqual(row, { provider: "p", model: "m", inputTokens: 100, outputTokens: 50, totalTokens: 150, cachedTokens: 0, reasoningTokens: 0, estimated: false, sessionId: null, createdAt: row.createdAt });
   assert.equal(Number.isFinite(row.createdAt), true);
+});
+
+test("the CLI statistics store uses the same location as the adapter server", async () => {
+  const originalDir = process.env.AGENTX_USAGE_DIR;
+  const originalBackend = process.env.AGENTX_USAGE_BACKEND;
+  const dir = await mkdtemp(join(tmpdir(), "agentx-usage-path-"));
+  try {
+    process.env.AGENTX_USAGE_DIR = dir;
+    delete process.env.AGENTX_USAGE_BACKEND;
+    const serverStore = await defaultUsageStore();
+    const cliStore = await loadStatsStore();
+    assert.equal(cliStore.constructor.name, serverStore.constructor.name);
+    await serverStore.record(normalizeUsage({ provider: "p", model: "m", inputTokens: 10, outputTokens: 5 }));
+    const totals = await cliStore.totals("all");
+    assert.equal(totals.totalTokens, 15);
+    await serverStore.close();
+    await cliStore.close();
+    assert.equal(process.env.AGENTX_USAGE_BACKEND === undefined, true);
+  } finally {
+    if (originalDir === undefined) delete process.env.AGENTX_USAGE_DIR; else process.env.AGENTX_USAGE_DIR = originalDir;
+    if (originalBackend === undefined) delete process.env.AGENTX_USAGE_BACKEND; else process.env.AGENTX_USAGE_BACKEND = originalBackend;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("json file store handles concurrent reads after a write", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentx-usage-json-"));
+  try {
+    const store = await createUsageStore({ backend: "json", location: join(dir, "usage.json") });
+    await store.record(normalizeUsage({ provider: "p", model: "m", inputTokens: 100, outputTokens: 25 }));
+    const [models, totals] = await Promise.all([store.modelStats("all"), store.totals("all")]);
+    assert.equal(totals.inputTokens, 100);
+    assert.equal(totals.outputTokens, 25);
+    assert.equal(models[0].tokens, 125);
+    await store.close();
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

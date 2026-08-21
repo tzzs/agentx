@@ -116,12 +116,11 @@ class MemoryUsageStore implements UsageStore {
 }
 
 class JsonFileUsageStore extends MemoryUsageStore {
-  private loaded = false;
+  private loadPromise?: Promise<void>;
   constructor(private readonly file: string) { super(); }
-  private async load(): Promise<void> {
-    if (this.loaded) return;
-    this.loaded = true;
-    try { (this as any).rows = JSON.parse(await readFile(this.file, "utf8")) as TokenUsageRow[]; } catch { (this as any).rows = []; }
+  private load(): Promise<void> {
+    if (!this.loadPromise) this.loadPromise = readFile(this.file, "utf8").then((text) => { (this as any).rows = JSON.parse(text) as TokenUsageRow[]; }).catch(() => { (this as any).rows = []; });
+    return this.loadPromise;
   }
   private async persist(): Promise<void> {
     await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
@@ -141,11 +140,31 @@ export function defaultUsageLocation(backend: StoreBackend): string {
   return join(base, backend === "json" ? "usage.json" : "usage.db");
 }
 
+export function defaultStoreBackend(): StoreBackend {
+  const value = process.env.AGENTX_USAGE_BACKEND;
+  return value === "json" || value === "memory" || value === "sqlite" ? value : "sqlite";
+}
+
 export async function createUsageStore(options: { location?: string; backend?: StoreBackend } = {}): Promise<UsageStore> {
   const backend = options.backend ?? "sqlite";
   if (backend === "memory") return new MemoryUsageStore();
   if (backend === "json") return new JsonFileUsageStore(options.location ?? defaultUsageLocation("json"));
   const sqlite = await loadSqlite();
-  if (sqlite) return new SqliteUsageStore(new sqlite.DatabaseSync(options.location ?? defaultUsageLocation("sqlite")));
+  if (sqlite) return new SqliteUsageStore(await openSqlite(sqlite, options.location ?? defaultUsageLocation("sqlite")));
   return new JsonFileUsageStore(options.location ?? defaultUsageLocation("json"));
+}
+
+/** Shared default store used by the adapter server and the CLI statistics command. */
+export async function defaultUsageStore(): Promise<UsageStore> {
+  const backend = defaultStoreBackend();
+  if (backend === "memory") return new MemoryUsageStore();
+  if (backend === "json") return new JsonFileUsageStore(defaultUsageLocation("json"));
+  const sqlite = await loadSqlite();
+  if (sqlite) return new SqliteUsageStore(await openSqlite(sqlite, defaultUsageLocation("sqlite")));
+  return new JsonFileUsageStore(defaultUsageLocation("json"));
+}
+
+async function openSqlite(api: SqliteApi, location: string): Promise<SqliteDatabase> {
+  if (location !== ":memory:") await mkdir(dirname(location), { recursive: true, mode: 0o700 });
+  return new api.DatabaseSync(location);
 }

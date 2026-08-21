@@ -9,7 +9,7 @@ import { fromChatResponse, fromChatResponseToResponses, providerFor, providers, 
 import { apiKeyFor } from "./providers/registry.js";
 import { extractUsage } from "./providers/usage/index.js";
 import { TokenUsageCollector } from "./usage/collector.js";
-import { createUsageStore } from "./usage/storage.js";
+import { defaultUsageStore } from "./usage/storage.js";
 import type { UsagePeriod, UsageStore } from "./usage/types.js";
 
 export interface Adapter { server: ReturnType<typeof createServer>; token: string; port: number; sessionId: string; store: UsageStore; close(): Promise<void>; }
@@ -47,7 +47,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
   // Claude Code validates the key shape before sending a request. This is still
   // a local-only random token and is never forwarded to the upstream provider.
   const token = `sk-ant-api03-${randomBytes(32).toString("hex")}`;
-  const store = options.store ?? await createUsageStore();
+  const store = options.store ?? await defaultUsageStore();
   const collector = new TokenUsageCollector(store);
   const sessionId = randomUUID();
   const sessionFor = (input: any) => typeof input?.session_id === "string" ? input.session_id : sessionId;

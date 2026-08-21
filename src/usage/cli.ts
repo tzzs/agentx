@@ -1,10 +1,9 @@
 import { calculateCost } from "./pricing/index.js";
-import { createUsageStore, defaultUsageLocation, type StoreBackend } from "./storage.js";
+import { defaultUsageStore } from "./storage.js";
 import type { ModelUsageStat, UsagePeriod, UsageTotals } from "./types.js";
 
-export async function loadStatsStore(): Promise<ReturnType<typeof createUsageStore>> {
-  const backend = process.env.AGENTX_USAGE_BACKEND === "json" || process.env.AGENTX_USAGE_BACKEND === "memory" ? process.env.AGENTX_USAGE_BACKEND as StoreBackend : "sqlite";
-  return createUsageStore({ location: defaultUsageLocation(backend), backend });
+export function loadStatsStore(): Promise<Awaited<ReturnType<typeof defaultUsageStore>>> {
+  return defaultUsageStore();
 }
 
 export function formatPeriod(period: UsagePeriod): string {
