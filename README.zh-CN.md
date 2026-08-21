@@ -235,7 +235,7 @@ agentx proxy --host 0.0.0.0
 
 ## 模型和路由
 
-当前内置 Provider：
+启动时从 `https://opencode.ai/zen/go/v1/models` 拉取 OpenCode 模型目录。当无法访问该接口时，使用内置的回退目录：
 
 | 模型 | 上游协议 |
 | --- | --- |
@@ -246,6 +246,8 @@ agentx proxy --host 0.0.0.0
 | `kimi-k3`、`kimi-k2.7-code`、`kimi-k2.6`、`kimi-k2.5` | Chat Completions API |
 | `glm-5.3`、`glm-5.2`、`glm-5.1`、`glm-5` | Chat Completions API |
 | `mimo-v2.5-pro`、`mimo-v2.5`、`hy3` | Chat Completions API |
+
+接口返回的模型使用 Responses API（`gpt-5.6-luna`）或 Chat Completions API（其余模型）。`--model auto` 仍然在一小部分已知模型之间路由，本地 `/v1/models` 端点始终反映当前目录。
 
 OpenRouter Provider 接受任意模型 id（默认使用 `OPENROUTER_MODEL` 或 `openai/gpt-4o-mini`）。
 

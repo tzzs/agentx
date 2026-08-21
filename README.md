@@ -258,7 +258,7 @@ agentx proxy --host 0.0.0.0
 
 ## Models and Routing
 
-The built-in provider catalog currently contains:
+The OpenCode model catalog is fetched from `https://opencode.ai/zen/go/v1/models` on startup. When the endpoint cannot be reached, the built-in fallback catalog is used:
 
 | Model | Upstream protocol |
 | --- | --- |
@@ -269,6 +269,8 @@ The built-in provider catalog currently contains:
 | `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6`, `kimi-k2.5` | Chat Completions API |
 | `glm-5.3`, `glm-5.2`, `glm-5.1`, `glm-5` | Chat Completions API |
 | `mimo-v2.5-pro`, `mimo-v2.5`, `hy3` | Chat Completions API |
+
+Models returned by the API use the Responses API (`gpt-5.6-luna`) or the Chat Completions API (everything else). `--model auto` still routes between a small set of known models, and the local `/v1/models` endpoint always reflects the current catalog.
 
 The OpenRouter provider accepts any model id (defaulting to `OPENROUTER_MODEL` or `openai/gpt-4o-mini`).
 
