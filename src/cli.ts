@@ -7,7 +7,8 @@ import { providerById } from "./providers/registry.js";
 import { runDoctor, renderDoctor } from "./doctor.js";
 import { credentialStoreAvailable, deleteCredential, promptAndSaveCredential, resolveCredential, storedCredential } from "./credentials.js";
 import { loadLastProfile, saveProfile } from "./profiles.js";
-import { queryProviderUsage, usageProvider } from "./usage.js";
+import { queryProviderUsage, usageProvider } from "./quota.js";
+import { runUsageStats } from "./usage/cli.js";
 
 const HELP: Record<string, string> = {
   claude: "Start the local adapter and Claude Code together",
@@ -16,7 +17,7 @@ const HELP: Record<string, string> = {
   proxy: "Start only the local adapter",
   exec: "Run any command with the temporary Anthropic environment",
   auth: "Manage stored provider credentials",
-  usage: "Query provider quota",
+  usage: "Show token usage statistics or query provider quota",
   doctor: "Inspect the local environment and configuration",
   version: "Print the CLI version",
 };
@@ -29,7 +30,11 @@ function helpText(command?: string): string {
     if (command === "auth") {
       lines.push("Usage: agentx auth <login|status|logout> --provider <provider>");
     } else if (command === "usage") {
-      lines.push("Usage: agentx usage --provider <provider>");
+      lines.push("Usage: agentx usage [--period today|week|month|all]");
+      lines.push("       agentx usage --provider <provider>");
+      lines.push("Options:");
+      lines.push("  --period <range>    Time range for token statistics (default all)");
+      lines.push("  --provider <id>     Query provider quota instead of token statistics");
     } else if (command === "exec") {
       lines.push("Usage: agentx exec [options] -- <command> [args...]");
     } else {
@@ -79,7 +84,13 @@ if (command === "version") return console.log("1.0.0");
     throw new Error("Usage: agentx auth <login|status|logout> --provider <provider>");
   }
   if (command === "usage") {
-    const provider = usageProvider(options(args).provider); const key = provider.id === "opencode" ? "" : await resolveCredential(provider);
+    const opts = options(args);
+    if (!opts.provider && !process.env.AGENTX_PROVIDER) {
+      const period = opts.period === "today" || opts.period === "week" || opts.period === "month" || opts.period === "all" ? opts.period : "all";
+      console.log(await runUsageStats(period));
+      return;
+    }
+    const provider = usageProvider(opts.provider); const key = provider.id === "opencode" ? "" : await resolveCredential(provider);
     const result = await queryProviderUsage(provider.id, key); console.log(JSON.stringify(result, null, 2)); if (!result.success && result.supported) process.exitCode = 1; return;
   }
   if (command === "doctor") {

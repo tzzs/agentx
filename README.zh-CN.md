@@ -43,6 +43,14 @@ agentx usage --provider deepseek
 agentx usage --provider openrouter
 ```
 
+不带 `--provider` 时，`agentx usage` 会打印适配器处理的每个请求累计的 Token
+用量统计（见 [Token 用量统计](#token-用量统计)）：
+
+```bash
+agentx usage
+agentx usage --period today
+```
+
 OpenCode Go 当前会返回明确的不支持结果，因为它没有公开、文档化的额度接口。
 
 同时支持通过 OpenAI 兼容环境启动 Pi Agent：
@@ -136,7 +144,7 @@ agentx codex
 agentx proxy
 ```
 
-本地 API 地址为 `http://127.0.0.1:<port>`，提供 `GET /health`、`GET /v1/models`、`POST /v1/messages` 和 `POST /v1/responses`。
+本地 API 地址为 `http://127.0.0.1:<port>`，提供 `GET /health`、`GET /v1/models`、`POST /v1/messages`、`POST /v1/responses`，以及 [Token 用量统计](#token-用量统计) 中说明的只读用量端点。
 
 ### `exec`
 
@@ -178,7 +186,17 @@ agentx auth logout --provider deepseek
 
 ### `usage`
 
-查询已公开额度接口的 Provider 额度：
+打印适配器服务的每个请求累计的 Token 用量统计：
+
+```bash
+agentx usage                 # 全部时间
+agentx usage --period today  # today / week / month / all
+```
+
+报告按 Provider 和模型分组显示 Token 数，包含输入/输出/总量，以及基于
+Provider 定价估算的成本。统计按适配器运行保存；`--period` 可按时间范围过滤。
+
+带 `--provider` 时，该命令改为查询已公开额度接口的 Provider 额度：
 
 ```bash
 agentx usage --provider deepseek
@@ -207,6 +225,7 @@ CLI 参数优先于环境变量。默认模型为 `gpt-5.6-luna`。
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | 模型名或 `auto` |
 | `--provider <id>` | `AGENTX_PROVIDER` | 无 | 上游 Provider（`opencode`、`deepseek`、`openrouter`） |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | 预留的详细日志选项 |
+| | `AGENTX_USAGE_DIR` | `~/.config/agentx` | Token 用量统计存储目录 |
 
 如果首选端口已被占用，适配器会依次尝试后续端口。非回环监听必须显式指定，并且只应在可信网络中使用：
 
@@ -240,7 +259,7 @@ agentx claude --model gpt-5.6-luna
 
 ## API 转换
 
-适配器是无状态的。Claude Code 会在每次请求中携带完整对话，适配器不会在本地持久化对话历史。
+适配器不会持久化对话历史。Claude Code 会在每次请求中携带完整对话；唯一的本地持久化是聚合后的 Token 用量统计（见 [Token 用量统计](#token-用量统计)）。
 
 当前支持的转换包括：
 
@@ -252,6 +271,45 @@ agentx claude --model gpt-5.6-luna
 - Responses 和 Chat Completions usage 字段转换为 Anthropic usage 字段
 
 适配器只负责工具协议转换，不会执行工具，也不会持久化 prompt、工具参数或对话状态。
+
+## Token 用量统计
+
+每个成功请求都会自动测量并归一化为 Provider 无关的 `TokenUsage` 记录。
+各 Provider 通过自己的用量适配器（`src/providers/usage/`）把 Provider 特有的
+字段映射成通用格式；核心运行时只感知 `TokenUsage`。
+
+用量持久化到本地 SQLite 数据库（使用 Node 内置的 `node:sqlite`），路径为
+`~/.config/agentx/usage.db`；当 `node:sqlite` 不可用时回退为 JSON 文件。
+记录中包含 Provider、模型、输入/输出/总 Token、缓存与推理 Token、会话 ID
+和时间戳。
+
+### 流式响应
+
+对于流式响应，当 Provider 在最后一个数据块中返回 usage 时，适配器会捕获它。
+如果 Provider 没有返回 usage，适配器会累计增量并把记录标记为 `estimated`。
+
+### 查询 API
+
+适配器提供只读的用量端点（无需认证）：
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET /usage/session?id=<session>` | 单个会话的输入/输出/总 Token |
+| `GET /usage/providers?period=...` | 按 Provider 统计的 Token 与请求数 |
+| `GET /usage/stats?period=...` | 按时间范围统计的总量 |
+
+`period` 接受 `today`、`week`、`month` 或 `all`。不传 `period` 时统计全部记录。
+
+### 成本估算
+
+定价层（`src/usage/pricing/`）把 Token 数量转换为每个 Provider 的估算成本。
+用量收集与成本计算相互独立；CLI 报告仅用定价层做展示。
+
+### 存储与数据
+
+- 统计保存在 `~/.config/agentx/usage.db`（或 `usage.json` 回退）。
+- `AGENTX_USAGE_DIR` 可覆盖存储目录。
+- 只保存 Token 数量和元数据——绝不保存 prompt、工具参数或对话内容。
 
 ## 安全与隐私
 
@@ -277,7 +335,7 @@ npm run build
 
 项目使用 TypeScript、Node.js 原生 `fetch`、Node.js ESM 和内置 `node:test` 测试运行器。测试会先编译到 `dist/test`，再执行编译后的测试。
 
-测试覆盖请求/响应转换、system instructions、流式事件、工具调用、模型路由和 Chat Completions 转换。测试不需要 API Key，也不依赖网络。
+测试覆盖请求/响应转换、system instructions、流式事件、工具调用、模型路由、Chat Completions 转换，以及 Token 用量适配器、存储、定价和用量查询 API。测试不需要 API Key，也不依赖网络。
 
 ## CI 与发布
 
