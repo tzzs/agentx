@@ -9,8 +9,7 @@ function base(usage: any, ctx: UsageContext): TokenUsage | null {
     outputTokens: 0,
     totalTokens: 0,
     ...(ctx.sessionId === undefined ? {} : { sessionId: ctx.sessionId }),
-    ...(ctx.timestamp === undefined ? {} : { timestamp: ctx.timestamp }),
-    ...(ctx.requestId === undefined ? {} : { requestId: ctx.requestId })
+    ...(ctx.timestamp === undefined ? {} : { timestamp: ctx.timestamp })
   };
 }
 

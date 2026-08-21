@@ -299,6 +299,7 @@ agentx claude --model gpt-5.6-luna
 | `GET /usage/stats?period=...` | 按时间范围统计的总量 |
 
 `period` 接受 `today`、`week`、`month` 或 `all`。不传 `period` 时统计全部记录。
+会话端点也支持路径形式 `GET /usage/session/<id>`。
 
 ### 成本估算
 
@@ -316,6 +317,7 @@ agentx claude --model gpt-5.6-luna
 - 上游 API Key 只从 CLI 或环境变量读取，并只发送给 OpenCode Go。
 - Claude Code 每次只收到适配器进程生成的随机本地 Bearer Token，该 Token 不会持久化。
 - 默认监听 `127.0.0.1`，不会修改 shell profile 或永久操作系统环境变量。
+- `/usage/*` 查询端点无需认证；它们只暴露聚合后的 Token 数量，在本地回环地址访问是安全的，但适配器绑定到非回环接口时请勿暴露这些端点。
 - 日志不应包含 API Key、Authorization Header、用户 prompt 或敏感工具参数。
 - `--host 0.0.0.0` 会主动暴露网络服务，请配置适当的网络访问控制。
 

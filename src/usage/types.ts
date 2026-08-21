@@ -7,7 +7,6 @@ export interface TokenUsage {
   cachedInputTokens?: number;
   cacheWriteTokens?: number;
   reasoningTokens?: number;
-  requestId?: string;
   timestamp?: number;
   sessionId?: string;
   estimated?: boolean;
@@ -18,7 +17,6 @@ export interface UsageContext {
   model?: string;
   sessionId?: string;
   timestamp?: number;
-  requestId?: string;
 }
 
 export type UsagePeriod = "today" | "week" | "month" | "all";
@@ -51,15 +49,15 @@ export interface ProviderUsageStat {
 export interface ModelUsageStat {
   provider: string;
   model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  reasoningTokens: number;
   tokens: number;
   requests: number;
 }
 
-export interface ProviderCapabilities {
-  supportsUsage: boolean;
-  supportsStreamingUsage: boolean;
-  supportsCacheTokens: boolean;
-}
+export type { ProviderCapabilities } from "../providers/types.js";
 
 export interface ProviderUsageAdapter {
   extractUsage(response: any): TokenUsage | null;

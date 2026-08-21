@@ -76,8 +76,8 @@ export class SqliteUsageStore implements UsageStore {
 
   async modelStats(period?: UsagePeriod): Promise<ModelUsageStat[]> {
     const { clause, args } = this.where(period);
-    const rows = this.db.prepare(`SELECT provider, model, COALESCE(SUM(total_tokens),0) AS tokens, COUNT(*) AS requests FROM token_usage ${clause} GROUP BY provider, model ORDER BY tokens DESC, provider ASC, model ASC`).all(...args) as any[];
-    return rows.map((row) => ({ provider: row.provider, model: row.model, tokens: Number(row.tokens), requests: Number(row.requests) }));
+    const rows = this.db.prepare(`SELECT provider, model, COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens, COALESCE(SUM(cached_tokens),0) AS cachedTokens, COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens, COALESCE(SUM(total_tokens),0) AS tokens, COUNT(*) AS requests FROM token_usage ${clause} GROUP BY provider, model ORDER BY tokens DESC, provider ASC, model ASC`).all(...args) as any[];
+    return rows.map((row) => ({ provider: row.provider, model: row.model, inputTokens: Number(row.inputTokens), outputTokens: Number(row.outputTokens), cachedTokens: Number(row.cachedTokens), reasoningTokens: Number(row.reasoningTokens), tokens: Number(row.tokens), requests: Number(row.requests) }));
   }
 
   async totals(period?: UsagePeriod): Promise<UsageTotals> {
@@ -107,8 +107,8 @@ class MemoryUsageStore implements UsageStore {
     return [...grouped.entries()].map(([provider, value]) => ({ provider, ...value })).sort((a, b) => b.tokens - a.tokens || (a.provider < b.provider ? -1 : 1));
   }
   async modelStats(period?: UsagePeriod): Promise<ModelUsageStat[]> {
-    const grouped = new Map<string, { provider: string; model: string; tokens: number; requests: number }>();
-    for (const row of this.filter(period)) { const key = `${row.provider}/${row.model}`; const entry = grouped.get(key) ?? { provider: row.provider, model: row.model, tokens: 0, requests: 0 }; entry.tokens += row.totalTokens; entry.requests++; grouped.set(key, entry); }
+    const grouped = new Map<string, { provider: string; model: string; inputTokens: number; outputTokens: number; cachedTokens: number; reasoningTokens: number; tokens: number; requests: number }>();
+    for (const row of this.filter(period)) { const key = `${row.provider}/${row.model}`; const entry = grouped.get(key) ?? { provider: row.provider, model: row.model, inputTokens: 0, outputTokens: 0, cachedTokens: 0, reasoningTokens: 0, tokens: 0, requests: 0 }; entry.inputTokens += row.inputTokens; entry.outputTokens += row.outputTokens; entry.cachedTokens += row.cachedTokens; entry.reasoningTokens += row.reasoningTokens; entry.tokens += row.totalTokens; entry.requests++; grouped.set(key, entry); }
     return [...grouped.values()].sort((a, b) => b.tokens - a.tokens || (a.provider < b.provider ? -1 : 1) || (a.model < b.model ? -1 : 1));
   }
   async totals(period?: UsagePeriod): Promise<UsageTotals> { return this.sum(this.filter(period)); }
@@ -145,26 +145,30 @@ export function defaultStoreBackend(): StoreBackend {
   return value === "json" || value === "memory" || value === "sqlite" ? value : "sqlite";
 }
 
+async function sqliteOrFallback(sqliteLocation: string, jsonLocation: string): Promise<UsageStore> {
+  const sqlite = await loadSqlite();
+  if (!sqlite) return new JsonFileUsageStore(jsonLocation);
+  try {
+    if (sqliteLocation !== ":memory:") await mkdir(dirname(sqliteLocation), { recursive: true, mode: 0o700 });
+    return new SqliteUsageStore(new sqlite.DatabaseSync(sqliteLocation));
+  } catch {
+    return new JsonFileUsageStore(jsonLocation);
+  }
+}
+
 export async function createUsageStore(options: { location?: string; backend?: StoreBackend } = {}): Promise<UsageStore> {
   const backend = options.backend ?? "sqlite";
   if (backend === "memory") return new MemoryUsageStore();
-  if (backend === "json") return new JsonFileUsageStore(options.location ?? defaultUsageLocation("json"));
-  const sqlite = await loadSqlite();
-  if (sqlite) return new SqliteUsageStore(await openSqlite(sqlite, options.location ?? defaultUsageLocation("sqlite")));
-  return new JsonFileUsageStore(options.location ?? defaultUsageLocation("json"));
+  const jsonLocation = options.location ?? defaultUsageLocation("json");
+  if (backend === "json") return new JsonFileUsageStore(jsonLocation);
+  return sqliteOrFallback(options.location ?? defaultUsageLocation("sqlite"), jsonLocation);
 }
 
 /** Shared default store used by the adapter server and the CLI statistics command. */
 export async function defaultUsageStore(): Promise<UsageStore> {
   const backend = defaultStoreBackend();
   if (backend === "memory") return new MemoryUsageStore();
-  if (backend === "json") return new JsonFileUsageStore(defaultUsageLocation("json"));
-  const sqlite = await loadSqlite();
-  if (sqlite) return new SqliteUsageStore(await openSqlite(sqlite, defaultUsageLocation("sqlite")));
-  return new JsonFileUsageStore(defaultUsageLocation("json"));
-}
-
-async function openSqlite(api: SqliteApi, location: string): Promise<SqliteDatabase> {
-  if (location !== ":memory:") await mkdir(dirname(location), { recursive: true, mode: 0o700 });
-  return new api.DatabaseSync(location);
+  const jsonLocation = defaultUsageLocation("json");
+  if (backend === "json") return new JsonFileUsageStore(jsonLocation);
+  return sqliteOrFallback(defaultUsageLocation("sqlite"), jsonLocation);
 }

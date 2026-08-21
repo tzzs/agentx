@@ -48,17 +48,18 @@ export async function pipeChatStreamToResponses(upstream: Response, response: Se
 export async function pipeResponsesPassthrough(upstream: Response, response: ServerResponse, model: string, options?: StreamUsageOptions) {
   response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
   const reader = upstream.body?.getReader(); if (!reader) throw new Error("Upstream returned no stream");
-  const decoder = new TextDecoder(); let buffer = ""; let usage: TokenUsage | null = null;
+  const decoder = new TextDecoder(); let buffer = ""; let usage: TokenUsage | null = null; let outputTokens = 0;
   const consume = (line: string) => {
     if (!line.startsWith("data:")) return; const value = line.slice(5).trim(); if (!value || value === "[DONE]") return;
     try {
       const item = JSON.parse(value);
+      if (item.type === "response.output_text.delta" && typeof item.delta === "string") outputTokens++;
       if (item.response?.usage && options) { const inputTokens = item.response.usage.input_tokens ?? 0; const outputTokens = item.response.usage.output_tokens ?? 0; usage = { provider: options.provider, model, inputTokens, outputTokens, totalTokens: item.response.usage.total_tokens ?? (inputTokens + outputTokens), ...(options.sessionId ? { sessionId: options.sessionId } : {}) }; }
     } catch { /* Ignore incomplete provider events. */ }
   };
   while (true) { const { done, value } = await reader.read(); const chunk = value ? Buffer.from(decoder.decode(value, { stream: !done })) : Buffer.alloc(0); if (chunk.length) { buffer += chunk.toString(); const lines = buffer.split(/\r?\n/); buffer = lines.pop() ?? ""; lines.forEach(consume); response.write(chunk); } if (done) break; }
   response.end();
-  if (options?.onUsage) options.onUsage(usage ?? estimatedUsage(options.provider, model, 0, 0, options.sessionId));
+  if (options?.onUsage) options.onUsage(usage ?? estimatedUsage(options.provider, model, 0, outputTokens, options.sessionId));
 }
 
 export async function pipeResponsesStream(upstream: Response, response: ServerResponse, model: string, options?: StreamUsageOptions) {

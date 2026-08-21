@@ -303,7 +303,8 @@ The adapter exposes read-only usage endpoints (no authentication):
 | `GET /usage/stats?period=...` | Totals over a time range |
 
 `period` accepts `today`, `week`, `month`, or `all`. Without a `period`, the
-endpoints report all recorded usage.
+endpoints report all recorded usage. The session endpoint also accepts the
+path form `GET /usage/session/<id>`.
 
 ### Cost Estimation
 
@@ -323,6 +324,7 @@ report uses the pricing layer only for display.
 - The upstream API key is read from the CLI or environment and sent only to OpenCode Go.
 - Claude Code receives a random, non-persisted local bearer token for each adapter process.
 - The default listener is `127.0.0.1`; no shell profile or permanent OS environment variable is modified.
+- The `/usage/*` query endpoints are unauthenticated; they expose aggregated token counts only and are safe to reach from localhost, but do not expose them when the adapter is bound to a non-loopback interface.
 - Logs must not contain API keys, authorization headers, prompts, or sensitive tool input.
 - Treat `--host 0.0.0.0` as a deliberate network exposure and protect it with appropriate network controls.
 

@@ -51,7 +51,8 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
   const collector = new TokenUsageCollector(store);
   const sessionId = randomUUID();
   const sessionFor = (input: any) => typeof input?.session_id === "string" ? input.session_id : sessionId;
-  const recordUsage = (value: any, provider: ProviderModel, session: string) => { const usage = extractUsage(value, provider, { sessionId: session }); if (usage) void collector.record(usage); };
+  const recordUsage = (value: any, provider: ProviderModel, session: string) => { const usage = extractUsage(value, provider, { sessionId: session }); if (usage) safeRecord(usage); };
+  const safeRecord = (usage: TokenUsage) => { collector.record(usage).catch((error) => debug(config, `usage record error=${error instanceof Error ? error.message : "unknown"}`)); };
   const server = createServer(async (request, response) => {
     debug(config, `${request.method} ${request.url}`);
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
@@ -85,12 +86,10 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
         const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model)) });
         debug(config, `provider status=${upstream.status}`);
         if (!upstream.ok) return upstreamError(response, upstream, upstream.status);
-        if (input.stream && provider.protocol === "chat-completions") return pipeChatStreamToResponses(upstream, response, model, streamOptions(provider, sessionFor(input), (usage) => void collector.record(usage)));
-        if (input.stream) return pipeResponsesPassthrough(upstream, response, model, streamOptions(provider, sessionFor(input), (usage) => void collector.record(usage)));
-        const contentType = upstream.headers.get("content-type") ?? "application/json";
-        response.writeHead(upstream.status, { "content-type": contentType });
+        if (input.stream && provider.protocol === "chat-completions") return pipeChatStreamToResponses(upstream, response, model, streamOptions(provider, sessionFor(input), safeRecord));
+        if (input.stream) return pipeResponsesPassthrough(upstream, response, model, streamOptions(provider, sessionFor(input), safeRecord));
         if (provider.protocol === "responses" && upstream.body) { const value = await upstream.json(); recordUsage(value, provider, sessionFor(input)); return json(response, upstream.status, value); }
-        if (upstream.body) { const value = await upstream.json(); recordUsage(value, provider, sessionFor(input)); return response.end(JSON.stringify(fromChatResponseToResponses(value, model))); }
+        if (upstream.body) { const value = await upstream.json(); recordUsage(value, provider, sessionFor(input)); return json(response, upstream.status, fromChatResponseToResponses(value, model)); }
         return response.end();
       } catch (error) { debug(config, `responses error=${error instanceof Error ? error.message : "unknown"}`); return json(response, 400, { error: { message: error instanceof Error ? error.message : "Invalid request", type: "invalid_request_error" } }); }
     }
@@ -104,7 +103,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
         const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model)) });
         debug(config, `provider status=${upstream.status}`);
         if (!upstream.ok) return upstreamError(response, upstream, upstream.status);
-        return pipeResponsesStream(upstream, response, model, streamOptions(provider, sessionFor(input), (usage) => void collector.record(usage)));
+        return pipeResponsesStream(upstream, response, model, streamOptions(provider, sessionFor(input), safeRecord));
       }
       const upstream = await fetch(provider.endpoint, {
         method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },

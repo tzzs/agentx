@@ -37,6 +37,12 @@ test("maps Anthropic Messages usage including cache tokens", () => {
   assert.equal(usage!.cachedInputTokens, 20); assert.equal(usage!.cacheWriteTokens, 30);
 });
 
+test("maps Anthropic cache_creation tokens to cacheWrite, not cachedInput", () => {
+  const usage = extractAnthropicUsage({ usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 30 } }, { provider: "anthropic", model: "claude-sonnet-4" });
+  assert.equal(usage!.cachedInputTokens, undefined);
+  assert.equal(usage!.cacheWriteTokens, 30);
+});
+
 test("maps Google Gemini usageMetadata", () => {
   const usage = extractGeminiUsage({ usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50, totalTokenCount: 150, cachedContentTokenCount: 10, thoughtsTokenCount: 5 } }, { provider: "google", model: "gemini-2.5-pro" });
   assert.equal(usage!.inputTokens, 100); assert.equal(usage!.outputTokens, 50);

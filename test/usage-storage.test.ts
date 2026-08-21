@@ -30,7 +30,10 @@ for (const backend of ["sqlite", "memory", "json"] as const) {
       const providers = await store.providerStats("all");
       assert.deepEqual(providers, [{ provider: "anthropic", tokens: 300, requests: 1 }, { provider: "openai", tokens: 300, requests: 2 }]);
       const models = await store.modelStats("all");
-      assert.deepEqual(models, [{ provider: "anthropic", model: "claude-sonnet-4", tokens: 300, requests: 1 }, { provider: "openai", model: "gpt-4o", tokens: 300, requests: 2 }]);
+      assert.deepEqual(models, [
+        { provider: "anthropic", model: "claude-sonnet-4", inputTokens: 200, outputTokens: 100, cachedTokens: 0, reasoningTokens: 0, tokens: 300, requests: 1 },
+        { provider: "openai", model: "gpt-4o", inputTokens: 200, outputTokens: 100, cachedTokens: 0, reasoningTokens: 0, tokens: 300, requests: 2 }
+      ]);
       await store.close();
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
@@ -59,6 +62,15 @@ test("computes period start timestamps", () => {
 test("sqlite backend availability is reported", async () => {
   const available = await sqliteAvailable();
   assert.equal(typeof available, "boolean");
+});
+
+test("sqlite backend falls back to JSON when the database cannot be opened", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentx-usage-fallback-"));
+  try {
+    const store = await createUsageStore({ backend: "sqlite", location: dir });
+    assert.equal(store.constructor.name, "JsonFileUsageStore");
+    await store.close();
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
 test("normalizeUsage fills missing defaults", () => {

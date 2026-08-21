@@ -61,11 +61,25 @@ test("pipeResponsesPassthrough forwards chunks and captures usage", async () => 
   assert.deepEqual(usages[0], { provider: "opencode", model: "gpt-5.6-luna", inputTokens: 5, outputTokens: 2, totalTokens: 7 });
 });
 
+test("pipeResponsesPassthrough estimates usage from deltas when the provider sends none", async () => {
+  const chunks = [
+    'data: {"type":"response.output_text.delta","delta":"A"}\n\n',
+    'data: {"type":"response.output_text.delta","delta":"B"}\n\n',
+    "data: [DONE]\n\n"
+  ];
+  const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
+  const output = { writeHead() {}, write() {}, end() {} };
+  const usages: TokenUsage[] = [];
+  await pipeResponsesPassthrough(upstream, output as never, "gpt-5.6-luna", { provider: "opencode", model: "gpt-5.6-luna", protocol: "responses", onUsage: (usage) => usages.push(usage) });
+  assert.equal(usages[0].estimated, true);
+  assert.equal(usages[0].outputTokens, 2);
+});
+
 test("renders usage statistics for the CLI", () => {
   const text = renderUsageStats({
     period: "all",
     totals: { inputTokens: 120000, outputTokens: 35000, totalTokens: 155000 },
-    models: [{ provider: "openai", model: "gpt-5", tokens: 120000, requests: 35 }, { provider: "anthropic", model: "claude-sonnet-4", tokens: 35000, requests: 20 }]
+    models: [{ provider: "openai", model: "gpt-5", inputTokens: 90000, outputTokens: 30000, cachedTokens: 0, reasoningTokens: 0, tokens: 120000, requests: 35 }, { provider: "anthropic", model: "claude-sonnet-4", inputTokens: 25000, outputTokens: 9000, cachedTokens: 1000, reasoningTokens: 0, tokens: 35000, requests: 20 }]
   });
   assert.match(text, /Token Usage \(All time\)/);
   assert.match(text, /openai/);

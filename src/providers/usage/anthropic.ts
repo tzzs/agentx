@@ -6,7 +6,6 @@ export function extractAnthropicUsage(response: any, ctx: UsageContext): TokenUs
   if (!usage || typeof usage !== "object") return null;
   const inputTokens = Number(usage.input_tokens ?? 0);
   const outputTokens = Number(usage.output_tokens ?? 0);
-  const cachedInput = usage.cache_read_input_tokens ?? usage.cache_creation_input_tokens;
   const result: TokenUsage = {
     provider: ctx.provider ?? "unknown",
     model: ctx.model ?? "unknown",
@@ -14,11 +13,9 @@ export function extractAnthropicUsage(response: any, ctx: UsageContext): TokenUs
     outputTokens,
     totalTokens: inputTokens + outputTokens,
     ...(ctx.sessionId === undefined ? {} : { sessionId: ctx.sessionId }),
-    ...(ctx.timestamp === undefined ? {} : { timestamp: ctx.timestamp }),
-    ...(ctx.requestId === undefined ? {} : { requestId: ctx.requestId })
+    ...(ctx.timestamp === undefined ? {} : { timestamp: ctx.timestamp })
   };
   if (usage.cache_read_input_tokens !== undefined && usage.cache_read_input_tokens !== null) result.cachedInputTokens = Number(usage.cache_read_input_tokens);
   if (usage.cache_creation_input_tokens !== undefined && usage.cache_creation_input_tokens !== null) result.cacheWriteTokens = Number(usage.cache_creation_input_tokens);
-  if (cachedInput !== undefined && cachedInput !== null && result.cachedInputTokens === undefined) result.cachedInputTokens = Number(cachedInput);
   return result;
 }

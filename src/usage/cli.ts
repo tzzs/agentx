@@ -1,3 +1,4 @@
+import { capabilitiesFor } from "./capabilities.js";
 import { calculateCost } from "./pricing/index.js";
 import { defaultUsageStore } from "./storage.js";
 import type { ModelUsageStat, UsagePeriod, UsageTotals } from "./types.js";
@@ -22,10 +23,14 @@ export function renderUsageStats(stats: { models: ModelUsageStat[]; totals: Usag
   if (!stats.models.length) { lines.push("No usage recorded yet."); return lines.join("\n"); }
   const providerWidth = Math.max(...stats.models.map((item) => item.provider.length), "Provider".length);
   const modelWidth = Math.max(...stats.models.map((item) => item.model.length), "Model".length);
-  lines.push(`${"Provider".padEnd(providerWidth)}  ${"Model".padEnd(modelWidth)}  Tokens  Requests  Cost`);
+  const showCached = stats.models.some((item) => capabilitiesFor(item.provider).supportsCacheTokens);
+  const cachedWidth = Math.max(...stats.models.map((item) => compact(item.cachedTokens).length), "Cached".length);
+  const cachedHeader = showCached ? `  ${"Cached".padStart(cachedWidth)}` : "";
+  lines.push(`${"Provider".padEnd(providerWidth)}  ${"Model".padEnd(modelWidth)}  Tokens  Requests${cachedHeader}  Cost`);
   for (const item of stats.models) {
-    const cost = calculateCost(item.provider, item.model, { provider: item.provider, model: item.model, inputTokens: 0, outputTokens: item.tokens, totalTokens: item.tokens });
-    lines.push(`${item.provider.padEnd(providerWidth)}  ${item.model.padEnd(modelWidth)}  ${compact(item.tokens).padStart(6)}  ${String(item.requests).padStart(8)}  $${cost.toFixed(4)}`);
+    const cost = calculateCost(item.provider, item.model, { provider: item.provider, model: item.model, inputTokens: item.inputTokens, outputTokens: item.outputTokens, cachedInputTokens: item.cachedTokens, reasoningTokens: item.reasoningTokens, totalTokens: item.tokens });
+    const cached = showCached ? `  ${compact(item.cachedTokens).padStart(cachedWidth)}` : "";
+    lines.push(`${item.provider.padEnd(providerWidth)}  ${item.model.padEnd(modelWidth)}  ${compact(item.tokens).padStart(6)}  ${String(item.requests).padStart(8)}${cached}  $${cost.toFixed(4)}`);
   }
   lines.push("");
   lines.push(`Input:  ${compact(stats.totals.inputTokens)}`);

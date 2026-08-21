@@ -66,7 +66,7 @@ Query API + CLI statistics
    Schema + indexes per the plan; queries for session / provider / time-range.
 
 6. **Usage query API** — new endpoints in `src/server.ts`:
-   - `GET /usage/session/:id`
+   - `GET /usage/session?id=<session>` (also accepts `/usage/session/<id>`)
    - `GET /usage/providers?period=today|week|month|all`
    - `GET /usage/stats?period=...`
 
