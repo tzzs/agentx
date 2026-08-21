@@ -47,6 +47,12 @@ npm test          # 先构建，再执行 node --test dist/test/*.test.js
 
 `--model auto` 使用 `selectModel`（src/catalog.ts）中的简单基于大小的路由：有工具或上下文较大 → `gpt-5.6-luna`，否则依据消息大小 → `deepseek-v4-pro` / `deepseek-v4-flash`。
 
+### Token 用量统计
+
+`src/usage/` 是统计系统：`types.ts` 定义统一的 `TokenUsage`、`UsageStore` 等类型，`collector.ts` 归一化并持久化，`storage.ts` 提供 SQLite（`node:sqlite`）/ JSON / 内存三种存储后端，`pricing/` 做成本估算，`cli.ts` 渲染 `agentx usage` 输出。`src/providers/usage/` 是 Provider 用量适配器，负责把各 Provider 的原始响应字段映射为 `TokenUsage`（`extractUsage(response, model, ctx)`）。
+
+**架构规则**：核心层只理解 `TokenUsage`，绝不解析 Provider 原始响应；Provider 层只做字段映射，不做统计逻辑；新增 Provider 只需添加用量适配器与定价配置，无需改动核心运行时、存储或 CLI。每请求成功后由 `src/server.ts` 自动调用 `collector.record(usage)`（非流式与流式都要覆盖）。
+
 ### 请求流程
 
 入口 `src/cli.ts` 解析选项（CLI 参数优先于 `AGENTX_*` 环境变量，通过 `loadConfig`），解析 API key，保存非机密 profile，启动适配器（`src/server.ts`），然后用指向本地端点的 `ANTHROPIC_*`（Claude）或 `OPENAI_*`（Codex/Pi）环境变量启动客户端（`src/process.ts`）。`src/server.ts` 是无状态的——每个请求都携带完整对话，服务端不持久化任何内容。

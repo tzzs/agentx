@@ -8,9 +8,9 @@ const chatModels = ["deepseek-v4-pro", "deepseek-v4-flash", "minimax-m3", "minim
 function models(provider: string, endpoint: string, ids: string[], protocol: "responses" | "chat-completions") { return ids.map((model) => ({ provider, model, protocol, endpoint })); }
 
 export const providerRegistry: ProviderDefinition[] = [
-  { id: "opencode", name: "OpenCode Go", apiKeyEnv: "OPENCODE_API_KEY", models: [{ provider: "opencode", model: "gpt-5.6-luna", protocol: "responses", endpoint: `${openCodeBase}/responses` }, ...models("opencode", `${openCodeBase}/chat/completions`, chatModels, "chat-completions")] },
-  { id: "deepseek", name: "DeepSeek", apiKeyEnv: "DEEPSEEK_API_KEY", models: models("deepseek", `${deepSeekBase}/chat/completions`, ["deepseek-v4-pro", "deepseek-v4-flash"], "chat-completions") },
-  { id: "openrouter", name: "OpenRouter", apiKeyEnv: "OPENROUTER_API_KEY", models: models("openrouter", `${openRouterBase}/chat/completions`, [process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini"], "chat-completions") }
+  { id: "opencode", name: "OpenCode Go", apiKeyEnv: "OPENCODE_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: true }, models: [{ provider: "opencode", model: "gpt-5.6-luna", protocol: "responses", endpoint: `${openCodeBase}/responses` }, ...models("opencode", `${openCodeBase}/chat/completions`, chatModels, "chat-completions")] },
+  { id: "deepseek", name: "DeepSeek", apiKeyEnv: "DEEPSEEK_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: true }, models: models("deepseek", `${deepSeekBase}/chat/completions`, ["deepseek-v4-pro", "deepseek-v4-flash"], "chat-completions") },
+  { id: "openrouter", name: "OpenRouter", apiKeyEnv: "OPENROUTER_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: false }, models: models("openrouter", `${openRouterBase}/chat/completions`, [process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini"], "chat-completions") }
 ];
 
 export const allModels = providerRegistry.flatMap((provider) => provider.models);
