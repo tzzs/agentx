@@ -8,7 +8,7 @@ export interface Config {
 }
 
 export function loadConfig(options: Record<string, string | undefined> = {}): Config {
-  const apiKey = options.apiKey ?? "";
+  const apiKey = options.apiKey ?? options["api-key"] ?? "";
   const provider = options.provider ?? process.env.AGENTX_PROVIDER;
   const defaultModel = provider === "deepseek" ? "deepseek-v4-pro" : provider === "openrouter" ? process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini" : "gpt-5.6-luna";
   const port = Number(options.port ?? process.env.AGENTX_PORT ?? 8787);
