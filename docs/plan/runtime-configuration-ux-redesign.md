@@ -28,7 +28,7 @@ AgentX 当前支持：
 
 当前 Provider：
 
-- OpenCode Go
+- OpenCode
 - DeepSeek
 - OpenRouter
 
@@ -68,7 +68,7 @@ AgentX 当前支持：
 如果已经存在默认配置：
 
     Claude Code
-    Provider: OpenCode Go
+    Provider: OpenCode
     Model: gpt-5.6-luna
 
 则直接使用该配置启动。
@@ -91,7 +91,7 @@ AgentX 当前支持：
 
     Claude Code
 
-    Provider   OpenCode Go
+    Provider   OpenCode
     Model      gpt-5.6-luna
 
     Enter → Start
@@ -113,7 +113,7 @@ AgentX 当前支持：
     │                                            │
     │  Claude Code                               │
     │                                            │
-    │  Provider    OpenCode Go              ›    │
+    │  Provider    OpenCode              ›    │
     │  Model       gpt-5.6-luna             ›    │
     │                                            │
     │                          [ Start ]          │
@@ -121,7 +121,7 @@ AgentX 当前支持：
 
 其中：
 
-    Provider    OpenCode Go    ›
+    Provider    OpenCode    ›
     Model       gpt-5.6-luna   ›
 
 表达的是：
@@ -159,14 +159,14 @@ Provider 行必须支持用户主动打开 Provider selector。
 
 用户点击：
 
-    Provider   OpenCode Go   ›
+    Provider   OpenCode   ›
 
 之后：
 
     ┌──────────────────────────────┐
     │ Change Provider              │
     │                              │
-    │ ✓ OpenCode Go                │
+    │ ✓ OpenCode                │
     │   DeepSeek                   │
     │   OpenRouter                 │
     │                              │
@@ -194,14 +194,14 @@ Provider 和 Model 存在父子关系：
 
 因此用户从：
 
-    OpenCode Go
+    OpenCode
     gpt-5.6-luna
 
 切换：
 
     DeepSeek
 
-不能继续保留一个属于 OpenCode Go 的 model。
+不能继续保留一个属于 OpenCode 的 model。
 
 必须执行：
 
@@ -226,7 +226,7 @@ Provider 和 Model 存在父子关系：
 
 第一次：
 
-    OpenCode Go
+    OpenCode
     → gpt-5.6-luna
 
 之后切：
@@ -236,11 +236,11 @@ Provider 和 Model 存在父子关系：
 
 再切回：
 
-    OpenCode Go
+    OpenCode
 
 应该自动恢复：
 
-    OpenCode Go
+    OpenCode
     → gpt-5.6-luna
 
 而不是要求用户重新选择。
@@ -249,7 +249,7 @@ Provider 和 Model 存在父子关系：
 
     Provider preferences
 
-    OpenCode Go
+    OpenCode
       lastModel: gpt-5.6-luna
 
     DeepSeek
@@ -295,7 +295,7 @@ Provider 和 Model 存在父子关系：
 
     DeepSeek → deepseek-v4-pro
     OpenRouter → anthropic/claude-sonnet-4
-    OpenCode Go → gpt-5.6-luna
+    OpenCode → gpt-5.6-luna
 
 实际上是用户真正选择的 Runtime。
 
@@ -368,7 +368,7 @@ Provider 的 Context Menu 建议包含：
     ┌──────────────────────────────┐
     │ Change Provider              │
     │                              │
-    │ ✓ OpenCode Go                │
+    │ ✓ OpenCode                │
     │   DeepSeek                   │
     │   OpenRouter                 │
     │                              │
@@ -443,7 +443,7 @@ Model 列表必须根据当前 Provider 动态产生。
 
 假设用户已经配置：
 
-    OpenCode Go
+    OpenCode
     DeepSeek
     OpenRouter
 
@@ -459,7 +459,7 @@ Model 列表必须根据当前 Provider 动态产生。
 
     Choose runtime
 
-    ❯ OpenCode Go
+    ❯ OpenCode
       DeepSeek
       OpenRouter
 
@@ -473,7 +473,7 @@ Model 列表必须根据当前 Provider 动态产生。
 
     Claude Code
 
-    Provider   OpenCode Go
+    Provider   OpenCode
     Model      gpt-5.6-luna
 
     Use this as default?
@@ -551,7 +551,7 @@ Model 列表必须根据当前 Provider 动态产生。
 
     Providers
 
-    ● OpenCode Go
+    ● OpenCode
       Connected
       5 models
 
@@ -702,7 +702,7 @@ Auth 是 Provider 的一个子能力。
 
     Codex → OpenRouter → anthropic/claude-sonnet-4
 
-    Pi → OpenCode Go → gpt-5.6-luna
+    Pi → OpenCode → gpt-5.6-luna
 
 因此不要简单设计：
 
@@ -822,7 +822,7 @@ README / help 中可以说明：
 
 ↓
 
-    OpenCode Go
+    OpenCode
     DeepSeek
     OpenRouter
 
@@ -1167,7 +1167,7 @@ AgentX 应该默认记住用户上一次/默认的 Runtime，让用户直接开�
 
     Claude Code
 
-    Provider   OpenCode Go             ›
+    Provider   OpenCode             ›
     Model      gpt-5.6-luna            ›
 
     Enter → Start
@@ -1178,7 +1178,7 @@ AgentX 应该默认记住用户上一次/默认的 Runtime，让用户直接开�
        ↓
     Change Provider
        ↓
-    OpenCode Go
+    OpenCode
     DeepSeek
     OpenRouter
 

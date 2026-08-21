@@ -4,7 +4,7 @@
 
 项目的核心目标是：
 
-> 让 Claude Code 无需用户手动配置环境变量，即可通过本地 Adapter 使用 OpenCode Go 提供的模型。
+> 让 Claude Code 无需用户手动配置环境变量，即可通过本地 Adapter 使用 OpenCode 提供的模型。
 
 最终用户只需要：
 
@@ -14,14 +14,14 @@ npx agentx claude
 
 即可自动：
 
-1. 检查 OpenCode Go API Key
+1. 检查 OpenCode API Key
 2. 启动本地 Anthropic-compatible Adapter
 3. 自动选择可用端口
 4. 自动生成本地临时认证 Token
 5. 为 Claude Code 注入所需环境变量
 6. 启动 Claude Code
-7. 将 Claude Code 的 Anthropic API 请求转换为 OpenCode Go API
-8. 将 OpenCode Go 的响应转换回 Anthropic API 格式
+7. 将 Claude Code 的 Anthropic API 请求转换为 OpenCode API
+8. 将 OpenCode 的响应转换回 Anthropic API 格式
 9. 将 Claude Code 的 stdin/stdout/stderr 原样连接到当前终端
 10. Claude Code 退出后自动关闭 Adapter
 11. 不修改用户的 `.bashrc`、`.zshrc`、Windows 环境变量或其他永久配置
@@ -75,7 +75,7 @@ Provider Router
                 │ Model Router     │
                 └────────┬─────────┘
                          │
-               OpenCode Go API
+               OpenCode API
                          │
           ┌──────────────┼──────────────┐
           │              │              │
@@ -85,7 +85,7 @@ Provider Router
           └──────────────┴──────────────┘
                          │
                          ▼
-                    OpenCode Go
+                    OpenCode
 ```
 
 ---
@@ -180,7 +180,7 @@ npx agentx proxy
 ```text
 AgentX
 
-✓ Provider: OpenCode Go
+✓ Provider: OpenCode
 ✓ Model: gpt-5.6-luna
 ✓ Local server: http://127.0.0.1:8787
 
@@ -245,8 +245,8 @@ npx agentx doctor
 
 - Node.js 版本
 - npm/npx
-- OpenCode Go API Key
-- OpenCode Go API connectivity
+- OpenCode API Key
+- OpenCode API connectivity
 - `/v1/models`
 - GPT-5.6 Luna 是否可用
 - DeepSeek V4 Pro 是否可用
@@ -269,7 +269,7 @@ Environment
 ✓ Platform       linux
 ✓ Architecture   x64
 
-OpenCode Go
+OpenCode
 ✓ API key        found
 ✓ API reachable
 ✓ /v1/models     reachable
@@ -330,7 +330,7 @@ AGENTX_MODEL=gpt-5.6-luna
 
 # 五、API Key 设计
 
-真实的 OpenCode Go API Key：
+真实的 OpenCode API Key：
 
 ```text
 OPENCODE_API_KEY
@@ -338,7 +338,7 @@ OPENCODE_API_KEY
 
 只应该由 Adapter 使用。
 
-不要直接把真实 OpenCode Go API Key 注入 Claude Code。
+不要直接把真实 OpenCode API Key 注入 Claude Code。
 
 Claude Code 使用一个 Adapter 启动时随机生成的本地 Token：
 
@@ -355,9 +355,9 @@ Authorization: Bearer <local-token>
     ↓
 Adapter 验证
     ↓
-Authorization: Bearer <real-opencode-go-key>
+Authorization: Bearer <real-opencode-key>
     ↓
-OpenCode Go
+OpenCode
 ```
 
 本地 Token 每次启动 Adapter 都应该重新生成。
@@ -411,7 +411,7 @@ GET /v1/models
 
 ---
 
-# 八、Anthropic → OpenCode Go
+# 八、Anthropic → OpenCode
 
 Claude Code 使用 Anthropic Messages API。
 
@@ -430,7 +430,7 @@ Adapter 接收类似：
 }
 ```
 
-需要转换成 OpenCode Go GPT-5.6 Luna 所需的 Responses API：
+需要转换成 OpenCode GPT-5.6 Luna 所需的 Responses API：
 
 ```http
 POST https://opencode.ai/zen/go/v1/responses
@@ -470,7 +470,7 @@ Responses max_output_tokens
 
 # 九、模型 Endpoint Router
 
-Adapter 不允许假设所有 OpenCode Go 模型都使用同一个 endpoint。
+Adapter 不允许假设所有 OpenCode 模型都使用同一个 endpoint。
 
 模型 Provider 配置应该抽象为：
 
@@ -641,7 +641,7 @@ Adapter
     ↓
 function_call_output
     ↓
-OpenCode Go
+OpenCode
 ```
 
 需要支持：
@@ -815,7 +815,7 @@ Platform: WSL
 默认日志应该简洁：
 
 ```text
-✓ OpenCode Go connected
+✓ OpenCode connected
 ✓ Adapter started on 127.0.0.1:8787
 ✓ Model: gpt-5.6-luna
 ✓ Starting Claude Code...
@@ -994,7 +994,7 @@ agentx/
 │   │
 │   ├── providers/
 │   │   ├── types.ts
-│   │   └── opencode-go.ts
+│   │   └── opencode.ts
 │   │
 │   ├── runtime/
 │   │   ├── process.ts
@@ -1094,7 +1094,7 @@ Warning: Adapter will be accessible from the network.
 如果没有 API Key：
 
 ```text
-OpenCode Go API key not found.
+OpenCode API key not found.
 
 Set:
   OPENCODE_API_KEY=...
@@ -1103,10 +1103,10 @@ or run:
   agentx claude --api-key <key>
 ```
 
-如果 OpenCode Go 不可用：
+如果 OpenCode 不可用：
 
 ```text
-Unable to connect to OpenCode Go.
+Unable to connect to OpenCode.
 
 Run:
   agentx doctor
@@ -1147,7 +1147,7 @@ Claude Code
      ↓
 agentx
      ↓
-OpenCode Go
+OpenCode
 ```
 
 提供：
@@ -1235,7 +1235,7 @@ Responses SSE
 
 # 二十八、真实 API 验证
 
-开发完成后使用真实 OpenCode Go API 验证：
+开发完成后使用真实 OpenCode API 验证：
 
 ```bash
 curl https://opencode.ai/zen/go/v1/models \
@@ -1269,7 +1269,7 @@ Claude Code
 ↓
 agentx
 ↓
-OpenCode Go
+OpenCode
 ↓
 GPT-5.6 Luna
 ```
@@ -1381,7 +1381,7 @@ npx agentx claude
 ```text
 AgentX
 
-✓ OpenCode Go connected
+✓ OpenCode connected
 ✓ Model: gpt-5.6-luna
 ✓ Adapter: 127.0.0.1:8787
 ✓ Claude Code started
@@ -1396,7 +1396,7 @@ ANTHROPIC_BASE_URL
 ANTHROPIC_API_KEY
 OpenAI Responses API
 Anthropic Messages API
-OpenCode Go endpoint
+OpenCode endpoint
 Adapter port
 Proxy lifecycle
 ```
@@ -1434,7 +1434,7 @@ Proxy lifecycle
                        └────────────┴────────────┘
                                     │
                                     ▼
-                              OpenCode Go
+                              OpenCode
 ```
 
 请直接按照以上规格实现项目。

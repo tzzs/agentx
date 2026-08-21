@@ -3,7 +3,7 @@ import { loadConfig } from "./config.js";
 import { startAdapter } from "./server.js";
 import { runCommand } from "./process.js";
 import { runInteractiveLauncher, LaunchCancelledError } from "./ui.js";
-import { providerById } from "./providers/registry.js";
+import { providerById, refreshOpenCodeModels } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
 import { runDoctor, renderDoctor } from "./doctor.js";
 import { credentialStoreAvailable, deleteCredential, promptAndSaveCredential, resolveCredential, storedCredential } from "./credentials.js";
@@ -53,7 +53,7 @@ function helpText(command?: string): string {
     lines.push("  --verbose           Verbose logging");
     return lines.join("\n");
   }
-  lines.push("agentx - Local Anthropic/OpenAI-compatible adapter for OpenCode Go");
+  lines.push("agentx - Local Anthropic/OpenAI-compatible adapter for OpenCode");
   lines.push("");
   lines.push("Usage: agentx <command> [options]");
   lines.push("");
@@ -156,6 +156,7 @@ async function main() {
   }
 
   if (command === "doctor") {
+    await refreshOpenCodeModels();
     const result = await runDoctor(options(args));
     console.log(renderDoctor(result));
     if (result.issues.length) process.exitCode = 1;
@@ -166,12 +167,15 @@ async function main() {
   let usedDefault = false;
   let interactiveRuntime = false;
   if (CLIENT_COMMANDS.has(command)) {
+    await refreshOpenCodeModels();
     const runtime = await resolveClientRuntime(command, opts);
     opts.provider = runtime.provider;
     opts.model = runtime.model;
     usedDefault = runtime.defaultApplied;
     interactiveRuntime = runtime.interactive;
     if (runtime.model !== "auto") await saveLastModel(runtime.provider, runtime.model);
+  } else if (command === "proxy" || command === "exec") {
+    await refreshOpenCodeModels();
   }
 
   const config = loadConfig(opts);

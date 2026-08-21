@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-`agentx` 是一个本地 Anthropic/OpenAI 兼容的 API 适配器，让 Claude Code、Codex 或 Pi 可以对接 OpenCode Go 以及其他上游模型提供商。它会启动一个回环（loopback）HTTP 服务器，将临时凭据注入到被启动的客户端进程中，并在客户端退出后关闭。
+`agentx` 是一个本地 Anthropic/OpenAI 兼容的 API 适配器，让 Claude Code、Codex 或 Pi 可以对接 OpenCode 以及其他上游模型提供商。它会启动一个回环（loopback）HTTP 服务器，将临时凭据注入到被启动的客户端进程中，并在客户端退出后关闭。
 
 ## 常用命令
 
@@ -43,7 +43,7 @@ npm test          # 先构建，再执行 node --test dist/test/*.test.js
 
 ### 模型路由与提供商注册表
 
-`src/providers/registry.ts` 是提供商和模型的唯一数据来源。每个 `ProviderDefinition` 列出模型、API key 环境变量名和协议。`src/catalog.ts` 重新导出扁平化的模型列表以及 `providerFor(model, providerId)` 解析器，该解析器会匹配模型定义，未知则抛出异常。OpenRouter 接受任意模型 id（注册表条目相当于透传）。
+`src/providers/registry.ts` 是提供商和模型的唯一数据来源。每个 `ProviderDefinition` 列出模型、API key 环境变量名和协议。`refreshOpenCodeModels()` 在 CLI 启动时从 `https://opencode.ai/zen/go/v1/models` 拉取 OpenCode 模型目录（失败时回退到静态目录）；`src/catalog.ts` 重新导出扁平化的模型列表以及 `providerFor(model, providerId)` 解析器，该解析器会匹配模型定义，未知则抛出异常。OpenRouter 接受任意模型 id（注册表条目相当于透传）。
 
 `--model auto` 使用 `selectModel`（src/catalog.ts）中的简单基于大小的路由：有工具或上下文较大 → `gpt-5.6-luna`，否则依据消息大小 → `deepseek-v4-pro` / `deepseek-v4-flash`。
 

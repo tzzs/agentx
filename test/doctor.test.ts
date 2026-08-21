@@ -7,7 +7,7 @@ const base: DoctorResult = {
   platform: "linux",
   architecture: "x64",
   providerId: "opencode",
-  providerName: "OpenCode Go",
+  providerName: "OpenCode",
   apiKey: "secret",
   apiKeyFound: true,
   models: [{ provider: "opencode", model: "gpt-5.6-luna" }],
