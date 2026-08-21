@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseDeepSeekBalance, parseOpenRouterKey } from "../src/usage.js";
+import { parseDeepSeekBalance, parseOpenRouterKey } from "../src/quota.js";
 
 test("parses DeepSeek balance", () => {
   const result = parseDeepSeekBalance({ balance_infos: [{ currency: "CNY", total_balance: "12.5" }] });

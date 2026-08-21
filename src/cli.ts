@@ -8,9 +8,71 @@ import type { ProviderDefinition } from "./providers/types.js";
 import { runDoctor, renderDoctor } from "./doctor.js";
 import { credentialStoreAvailable, deleteCredential, promptAndSaveCredential, resolveCredential, storedCredential } from "./credentials.js";
 import { saveProfile } from "./profiles.js";
-import { queryProviderUsage, usageProvider } from "./usage.js";
+import { queryProviderUsage, usageProvider } from "./quota.js";
+import { runUsageStats } from "./usage/cli.js";
 import { resolveRuntimeNonInteractive } from "./selection.js";
 import { saveLastModel } from "./runtime.js";
+
+const HELP: Record<string, string> = {
+  claude: "Start the local adapter and Claude Code together",
+  codex: "Start the local adapter and Codex together",
+  pi: "Launch Pi Agent through the OpenAI-compatible local environment",
+  proxy: "Start only the local adapter",
+  exec: "Run any command with the temporary Anthropic environment",
+  auth: "Manage stored provider credentials",
+  usage: "Show token usage statistics or query provider quota",
+  doctor: "Inspect the local environment and configuration",
+  version: "Print the CLI version",
+};
+
+function helpText(command?: string): string {
+  const lines: string[] = [];
+  if (command && HELP[command]) {
+    lines.push(`agentx ${command} - ${HELP[command]}`);
+    lines.push("");
+    if (command === "auth") {
+      lines.push("Usage: agentx auth <login|status|logout> --provider <provider>");
+    } else if (command === "usage") {
+      lines.push("Usage: agentx usage [--period today|week|month|all]");
+      lines.push("       agentx usage --provider <provider>");
+      lines.push("Options:");
+      lines.push("  --period <range>    Time range for token statistics (default all)");
+      lines.push("  --provider <id>     Query provider quota instead of token statistics");
+    } else if (command === "exec") {
+      lines.push("Usage: agentx exec [options] -- <command> [args...]");
+    } else {
+      lines.push(`Usage: agentx ${command} [options]`);
+    }
+    lines.push("");
+    lines.push("Options:");
+    lines.push("  --provider <id>     Upstream provider (opencode, deepseek, openrouter)");
+    lines.push("  --model <model>     Model or auto");
+    lines.push("  --port <port>       Preferred local port (default 8787)");
+    lines.push("  --host <host>       Local bind address (default 127.0.0.1)");
+    lines.push("  --api-key <key>     Upstream API key");
+    lines.push("  --verbose           Verbose logging");
+    return lines.join("\n");
+  }
+  lines.push("agentx - Local Anthropic/OpenAI-compatible adapter for OpenCode Go");
+  lines.push("");
+  lines.push("Usage: agentx <command> [options]");
+  lines.push("");
+  lines.push("Commands:");
+  for (const [name, description] of Object.entries(HELP)) {
+    lines.push(`  ${name.padEnd(9)} ${description}`);
+  }
+  lines.push("");
+  lines.push("Global options:");
+  lines.push("  --provider <id>     Upstream provider (opencode, deepseek, openrouter)");
+  lines.push("  --model <model>     Model or auto");
+  lines.push("  --port <port>       Preferred local port (default 8787)");
+  lines.push("  --host <host>       Local bind address (default 127.0.0.1)");
+  lines.push("  --api-key <key>     Upstream API key");
+  lines.push("  --verbose           Verbose logging");
+  lines.push("");
+  lines.push("Run 'agentx help <command>' for details on a command.");
+  return lines.join("\n");
+}
 
 const CLIENT_COMMANDS = new Set(["claude", "codex", "pi"]);
 
@@ -71,7 +133,7 @@ async function resolveClientRuntime(command: string, opts: Record<string, string
 async function main() {
   const [command = "help", ...args] = process.argv.slice(2);
   if (command === "version") return console.log("1.0.0");
-  if (command === "help") return console.log("Usage: agentx <claude|codex|pi|proxy|exec|auth|usage|doctor|version> [options]");
+  if (command === "help" || command === "--help" || command === "-h") return console.log(helpText(args[0]));
 
   if (command === "auth") {
     const action = args[0] ?? "status";
@@ -83,12 +145,14 @@ async function main() {
   }
 
   if (command === "usage") {
-    const provider = usageProvider(options(args).provider);
-    const key = provider.id === "opencode" ? "" : await resolveCredential(provider);
-    const result = await queryProviderUsage(provider.id, key);
-    console.log(JSON.stringify(result, null, 2));
-    if (!result.success && result.supported) process.exitCode = 1;
-    return;
+    const opts = options(args);
+    if (!opts.provider && !process.env.AGENTX_PROVIDER) {
+      const period = opts.period === "today" || opts.period === "week" || opts.period === "month" || opts.period === "all" ? opts.period : "all";
+      console.log(await runUsageStats(period));
+      return;
+    }
+    const provider = usageProvider(opts.provider); const key = provider.id === "opencode" ? "" : await resolveCredential(provider);
+    const result = await queryProviderUsage(provider.id, key); console.log(JSON.stringify(result, null, 2)); if (!result.success && result.supported) process.exitCode = 1; return;
   }
 
   if (command === "doctor") {

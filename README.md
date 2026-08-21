@@ -43,6 +43,14 @@ agentx usage --provider deepseek
 agentx usage --provider openrouter
 ```
 
+Without `--provider`, `agentx usage` prints token usage statistics collected from
+every request the adapter serves (see [Token Usage Statistics](#token-usage-statistics)):
+
+```bash
+agentx usage
+agentx usage --period today
+```
+
 OpenCode Go currently reports an explicit unsupported result because it does not expose a documented public quota endpoint.
 
 The `pi` client is also supported through the OpenAI-compatible environment:
@@ -149,7 +157,7 @@ Start only the local adapter. Press `Ctrl+C` to stop it:
 agentx proxy
 ```
 
-The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`, `GET /v1/models`, `POST /v1/messages`, and `POST /v1/responses`.
+The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`, `GET /v1/models`, `POST /v1/messages`, `POST /v1/responses`, plus the read-only token usage endpoints documented under [Token Usage Statistics](#token-usage-statistics).
 
 ### `exec`
 
@@ -191,7 +199,19 @@ agentx auth logout --provider deepseek
 
 ### `usage`
 
-Query provider quota where the upstream exposes a quota endpoint:
+Print token usage statistics collected from every request the adapter serves:
+
+```bash
+agentx usage                 # all time
+agentx usage --period today  # today / week / month / all
+```
+
+The report groups tokens by provider and model, shows input/output/total
+counts, and includes an estimated cost based on provider pricing. Statistics
+are stored per adapter run; the optional `--period` flag filters by time range.
+
+With `--provider`, the command instead queries provider quota where the
+upstream exposes a quota endpoint:
 
 ```bash
 agentx usage --provider deepseek
@@ -228,6 +248,7 @@ Only `s` (set as default) in the interactive launcher persists a runtime change;
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Model or `auto` |
 | `--provider <id>` | `AGENTX_PROVIDER` | none | Upstream provider (`opencode`, `deepseek`, `openrouter`) |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | Reserved for verbose logging |
+| | `AGENTX_USAGE_DIR` | `~/.config/agentx` | Directory for token usage statistics |
 
 If the preferred port is already in use, the adapter tries subsequent ports. A non-loopback host is intentionally opt-in and should only be used on a trusted network:
 
@@ -261,7 +282,7 @@ With `--model auto`, short requests use `deepseek-v4-flash`, larger requests use
 
 ## API Translation
 
-The adapter is stateless. Claude Code sends the complete conversation on each request; no conversation history is persisted locally.
+The adapter does not persist conversation history. Claude Code sends the complete conversation on each request; the only local persistence is aggregated token usage statistics (see [Token Usage Statistics](#token-usage-statistics)).
 
 Supported translation areas include:
 
@@ -274,11 +295,57 @@ Supported translation areas include:
 
 The adapter translates tool protocols only. It does not execute tools and does not persist prompts, tool arguments, or conversation state.
 
+## Token Usage Statistics
+
+Every successful request is automatically measured and normalized into a
+provider-independent `TokenUsage` record. Providers supply their own usage
+adapters (`src/providers/usage/`) that map provider-specific fields into the
+common format; the core runtime only ever sees `TokenUsage`.
+
+Usage is persisted to a local SQLite database (via Node's built-in
+`node:sqlite`) at `~/.config/agentx/usage.db`, with a JSON-file fallback when
+`node:sqlite` is unavailable. Records store provider, model, input/output/
+total tokens, cached and reasoning tokens, session id, and a timestamp.
+
+### Streaming
+
+For streaming responses the adapter captures usage from the provider's final
+chunk when it is present. When the provider sends no usage, the adapter
+accumulates deltas and marks the record as `estimated`.
+
+### Query API
+
+The adapter exposes read-only usage endpoints (no authentication):
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /usage/session?id=<session>` | Input/output/total tokens for one session |
+| `GET /usage/providers?period=...` | Per-provider tokens and request counts |
+| `GET /usage/stats?period=...` | Totals over a time range |
+
+`period` accepts `today`, `week`, `month`, or `all`. Without a `period`, the
+endpoints report all recorded usage. The session endpoint also accepts the
+path form `GET /usage/session/<id>`.
+
+### Cost Estimation
+
+A pricing layer (`src/usage/pricing/`) converts token counts into an estimated
+cost per provider. Collection and cost calculation are kept separate; the CLI
+report uses the pricing layer only for display.
+
+### Storage and Data
+
+- Statistics live in `~/.config/agentx/usage.db` (or `usage.json` fallback).
+- `AGENTX_USAGE_DIR` overrides the storage directory.
+- Only token counts and metadata are stored — never prompts, tool arguments,
+  or conversation content.
+
 ## Security and Privacy
 
 - The upstream API key is read from the CLI or environment and sent only to OpenCode Go.
 - Claude Code receives a random, non-persisted local bearer token for each adapter process.
 - The default listener is `127.0.0.1`; no shell profile or permanent OS environment variable is modified.
+- The `/usage/*` query endpoints are unauthenticated; they expose aggregated token counts only and are safe to reach from localhost, but do not expose them when the adapter is bound to a non-loopback interface.
 - Logs must not contain API keys, authorization headers, prompts, or sensitive tool input.
 - Treat `--host 0.0.0.0` as a deliberate network exposure and protect it with appropriate network controls.
 
@@ -298,7 +365,7 @@ npm run build
 
 The project uses TypeScript, native Node.js `fetch`, Node.js ESM, and the built-in `node:test` runner. Tests are compiled into `dist/test` before execution.
 
-The test suite covers request/response conversion, system instructions, streaming events, tool calls, model routing, and chat-completion conversion. Tests do not require an API key or network access.
+The test suite covers request/response conversion, system instructions, streaming events, tool calls, model routing, chat-completion conversion, token usage adapters, storage, pricing, and the usage query API. Tests do not require an API key or network access.
 
 ## CI and Publishing
 
