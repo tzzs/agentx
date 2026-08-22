@@ -6,7 +6,7 @@ import { pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStrea
 import type { ProviderModel } from "./providers/types.js";
 import type { TokenUsage } from "./usage/types.js";
 import { fromChatResponse, fromChatResponseToResponses, providerFor, providers, selectModel, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
-import { apiKeyFor } from "./providers/registry.js";
+import { apiKeyFor, providerDisplayName } from "./providers/registry.js";
 import { extractUsage } from "./providers/usage/index.js";
 import { TokenUsageCollector } from "./usage/collector.js";
 import { defaultUsageStore } from "./usage/storage.js";
@@ -35,10 +35,16 @@ function parsePeriod(request: IncomingMessage): UsagePeriod | undefined {
 function streamOptions(provider: ProviderModel, sessionId: string, onUsage?: (usage: TokenUsage) => void): StreamUsageOptions {
   return { provider: provider.provider, model: provider.model, protocol: provider.protocol, sessionId, onUsage };
 }
-async function upstreamError(response: ServerResponse, upstream: Response, status: number) {
-  let message = `OpenCode returned HTTP ${status}`;
+async function upstreamError(response: ServerResponse, providerName: string, upstream: Response, status: number) {
+  let message = `${providerName} returned HTTP ${status}`;
   try { const value = await upstream.json(); message = value?.error?.message ?? message; } catch { /* Keep the status fallback. */ }
   return json(response, status, { error: { message, type: "upstream_error" } });
+}
+/** Abort the upstream request when the local client goes away mid-flight. */
+function abortOnDisconnect(response: ServerResponse): AbortController {
+  const controller = new AbortController();
+  response.on("close", () => controller.abort());
+  return controller;
 }
 
 export async function startAdapter(config: Config, options: AdapterOptions = {}): Promise<Adapter> {
@@ -53,6 +59,16 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
   const sessionFor = (input: any) => typeof input?.session_id === "string" ? input.session_id : sessionId;
   const recordUsage = (value: any, provider: ProviderModel, session: string) => { const usage = extractUsage(value, provider, { sessionId: session }); if (usage) safeRecord(usage); };
   const safeRecord = (usage: TokenUsage) => { collector.record(usage).catch((error) => debug(config, `usage record error=${error instanceof Error ? error.message : "unknown"}`)); };
+  /** POST the converted payload upstream; network failures surface as HTTP 502. */
+  const forward = async (provider: ProviderModel, apiKey: string, payload: unknown, signal: AbortSignal): Promise<Response> => {
+    try {
+      return await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(payload), signal });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "unknown error";
+      debug(config, `upstream unreachable=${reason}`);
+      throw Object.assign(new Error(`${providerDisplayName(provider.provider)} is unreachable (${reason})`), { status: 502 });
+    }
+  };
   const server = createServer(async (request, response) => {
     debug(config, `${request.method} ${request.url}`);
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
@@ -83,15 +99,21 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
         const model = input.model ?? config.model;
         const provider = providerFor(model, config.provider); const apiKey = apiKeyFor(provider, config.apiKey);
         debug(config, `POST /v1/responses model=${model}`);
-        const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model)) });
+        const payload = provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model);
+        const upstream = await forward(provider, apiKey, payload, abortOnDisconnect(response).signal);
         debug(config, `provider status=${upstream.status}`);
-        if (!upstream.ok) return upstreamError(response, upstream, upstream.status);
+        if (!upstream.ok) return upstreamError(response, providerDisplayName(provider.provider), upstream, upstream.status);
         if (input.stream && provider.protocol === "chat-completions") return pipeChatStreamToResponses(upstream, response, model, streamOptions(provider, sessionFor(input), safeRecord));
         if (input.stream) return pipeResponsesPassthrough(upstream, response, model, streamOptions(provider, sessionFor(input), safeRecord));
-        if (provider.protocol === "responses" && upstream.body) { const value = await upstream.json(); recordUsage(value, provider, sessionFor(input)); return json(response, upstream.status, value); }
-        if (upstream.body) { const value = await upstream.json(); recordUsage(value, provider, sessionFor(input)); return json(response, upstream.status, fromChatResponseToResponses(value, model)); }
+        if (upstream.body && provider.protocol === "chat-completions") { const value = await upstream.json(); recordUsage(value, provider, sessionFor(input)); return json(response, upstream.status, fromChatResponseToResponses(value, model)); }
+        if (upstream.body) { const value = await upstream.json(); recordUsage(value, provider, sessionFor(input)); return json(response, upstream.status, value); }
         return response.end();
-      } catch (error) { debug(config, `responses error=${error instanceof Error ? error.message : "unknown"}`); return json(response, 400, { error: { message: error instanceof Error ? error.message : "Invalid request", type: "invalid_request_error" } }); }
+      } catch (error) {
+        debug(config, `responses error=${error instanceof Error ? error.message : "unknown"}`);
+        const status = (error as { status?: number })?.status ?? 400;
+        const type = status >= 500 ? "upstream_error" : "invalid_request_error";
+        return json(response, status, { error: { message: error instanceof Error ? error.message : "Invalid request", type } });
+      }
     }
     if (pathname !== "/v1/messages" || request.method !== "POST") return json(response, 404, { error: { message: "Not found", type: "not_found" } });
     if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
@@ -99,20 +121,18 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
       const input = JSON.parse(await body(request)) as AnthropicRequest;
       const model = selectModel(input, config.model); const provider = providerFor(model, config.provider); const apiKey = apiKeyFor(provider, config.apiKey);
       debug(config, `POST /v1/messages model=${model} stream=${Boolean(input.stream)}`);
-      if (input.stream) {
-        const upstream = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model)) });
-        debug(config, `provider status=${upstream.status}`);
-        if (!upstream.ok) return upstreamError(response, upstream, upstream.status);
-        return pipeResponsesStream(upstream, response, model, streamOptions(provider, sessionFor(input), safeRecord));
-      }
-      const upstream = await fetch(provider.endpoint, {
-        method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-        body: JSON.stringify(provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model))
-      });
+      const payload = provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model);
+      const upstream = await forward(provider, apiKey, payload, abortOnDisconnect(response).signal);
       debug(config, `provider status=${upstream.status}`);
-      if (!upstream.ok) return upstreamError(response, upstream, upstream.status);
+      if (!upstream.ok) return upstreamError(response, providerDisplayName(provider.provider), upstream, upstream.status);
+      if (input.stream) return pipeResponsesStream(upstream, response, model, streamOptions(provider, sessionFor(input), safeRecord));
       const value = await upstream.json(); recordUsage(value, provider, sessionFor(input)); return json(response, 200, provider.protocol === "responses" ? fromResponsesResponse(value, model) : fromChatResponse(value, model));
-    } catch (error) { debug(config, `messages error=${error instanceof Error ? error.message : "unknown"}`); return json(response, 400, { error: { message: error instanceof Error ? error.message : "Invalid request", type: "invalid_request_error" } }); }
+    } catch (error) {
+      debug(config, `messages error=${error instanceof Error ? error.message : "unknown"}`);
+      const status = (error as { status?: number })?.status ?? 400;
+      const type = status >= 500 ? "upstream_error" : "invalid_request_error";
+      return json(response, status, { error: { message: error instanceof Error ? error.message : "Invalid request", type } });
+    }
   });
   let port = config.port;
   await new Promise<void>((resolve, reject) => {
