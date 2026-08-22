@@ -29,7 +29,7 @@ cli.ts (claude/codex/pi/exec)
    ├─ ui.ts          selectModel / selectableProviders（交互模型选择）
    ├─ config.ts      loadConfig（CLI 参数 > 环境变量 > 默认值）
    ├─ providers/registry.ts  providerById / apiKeyFor
-   ├─ credentials.ts resolveCredential（--api-key > 环境变量 > 系统凭据 > 交互输入）
+   ├─ credentials.ts resolveCredential（--api-key > AGENTX_ 前缀变量 > 旧变量 > 交互输入）
    ├─ profiles.ts    saveProfile（写入 ~/.config/agentx/profiles.json，不含 Key）
    │
    ├─ server.ts      startAdapter() → 生成本地随机 token，绑定回环端口
@@ -75,8 +75,9 @@ Claude Code (Anthropic Messages API)
         ┌────────────────┬───────────────┼────────────────┐
         ▼                ▼               ▼                ▼
    opencode         deepseek       openrouter        (pi 客户端)
-  OPENCODE_API_KEY  DEEPSEEK_API_KEY OPENROUTER_API_KEY
-  gpt-5.6-luna      deepseek-v4-pro  openai/gpt-4o-mini 默认
+   AGENTX_OPENCODE_API_KEY  AGENTX_DEEPSEEK_API_KEY AGENTX_OPENROUTER_API_KEY
+   （旧变量 OPENCODE_API_KEY 等仍兼容）
+   gpt-5.6-luna      deepseek-v4-pro  openai/gpt-4o-mini 默认
   → /v1/responses   deepseek-v4-flash → chat/completions
   +16 chat 模型      → chat/completions
   → /v1/chat/completions
@@ -92,7 +93,7 @@ Claude Code (Anthropic Messages API)
 - **工具调用**：只做协议转换（`tool_use`↔`function_call`、`tool_result`↔`function_call_output`），不在 Adapter 内执行
 - **模型路由**：`catalog.ts` 的 `selectModel` 实现 `--model auto` 短请求→flash、大请求→pro、含工具→luna 的初版路由器
 - **命令覆盖**：`claude`/`codex`/`pi`/`proxy`/`exec`/`auth`/`usage`/`doctor`/`version`/`help`
-- **可选集成**：`keytar` 系统凭据存储；`usage` 查询 DeepSeek/OpenRouter 额度（OpenCode 返回"不支持"）
+- **可选集成**：`usage` 查询 DeepSeek/OpenRouter 额度（OpenCode 返回"不支持"）；凭据只来自环境变量（`AGENTX_<PROVIDER>_API_KEY`，旧的无前缀变量兼容）
 
 ## 模块 → 职责映射
 
@@ -106,7 +107,7 @@ Claude Code (Anthropic Messages API)
 | `src/streaming.ts` | SSE 流式协议转换 |
 | `src/providers/registry.ts` + `types.ts` | Provider 目录与模型注册表 |
 | `src/process.ts` | 子进程启动/环境注入/stdio 转发/清理 |
-| `src/credentials.ts` | 凭据查找（CLI/环境/keytar/交互） |
+| `src/credentials.ts` | 凭据查找（CLI > `AGENTX_` 前缀环境变量 > 旧环境变量 > 交互输入） |
 | `src/profiles.ts` | 非敏感 profile 持久化 |
 | `src/doctor.ts` / `src/ui.ts` / `src/usage.ts` | 诊断 / 交互选择 / 额度查询 |
 

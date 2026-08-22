@@ -20,7 +20,7 @@
 - 使用 Codex 时，需要已安装且能在 `PATH` 中找到 `codex` 的 Codex
 
 ```bash
-export OPENCODE_API_KEY="your-api-key"
+export AGENTX_OPENCODE_API_KEY="your-api-key"
 npx agentx claude
 ```
 
@@ -28,7 +28,7 @@ npx agentx claude
 
 真实的 OpenCode Key 不会传给 Claude Code。Claude Code 每次只会收到一个随机生成的本地临时 Token。
 
-也可以显式管理已保存的凭据：
+也可以查看凭据的配置指引与状态：
 
 ```bash
 agentx auth login --provider deepseek
@@ -61,9 +61,9 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## 凭据与 Provider Profile
 
-首次使用时，模型/Provider 选择菜单会确定上游平台；如果该平台没有可用 API Key，适配器会隐藏输入 Key。凭据查找优先级为：`--api-key`、Provider 环境变量、系统凭据存储、交互式输入。
+凭据完全通过环境变量提供：AgentX 专用的变量统一带 `AGENTX_` 前缀（如 `AGENTX_OPENCODE_API_KEY`），避免与用户为其他工具设置的同名变量冲突；运行时解析后按原始 Key 注入上游请求，前缀只存在于变量命名空间中。如果已经设置了不带前缀的旧变量（如 `OPENCODE_API_KEY`），也会被直接使用。凭据查找优先级为：`--api-key`、`AGENTX_<PROVIDER>_API_KEY`、旧的 `<PROVIDER>_API_KEY`、交互式输入（仅当前会话有效，并提示如何持久化）。
 
-可选的 `keytar` 集成会将凭据保存到 macOS Keychain、Windows Credential Manager 或 Linux Secret Service。非敏感的 Provider Profile 和模型映射保存在 `~/.config/agentx/profiles.json`，API Key 不会写入该文件。如果系统凭据存储不可用，Key 只在当前进程中使用，并显示警告。
+非敏感的 Provider Profile 和模型映射保存在 `~/.config/agentx/profiles.json`，API Key 不会写入该文件或任何由 AgentX 管理的存储。
 
 ## Provider 架构
 
@@ -71,11 +71,11 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 当前支持的上游 Provider：
 
-| Provider | 凭据 | 示例模型 |
-| --- | --- | --- |
-| OpenCode | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
-| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
-| OpenRouter | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
+| Provider | 凭据（推荐） | 凭据（兼容） | 示例模型 |
+| --- | --- | --- | --- |
+| OpenCode | `AGENTX_OPENCODE_API_KEY` | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
+| DeepSeek | `AGENTX_DEEPSEEK_API_KEY` | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
+| OpenRouter | `AGENTX_OPENROUTER_API_KEY` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
 
 当模型名可能重复时，可以显式选择 Provider：
 
@@ -88,7 +88,7 @@ agentx codex --provider openrouter --model anthropic/claude-sonnet-4
 
 对于 Claude Code，本地 Token 会注入为 `ANTHROPIC_AUTH_TOKEN`，而不是 `ANTHROPIC_API_KEY`。这与 DeepSeek 等 Provider 的接入方式一致，可以避免 Claude Code 弹出自定义 API Key 确认页面；上游真实 Key 始终只保留在 Adapter 中。
 
-如果启动 `claude` 或 `codex` 时没有指定 `--model`，且没有设置 `AGENTX_MODEL`，适配器会显示支持上下键操作的模型选择菜单。选中的上游模型会显示在启动横幅中，并通过 `AGENTX_MODEL` 注入子进程。非交互场景会自动使用目录中的默认模型。
+如果在交互式终端启动 `claude`、`codex` 或 `pi` 时没有指定 `--provider`/`--model`，且没有设置 `AGENTX_PROVIDER`/`AGENTX_MODEL`，适配器会显示交互式运行时启动器：先选择 Provider，再选择模型，最后选择「立即启动」或「设为默认并启动」。切换 Provider 会自动为该 Provider 解析模型，并记住每个 Provider 最近使用的模型。临时切换不会覆盖已保存的默认运行时，除非选择「设为默认并启动」。非交互场景会自动使用目录中的默认模型。
 
 ## Codex 支持
 
@@ -176,12 +176,12 @@ agentx version
 
 ### `auth`
 
-管理已保存的 Provider 凭据：
+查看凭据的配置指引与状态（凭据保存在环境变量中，AgentX 自身不存储任何密钥）：
 
 ```bash
-agentx auth login --provider deepseek
-agentx auth status --provider deepseek
-agentx auth logout --provider deepseek
+agentx auth login --provider deepseek    # 打印配置指引
+agentx auth status --provider deepseek   # 查看当前来源与状态
+agentx auth logout --provider deepseek   # 提示如何从 shell profile 移除
 ```
 
 ### `usage`
@@ -219,7 +219,7 @@ CLI 参数优先于环境变量。默认模型为 `gpt-5.6-luna`。
 
 | CLI 参数 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `--api-key <key>` | `OPENCODE_API_KEY` | 无 | OpenCode 凭据 |
+| `--api-key <key>` | `AGENTX_OPENCODE_API_KEY`（兼容 `OPENCODE_API_KEY`） | 无 | OpenCode 凭据 |
 | `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | 本地监听地址 |
 | `--port <port>` | `AGENTX_PORT` | `8787` | 首选本地端口 |
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | 模型名或 `auto` |
@@ -353,7 +353,7 @@ GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构�
 
 **`OpenCode API key not found`**
 
-设置 `OPENCODE_API_KEY`，或传入 `--api-key <key>`。本地服务启动前必须提供 Key。
+设置 `AGENTX_OPENCODE_API_KEY`（已设置的旧变量 `OPENCODE_API_KEY` 依然有效），或传入 `--api-key <key>`。本地服务启动前必须提供 Key。
 
 **找不到 Claude Code**
 

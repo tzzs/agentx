@@ -3,10 +3,10 @@ import { loadConfig, parseCliOptions as options } from "./config.js";
 import { startAdapter } from "./server.js";
 import { runCommand } from "./process.js";
 import { runInteractiveLauncher, LaunchCancelledError } from "./ui.js";
-import { providerById, refreshOpenCodeModels } from "./providers/registry.js";
+import { credentialEnvName, providerById, refreshOpenCodeModels } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
 import { runDoctor, renderDoctor } from "./doctor.js";
-import { credentialStoreAvailable, deleteCredential, promptAndSaveCredential, resolveCredential, storedCredential } from "./credentials.js";
+import { credentialInstructions, credentialSource, promptCredential, resolveCredential, storedCredential } from "./credentials.js";
 import { saveProfile } from "./profiles.js";
 import { queryProviderUsage, usageProvider } from "./quota.js";
 import { runUsageStats } from "./usage/cli.js";
@@ -80,11 +80,11 @@ function isInteractive(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
-/** Prompt for a missing provider credential. Returns true when saved. */
+/** Prompt for a missing provider credential. Returns true when a key was obtained. */
 async function configureMissingProvider(provider: ProviderDefinition): Promise<boolean> {
   console.error(`${provider.name} is not configured.\n\nAPI key required.`);
   try {
-    await promptAndSaveCredential(provider);
+    await promptCredential(provider);
     console.error(`✓ ${provider.name} connected`);
     return true;
   } catch {
@@ -129,9 +129,9 @@ async function main() {
   if (command === "auth") {
     const action = args[0] ?? "status";
     const provider = providerById(options(args).provider ?? process.env.AGENTX_PROVIDER ?? "opencode");
-    if (action === "login") { await promptAndSaveCredential(provider); console.log(`Saved credentials for ${provider.name}.`); return; }
-    if (action === "logout") { if (!(await deleteCredential(provider))) console.log("Secure credential storage is unavailable."); else console.log(`Removed credentials for ${provider.name}.`); return; }
-    if (action === "status") { console.log(`Provider: ${provider.name}\nCredential store: ${credentialStoreAvailable() ? "available" : "unavailable"}\nCredential: ${(await storedCredential(provider)) ? "configured" : "missing"}`); return; }
+    if (action === "login") { console.log(credentialInstructions(provider)); return; }
+    if (action === "logout") { console.log(`AgentX keeps provider API keys in environment variables and stores nothing itself.\nRemove ${credentialEnvName(provider)} (or ${provider.apiKeyEnv}) from your shell profile to sign out.`); return; }
+    if (action === "status") { const source = credentialSource(provider); console.log(`Provider: ${provider.name}\nCredential: ${source ? `configured via ${source}` : "missing"}\nPreferred variable: ${credentialEnvName(provider)} (${provider.apiKeyEnv} also accepted)`); return; }
     throw new Error("Usage: agentx auth <login|status|logout> --provider <provider>");
   }
 
@@ -183,7 +183,7 @@ async function main() {
     }
   }
   if (!config.apiKey) {
-    console.error(`${selectedProvider.name} API key is required to start.\nConfigure it with:\n  agentx auth login --provider ${selectedProvider.id}\nor set ${selectedProvider.apiKeyEnv} in non-interactive mode.`);
+    console.error(`${selectedProvider.name} API key is required to start.\nConfigure it with:\n  agentx auth login --provider ${selectedProvider.id}\nor set ${credentialEnvName(selectedProvider)} (or ${selectedProvider.apiKeyEnv}) in non-interactive mode.`);
     process.exitCode = 1;
     return;
   }

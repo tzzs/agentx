@@ -20,7 +20,7 @@ Requirements:
 - Codex installed and available as `codex` on `PATH` when using Codex
 
 ```bash
-export OPENCODE_API_KEY="your-api-key"
+export AGENTX_OPENCODE_API_KEY="your-api-key"
 npx agentx claude
 ```
 
@@ -28,7 +28,7 @@ The command starts a loopback-only adapter, waits for it to listen, launches Cla
 
 The real OpenCode key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
 
-Manage stored credentials explicitly:
+Show credential setup instructions and status:
 
 ```bash
 agentx auth login --provider deepseek
@@ -61,9 +61,9 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## Credentials and Profiles
 
-On first use, the inline runtime launcher identifies the upstream provider (automatically when only one is configured) and the adapter asks for its API key if it is not already available. Credentials are resolved in this order: `--api-key`, the provider environment variable, the OS credential store, then a hidden interactive prompt.
+Credentials come exclusively from environment variables: AgentX-specific variables are namespaced with the `AGENTX_` prefix (e.g. `AGENTX_OPENCODE_API_KEY`) so they never clash with same-named variables set for other tools; at runtime the value is injected into upstream requests as the plain key — the prefix exists only in the variable name. A legacy unprefixed variable (such as `OPENCODE_API_KEY`) is still picked up directly if it is already set. Resolution order: `--api-key`, `AGENTX_<PROVIDER>_API_KEY`, legacy `<PROVIDER>_API_KEY`, then an interactive prompt (session-only, with instructions on how to persist it).
 
-The optional `keytar` integration stores credentials in macOS Keychain, Windows Credential Manager, or Linux Secret Service. Non-secret provider profiles and model mappings are stored in `~/.config/agentx/profiles.json`; the default runtime per client and the last model per provider are stored in `~/.config/agentx/runtime.json`. API keys are never written to either file. If a credential store is unavailable, the key is used for the current process only and a warning is shown.
+Non-secret provider profiles and model mappings are stored in `~/.config/agentx/profiles.json`; the default runtime per client and the last model per provider are stored in `~/.config/agentx/runtime.json`. API keys are never written to either file or to any AgentX-managed storage.
 
 ## Providers
 
@@ -71,11 +71,11 @@ The adapter has three layers: a client layer for Claude Code/Codex, protocol ada
 
 Supported upstream providers:
 
-| Provider | Credential | Example |
-| --- | --- | --- |
-| OpenCode | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
-| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
-| OpenRouter | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
+| Provider | Credential (preferred) | Credential (legacy) | Example |
+| --- | --- | --- | --- |
+| OpenCode | `AGENTX_OPENCODE_API_KEY` | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
+| DeepSeek | `AGENTX_DEEPSEEK_API_KEY` | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
+| OpenRouter | `AGENTX_OPENROUTER_API_KEY` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
 
 For scripts and advanced usage, `--provider`/`--model` override the configured runtime for a single invocation:
 
@@ -90,18 +90,18 @@ For Claude Code, the local token is injected as `ANTHROPIC_AUTH_TOKEN` rather th
 
 ### Runtime configuration
 
-When `claude`, `codex`, or `pi` is started on an interactive terminal without `--provider`/`--model` and without `AGENTX_PROVIDER`/`AGENTX_MODEL`, AgentX shows an inline runtime configuration instead of requiring you to pick anything:
+When `claude`, `codex`, or `pi` is started on an interactive terminal without `--provider`/`--model` and without `AGENTX_PROVIDER`/`AGENTX_MODEL`, AgentX shows an interactive runtime launcher instead of requiring you to pick anything:
 
 ```
-Claude Code — AgentX
-
-Provider  DeepSeek         ›
-Model     deepseek-v4-pro  ›
-
-          [ Start ]
+┌  Claude Code — AgentX
+│
+◆  Provider
+│  ● OpenCode  (connected · 2 models)
+│    DeepSeek  (connected · 2 models)
+└
 ```
 
-The current runtime is loaded from the saved default. Press Enter to start, or press Space / → on a row to open a selector. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Temporary switches never overwrite the saved default unless you press `s` to save it as default. Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
+The current runtime is loaded from the saved default. Pick a provider, then a model, then choose to start now or to set the selection as the default. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Temporary switches never overwrite the saved default unless you choose "Set as default and start". Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
 
 ## Codex
 
@@ -189,12 +189,12 @@ agentx version
 
 ### `auth`
 
-Manage stored provider credentials:
+Show credential setup instructions and status (credentials live in environment variables; AgentX stores nothing itself):
 
 ```bash
-agentx auth login --provider deepseek
-agentx auth status --provider deepseek
-agentx auth logout --provider deepseek
+agentx auth login --provider deepseek    # print setup instructions
+agentx auth status --provider deepseek   # show current source and state
+agentx auth logout --provider deepseek   # explain how to remove the variable
 ```
 
 ### `usage`
@@ -238,11 +238,11 @@ Config is resolved in this order:
 4. Environment variables (`AGENTX_PROVIDER`, `AGENTX_MODEL`)
 5. Built-in defaults (`opencode` / `gpt-5.6-luna`)
 
-Only `s` (set as default) in the interactive launcher persists a runtime change; a temporary switch affects the current invocation only.
+Only choosing "Set as default and start" in the interactive launcher persists a runtime change; a temporary switch affects the current invocation only.
 
 | CLI option | Environment variable | Default | Description |
 | --- | --- | --- | --- |
-| `--api-key <key>` | `OPENCODE_API_KEY` | none | OpenCode credential |
+| `--api-key <key>` | `AGENTX_OPENCODE_API_KEY` (legacy `OPENCODE_API_KEY` also accepted) | none | OpenCode credential |
 | `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | Local bind address |
 | `--port <port>` | `AGENTX_PORT` | `8787` | Preferred local port |
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Model or `auto` |
@@ -381,7 +381,7 @@ GitHub Actions runs the build, tests, and package dry-run for every push and pul
 
 **`OpenCode API key not found`**
 
-Set `OPENCODE_API_KEY` or pass `--api-key <key>`. The key is required before the local server starts.
+Set `AGENTX_OPENCODE_API_KEY` (a previously set `OPENCODE_API_KEY` still works) or pass `--api-key <key>`. The key is required before the local server starts.
 
 **`Claude Code was not found`**
 
