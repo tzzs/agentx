@@ -109,6 +109,7 @@ async function resolveClientRuntime(command: string, opts: Record<string, string
       model: decision.model,
       defaultApplied: decision.defaultApplied,
       interactive: false,
+      apiKey: undefined,
     };
   }
   const initial = await resolveRuntimeNonInteractive(command, opts);
@@ -118,6 +119,7 @@ async function resolveClientRuntime(command: string, opts: Record<string, string
     model: outcome.model,
     defaultApplied: outcome.defaultApplied,
     interactive: true,
+    apiKey: outcome.apiKey,
   };
 }
 
@@ -162,6 +164,7 @@ async function main() {
     const runtime = await resolveClientRuntime(command, opts);
     opts.provider = runtime.provider;
     opts.model = runtime.model;
+    if (runtime.apiKey) opts.apiKey = runtime.apiKey;
     usedDefault = runtime.defaultApplied;
     interactiveRuntime = runtime.interactive;
     if (runtime.model !== "auto") await saveLastModel(runtime.provider, runtime.model);

@@ -25,6 +25,8 @@ export interface LauncherOutcome extends RuntimeSelection {
   defaultApplied: boolean;
   /** True when the user interacted to change provider/model this run. */
   changed: boolean;
+  /** Session-only API key captured by the launcher for the final provider. */
+  apiKey?: string;
 }
 
 export interface ProviderEntry {
@@ -70,6 +72,10 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
   let madeDefault = false;
   let changed = false;
   let startWithDefault = initial.defaultApplied;
+  // Keys entered during this launch, keyed by provider id. Only the key for
+  // the finally selected provider is returned; switching to an already
+  // configured provider must not leak the earlier key as its credential.
+  const sessionKeys = new Map<string, string>();
 
   // No saved default for this client: help the user pick a first runtime.
   if (!initial.defaultApplied && initial.source === "builtin") {
@@ -82,8 +88,9 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
     } else if (configured.length > 1) {
       const chosen = await chooseRuntime(providers, `${clientDisplayName(client)} — AgentX`);
       if (chosen) {
-        provider = chosen;
-        model = await resolveModelForProvider(chosen);
+        provider = chosen.provider;
+        model = await resolveModelForProvider(provider);
+        if (chosen.apiKey) sessionKeys.set(provider, chosen.apiKey);
         changed = true;
       }
     }
@@ -102,8 +109,9 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
 
   const entry = providers.find((item) => item.definition.id === provider);
   if (entry && !entry.configured) {
-    const configured = await configureProvider(entry.definition);
-    if (!configured) { cancel("Provider not configured"); throw new LaunchCancelledError(0); }
+    const apiKey = await configureProvider(entry.definition);
+    if (!apiKey) { cancel("Provider not configured"); throw new LaunchCancelledError(0); }
+    sessionKeys.set(provider, apiKey);
   }
 
   const nextModel = await selectModel(provider, model);
@@ -120,7 +128,7 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
 
   outro(changed ? `${providerLabel(provider)} / ${model}` : "Ready");
 
-  return { provider, model, madeDefault, defaultApplied: startWithDefault, changed };
+  return { provider, model, madeDefault, defaultApplied: startWithDefault, changed, apiKey: sessionKeys.get(provider) };
 }
 
 function providerLabel(id: string): string {
@@ -154,11 +162,11 @@ async function selectProvider(entries: ProviderEntry[], current: string): Promis
 }
 
 async function selectModel(provider: string, current: string): Promise<string | symbol> {
-  const options = [
-    { value: "auto", label: "Auto", hint: "Automatically choose a suitable model" },
-    ...modelsFor(provider).map((entry) => ({ value: entry.model, label: entry.model })),
-  ];
-  return select({ message: `Model (${providerLabel(provider)})`, options, initialValue: current });
+  const options = modelsFor(provider).map((entry) => ({ value: entry.model, label: entry.model }));
+  // A stale saved default may hold the removed "auto" marker; show a concrete
+  // model instead so the initial value always matches an option.
+  const initial = options.some((option) => option.value === current) ? current : defaultModel(provider);
+  return select({ message: `Model (${providerLabel(provider)})`, options, initialValue: initial });
 }
 
 async function selectAction(client: string, provider: string, model: string): Promise<string | symbol> {
@@ -177,9 +185,10 @@ async function selectAction(client: string, provider: string, model: string): Pr
 /**
  * First-use "Choose runtime" picker. Configured providers are listed first so
  * users can begin immediately; an unconfigured provider enters the setup flow.
- * Returns the chosen provider id, or undefined when cancelled.
+ * Returns the chosen provider with its session key (when prompted for), or
+ * undefined when cancelled.
  */
-async function chooseRuntime(entries: ProviderEntry[], prompt: string): Promise<string | undefined> {
+async function chooseRuntime(entries: ProviderEntry[], prompt: string): Promise<{ provider: string; apiKey?: string } | undefined> {
   const ordered = [...entries].sort((a, b) => Number(b.configured) - Number(a.configured));
   const entryMap = new Map(ordered.map((entry) => [entry.definition.id, entry]));
   const options = ordered.map((entry) => ({
@@ -190,23 +199,23 @@ async function chooseRuntime(entries: ProviderEntry[], prompt: string): Promise<
   const chosen = await select({ message: prompt, options });
   if (isCancel(chosen)) return undefined;
   const entry = entryMap.get(chosen);
+  let apiKey: string | undefined;
   if (entry && !entry.configured) {
-    const done = await configureProvider(entry.definition);
-    if (!done) return undefined;
+    apiKey = await configureProvider(entry.definition);
+    if (!apiKey) return undefined;
   }
-  return chosen;
+  return { provider: chosen, apiKey };
 }
 
 /**
  * Prompt for a provider's API key. Keys live in the user's environment, so the
  * entered value is valid for this session only; promptCredential explains how
- * to persist it. Returns true once a key was obtained.
+ * to persist it. Returns the key, or undefined when cancelled.
  */
-async function configureProvider(definition: ProviderDefinition): Promise<boolean> {
+async function configureProvider(definition: ProviderDefinition): Promise<string | undefined> {
   try {
-    await promptCredential(definition);
-    return true;
+    return await promptCredential(definition);
   } catch {
-    return false;
+    return undefined;
   }
 }
