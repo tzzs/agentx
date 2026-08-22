@@ -1,4 +1,5 @@
 import type { AnthropicMessage, AnthropicRequest } from "./providers.js";
+import { imageDataUri } from "./providers.js";
 import { allModels, providerFor as resolveProvider } from "./providers/registry.js";
 import type { ProviderModel } from "./providers/types.js";
 
@@ -17,29 +18,51 @@ export function toChatRequest(input: AnthropicRequest, model: string) {
   return { model, messages, ...(input.max_tokens === undefined ? {} : { max_tokens: input.max_tokens }), ...(input.stream ? { stream: true } : {}), ...(input.tools ? { tools: input.tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })) } : {}) };
 }
 
+function toChatImagePart(part: any): any | undefined {
+  const url = imageDataUri(part?.source);
+  return url ? { type: "image_url", image_url: { url } } : undefined;
+}
+
 function toChatMessages(message: AnthropicMessage): any[] {
   if (!Array.isArray(message.content)) return [{ role: message.role, content: message.content ?? "" }];
-  const textParts: string[] = [];
+  const parts: any[] = [];
   const toolCalls: any[] = [];
   const toolResults: any[] = [];
+  const pushText = (text: string) => {
+    if (!text) return;
+    const last = parts[parts.length - 1];
+    if (last?.type === "text") last.text += text;
+    else parts.push({ type: "text", text });
+  };
   for (const part of message.content) {
     if (part.type === "tool_use") {
       toolCalls.push({ id: part.id, type: "function", function: { name: part.name, arguments: JSON.stringify(part.input ?? {}) } });
     } else if (part.type === "tool_result") {
       toolResults.push({ role: "tool", tool_call_id: part.tool_use_id, content: typeof part.content === "string" ? part.content : JSON.stringify(part.content ?? "") });
     } else if (part.type === "text") {
-      textParts.push(part.text ?? "");
+      pushText(part.text ?? "");
+    } else if (part.type === "image") {
+      const image = toChatImagePart(part);
+      if (image) parts.push(image);
     }
   }
   const output: any[] = [];
-  if (textParts.length) output.push({ role: message.role, content: textParts.join("") });
+  if (parts.length) output.push({ role: message.role, content: parts.every((part) => part.type === "text") ? parts.map((part) => part.text).join("") : parts });
   if (toolCalls.length) output.push({ role: "assistant", content: null, tool_calls: toolCalls });
   output.push(...toolResults);
   return output;
 }
+/** Plain text of a chat message content, ignoring non-text parts (images etc.). */
+function chatText(content: any): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.filter((part) => part?.type === "text").map((part) => part.text ?? "").join("");
+  return "";
+}
+
 export function fromChatResponse(response: any, model: string): Record<string, unknown> {
   const message = response.choices?.[0]?.message ?? {}; const content = [];
-  if (message.content) content.push({ type: "text", text: message.content });
+  const text = chatText(message.content);
+  if (text) content.push({ type: "text", text });
   for (const call of message.tool_calls ?? []) content.push({ type: "tool_use", id: call.id, name: call.function?.name, input: parse(call.function?.arguments) });
   return { id: response.id ?? `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model, content, stop_reason: message.tool_calls?.length ? "tool_use" : response.choices?.[0]?.finish_reason === "length" ? "max_tokens" : "end_turn", stop_sequence: null, usage: { input_tokens: response.usage?.prompt_tokens ?? 0, output_tokens: response.usage?.completion_tokens ?? 0 } };
 }
@@ -62,13 +85,22 @@ export function toChatCompletionsRequest(input: any, model: string) {
 
 export function fromChatResponseToResponses(response: any, model: string): Record<string, unknown> {
   const message = response.choices?.[0]?.message ?? {}; const output: any[] = [];
-  if (message.content) output.push({ type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: message.content }] });
+  const text = chatText(message.content);
+  if (text) output.push({ type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text }] });
   for (const call of message.tool_calls ?? []) output.push({ type: "function_call", call_id: call.id, name: call.function?.name, arguments: call.function?.arguments ?? "{}", status: "completed" });
   return { id: response.id ?? `resp_${crypto.randomUUID()}`, object: "response", status: "completed", model, output, usage: { input_tokens: response.usage?.prompt_tokens ?? 0, output_tokens: response.usage?.completion_tokens ?? 0, total_tokens: response.usage?.total_tokens ?? 0 } };
 }
 
 function responseContent(content: any): any {
   if (!Array.isArray(content)) return content ?? "";
-  return content.map((part) => part.type === "input_text" || part.type === "output_text" ? part.text ?? "" : part).join("");
+  const parts = content.map((part) => {
+    if (part == null || part === "") return undefined;
+    if (part.type === "input_text" || part.type === "output_text") return part.text ?? "" ? { type: "text", text: part.text ?? "" } : undefined;
+    if (part.type === "input_image" && part.image_url) return { type: "image_url", image_url: { url: part.image_url } };
+    return typeof part === "string" ? { type: "text", text: part } : part;
+  }).filter((part) => part !== undefined);
+  if (!parts.length) return "";
+  // Plain text stays a string; anything structured keeps the content array.
+  return parts.every((part) => part.type === "text") ? parts.map((part) => part.text).join("") : parts;
 }
 function parse(value: unknown) { try { return typeof value === "string" ? JSON.parse(value) : value ?? {}; } catch { return {}; } }

@@ -24,9 +24,9 @@ test("renders a ready status when there are no issues", () => {
 });
 
 test("lists issues and reports a not-ready status", () => {
-  const output = renderDoctor({ ...base, apiKeyFound: false, issues: ["Set OPENCODE_API_KEY before starting the adapter, or pass --api-key <key>."] });
+  const output = renderDoctor({ ...base, apiKeyFound: false, issues: ["Set AGENTX_OPENCODE_API_KEY (or OPENCODE_API_KEY) before starting the adapter, or pass --api-key <key>."] });
   assert.match(output, /Status: Not ready/);
-  assert.match(output, /- Set OPENCODE_API_KEY/);
+  assert.match(output, /- Set AGENTX_OPENCODE_API_KEY/);
 });
 
 test("marks missing API key and clients with a cross", () => {

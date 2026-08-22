@@ -90,7 +90,7 @@ export class SqliteUsageStore implements UsageStore {
 }
 
 class MemoryUsageStore implements UsageStore {
-  private rows: TokenUsageRow[] = [];
+  protected rows: TokenUsageRow[] = [];
 
   async record(row: TokenUsageRow): Promise<void> { this.rows.push(row); }
   private filter(period?: UsagePeriod): TokenUsageRow[] {
@@ -119,7 +119,7 @@ class JsonFileUsageStore extends MemoryUsageStore {
   private loadPromise?: Promise<void>;
   constructor(private readonly file: string) { super(); }
   private load(): Promise<void> {
-    if (!this.loadPromise) this.loadPromise = readFile(this.file, "utf8").then((text) => { (this as any).rows = JSON.parse(text) as TokenUsageRow[]; }).catch(() => { (this as any).rows = []; });
+    if (!this.loadPromise) this.loadPromise = readFile(this.file, "utf8").then((text) => { this.rows = JSON.parse(text) as TokenUsageRow[]; }).catch(() => { this.rows = []; });
     return this.loadPromise;
   }
   private async persist(): Promise<void> {
@@ -165,10 +165,6 @@ export async function createUsageStore(options: { location?: string; backend?: S
 }
 
 /** Shared default store used by the adapter server and the CLI statistics command. */
-export async function defaultUsageStore(): Promise<UsageStore> {
-  const backend = defaultStoreBackend();
-  if (backend === "memory") return new MemoryUsageStore();
-  const jsonLocation = defaultUsageLocation("json");
-  if (backend === "json") return new JsonFileUsageStore(jsonLocation);
-  return sqliteOrFallback(defaultUsageLocation("sqlite"), jsonLocation);
+export function defaultUsageStore(): Promise<UsageStore> {
+  return createUsageStore({ backend: defaultStoreBackend() });
 }

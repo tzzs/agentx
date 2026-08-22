@@ -55,4 +55,18 @@ export function providerFor(model: string, providerId?: string): ProviderModel {
 }
 
 export function providerById(id: string) { const provider = providerRegistry.find((item) => item.id === id); if (!provider) throw new Error(`Provider "${id}" is not configured.`); return provider; }
-export function apiKeyFor(model: ProviderModel, override?: string) { return override || process.env[providerById(model.provider).apiKeyEnv] || ""; }
+/** Display name for logging / user-facing errors; falls back to the raw id. */
+export function providerDisplayName(id: string): string { try { return providerById(id).name; } catch { return id; } }
+
+/**
+ * Credentials are environment-only. The AgentX-prefixed variable is canonical
+ * so it never clashes with variables users set for other tools; the provider's
+ * plain variable stays supported so an already-configured key works directly.
+ */
+export function credentialEnvName(provider: ProviderDefinition): string { return `AGENTX_${provider.apiKeyEnv}`; }
+
+export function apiKeyFor(model: ProviderModel, override?: string) {
+  if (override) return override;
+  const provider = providerById(model.provider);
+  return process.env[credentialEnvName(provider)] || process.env[provider.apiKeyEnv] || "";
+}
