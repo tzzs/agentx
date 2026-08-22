@@ -7,14 +7,23 @@ export interface AnthropicRequest {
   tools?: Array<{ name: string; description?: string; input_schema: unknown }>;
 }
 
+/** Build a data URI (or pass through remote URLs) from an Anthropic image source. */
+export function imageDataUri(source: any): string | undefined {
+  if (!source) return undefined;
+  if (source.type === "url" && typeof source.url === "string") return source.url;
+  if (source.type === "base64" && typeof source.data === "string") return `data:${source.media_type ?? "image/png"};base64,${source.data}`;
+  return undefined;
+}
+
 function convertContent(content: any, role: string): any {
   if (!Array.isArray(content)) return content;
   return content.map((part) => {
     if (part.type === "text") return { type: role === "assistant" ? "output_text" : "input_text", text: part.text ?? "" };
+    if (part.type === "image") { const url = imageDataUri(part.source); return url ? { type: "input_image", image_url: url } : null; }
     if (part.type === "tool_result") return { type: "function_call_output", call_id: part.tool_use_id, output: typeof part.content === "string" ? part.content : JSON.stringify(part.content) };
     if (part.type === "tool_use") return { type: "function_call", call_id: part.id, name: part.name, arguments: JSON.stringify(part.input ?? {}) };
     return part;
-  });
+  }).filter((part) => part !== null);
 }
 
 export function toResponsesRequest(input: AnthropicRequest, model: string): Record<string, unknown> {

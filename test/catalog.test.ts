@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fromChatResponse, fromChatResponseToResponses, providerFor, toChatCompletionsRequest, toChatRequest } from "../src/catalog.js";
-
+import { toResponsesRequest } from "../src/providers.js";
 test("routes DeepSeek models through chat completions", () => {
   assert.equal(providerFor("deepseek-v4-flash").protocol, "chat-completions");
   assert.equal((toChatRequest({ messages: [{ role: "user", content: "Hi" }] }, "deepseek-v4-flash") as any).messages[0].content, "Hi");
@@ -32,4 +32,26 @@ test("converts system and plain text messages for chat completions", () => {
 test("converts Chat Completions responses to Responses", () => {
   const result = fromChatResponseToResponses({ id: "c2", choices: [{ message: { content: "OK" } }], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } }, "deepseek-v4-pro") as any;
   assert.equal(result.object, "response"); assert.deepEqual(result.output[0].content, [{ type: "output_text", text: "OK" }]); assert.equal(result.usage.input_tokens, 2);
+});
+test("keeps structured parts when converting Responses input for Chat Completions", () => {
+  const result = toChatCompletionsRequest({ input: [{ role: "user", content: [{ type: "input_text", text: "Look" }, { type: "input_image", image_url: "data:image/png;base64,AAA" }] }] }, "deepseek-v4-pro") as any;
+  assert.deepEqual(result.messages[0].content, [
+    { type: "text", text: "Look" },
+    { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } }
+  ]);
+});
+test("converts Anthropic images into Chat Completions image parts", () => {
+  const result = toChatRequest({ messages: [{ role: "user", content: [{ type: "text", text: "What is this?" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "AAA" } }] }] }, "deepseek-v4-pro") as any;
+  assert.deepEqual(result.messages[0].content, [
+    { type: "text", text: "What is this?" },
+    { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } }
+  ]);
+});
+test("converts Anthropic images into Responses input_image parts", () => {
+  const result = toResponsesRequest({ messages: [{ role: "user", content: [{ type: "image", source: { type: "url", url: "https://example.com/cat.png" } }] }] }, "gpt-5.6-luna") as any;
+  assert.deepEqual(result.input[0].content, [{ type: "input_image", image_url: "https://example.com/cat.png" }]);
+});
+test("chat responses with array content convert without [object Object]", () => {
+  const result = fromChatResponseToResponses({ choices: [{ message: { content: [{ type: "text", text: "Hi" }, { type: "image_url", image_url: { url: "https://x/y.png" } }] } }] }, "deepseek-v4-pro") as any;
+  assert.deepEqual(result.output[0].content, [{ type: "output_text", text: "Hi" }]);
 });
