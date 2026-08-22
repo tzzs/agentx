@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { loadConfig } from "./config.js";
+import { loadConfig, parseCliOptions as options } from "./config.js";
 import { startAdapter } from "./server.js";
 import { runCommand } from "./process.js";
 import { runInteractiveLauncher, LaunchCancelledError } from "./ui.js";
@@ -75,15 +75,6 @@ function helpText(command?: string): string {
 }
 
 const CLIENT_COMMANDS = new Set(["claude", "codex", "pi"]);
-
-function options(args: string[]): Record<string, string | undefined> {
-  const out: Record<string, string | undefined> = {};
-  for (let i = 0; i < args.length; i++) {
-    const key = args[i];
-    if (key?.startsWith("--")) out[key.slice(2)] = args[++i];
-  }
-  return out;
-}
 
 function isInteractive(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
