@@ -17,7 +17,7 @@ test("pipeResponsesStream reports usage from the final chunk", async () => {
     "data: [DONE]\n\n"
   ];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {} };
+  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {}, on() {} };
   const opts = collect({ provider: "opencode", model: "gpt-5.6-luna", protocol: "responses" });
   await pipeResponsesStream(upstream, output as never, "gpt-5.6-luna", opts);
   assert.equal(opts.usages.length, 1);
@@ -27,7 +27,7 @@ test("pipeResponsesStream reports usage from the final chunk", async () => {
 test("pipeResponsesStream estimates usage when the provider sends none", async () => {
   const chunks = ['data: {"type":"response.output_text.delta","delta":"A"}\n\n', 'data: {"type":"response.output_text.delta","delta":"B"}\n\n', "data: [DONE]\n\n"];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {} };
+  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {}, on() {} };
   const opts = collect({ provider: "opencode", model: "gpt-5.6-luna", protocol: "responses" });
   await pipeResponsesStream(upstream, output as never, "gpt-5.6-luna", opts);
   assert.equal(opts.usages[0].estimated, true);
@@ -41,7 +41,7 @@ test("pipeChatStreamToResponses reports usage from the final chunk", async () =>
     "data: [DONE]\n\n"
   ];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {} };
+  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {}, on() {} };
   const usages: TokenUsage[] = [];
   await pipeChatStreamToResponses(upstream, output as never, "deepseek-v4-pro", { provider: "deepseek", model: "deepseek-v4-pro", protocol: "chat-completions", onUsage: (usage) => usages.push(usage) });
   assert.deepEqual(usages[0], { provider: "deepseek", model: "deepseek-v4-pro", inputTokens: 50, outputTokens: 10, totalTokens: 60 });
@@ -54,7 +54,7 @@ test("pipeResponsesPassthrough forwards chunks and captures usage", async () => 
     "data: [DONE]\n\n"
   ];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {} };
+  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {}, on() {} };
   const usages: TokenUsage[] = [];
   await pipeResponsesPassthrough(upstream, output as never, "gpt-5.6-luna", { provider: "opencode", model: "gpt-5.6-luna", protocol: "responses", onUsage: (usage) => usages.push(usage) });
   assert.equal(text.includes("output_text"), true);
@@ -68,7 +68,7 @@ test("pipeResponsesPassthrough estimates usage from deltas when the provider sen
     "data: [DONE]\n\n"
   ];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  const output = { writeHead() {}, write() {}, end() {} };
+  const output = { writeHead() {}, write() {}, end() {}, on() {} };
   const usages: TokenUsage[] = [];
   await pipeResponsesPassthrough(upstream, output as never, "gpt-5.6-luna", { provider: "opencode", model: "gpt-5.6-luna", protocol: "responses", onUsage: (usage) => usages.push(usage) });
   assert.equal(usages[0].estimated, true);
