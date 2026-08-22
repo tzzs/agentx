@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { loadConfig } from "../src/config.js";
+import { loadConfig, parseCliOptions } from "../src/config.js";
 import { defaultModelFor } from "../src/selection.js";
 
 let configDir: string;
@@ -49,4 +49,19 @@ test("AGENTX_MODEL takes precedence over the remembered model", async () => {
   process.env.AGENTX_MODEL = "deepseek-v4-pro";
   try { assert.equal(loadConfig({}).model, "deepseek-v4-pro"); }
   finally { delete process.env.AGENTX_MODEL; }
+});
+
+test("parseCliOptions pairs flags with values", () => {
+  assert.deepEqual(parseCliOptions(["--model", "auto", "--port", "9000"]), { model: "auto", port: "9000" });
+});
+test("parseCliOptions keeps a boolean flag in front of another flag", () => {
+  assert.deepEqual(parseCliOptions(["--verbose", "--model", "auto"]), { verbose: "true", model: "auto" });
+});
+test("parseCliOptions supports --key=value and trailing flags", () => {
+  assert.deepEqual(parseCliOptions(["--model=auto", "--verbose"]), { model: "auto", verbose: "true" });
+});
+test("--verbose enables debug logging", () => {
+  delete process.env.AGENTX_LOG_LEVEL;
+  assert.equal(loadConfig({ verbose: "true" }).logLevel, "debug");
+  assert.equal(loadConfig({}).logLevel, "info");
 });
