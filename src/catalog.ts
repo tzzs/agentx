@@ -6,16 +6,35 @@ import type { ProviderModel } from "./providers/types.js";
 export type ModelProvider = ProviderModel;
 export const providers = allModels;
 export function providerFor(model: string, provider?: string): ModelProvider { return resolveProvider(model, provider); }
-export function selectModel(request: AnthropicRequest, configured: string): string {
+/**
+ * Resolve the effective model. A fixed configuration wins; "auto" routes by
+ * request shape but only within the models of the target provider so a pinned
+ * provider never receives a model id it does not serve.
+ */
+export function selectModel(request: AnthropicRequest, configured: string, providerId?: string): string {
   if (configured !== "auto") return configured;
   const size = JSON.stringify(request.messages).length;
-  return request.tools?.length || size > 10000 ? "gpt-5.6-luna" : size > 2000 ? "deepseek-v4-pro" : "deepseek-v4-flash";
+  const ranked = ["gpt-5.6-luna", "deepseek-v4-pro", "deepseek-v4-flash"];
+  const wanted = request.tools?.length || size > 10000 ? ranked[0] : size > 2000 ? ranked[1] : ranked[2];
+  if (!providerId) return wanted;
+  const candidates = allModels.filter((item) => item.provider === providerId).map((item) => item.model);
+  return candidates.includes(wanted) ? wanted : candidates[0] ?? wanted;
 }
+
+/** Sampling knobs shared by both upstream protocols (undefined drops the key). */
+function samplingParams(input: Record<string, any>): Record<string, unknown> {
+  return {
+    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+    ...(input.top_p === undefined ? {} : { top_p: input.top_p }),
+    ...(input.stop_sequences === undefined ? {} : { stop: input.stop_sequences }),
+  };
+}
+
 export function toChatRequest(input: AnthropicRequest, model: string) {
   const messages: any[] = [];
   if (input.system) messages.push({ role: "system", content: typeof input.system === "string" ? input.system : input.system.map((part) => part.text ?? "").join("\n") });
   for (const message of input.messages) messages.push(...toChatMessages(message));
-  return { model, messages, ...(input.max_tokens === undefined ? {} : { max_tokens: input.max_tokens }), ...(input.stream ? { stream: true } : {}), ...(input.tools ? { tools: input.tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })) } : {}) };
+  return { model, messages, ...(input.max_tokens === undefined ? {} : { max_tokens: input.max_tokens }), ...(input.stream ? { stream: true } : {}), ...samplingParams(input as any), ...(input.tools ? { tools: input.tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })) } : {}) };
 }
 
 function toChatImagePart(part: any): any | undefined {
@@ -80,7 +99,7 @@ export function toChatCompletionsRequest(input: any, model: string) {
       messages.push({ role: item.role === "developer" ? "system" : item.role, content: responseContent(item.content) });
     }
   }
-  return { model, messages, ...(input.max_output_tokens === undefined ? {} : { max_tokens: input.max_output_tokens }), ...(input.stream ? { stream: true } : {}), ...(input.tools ? { tools: input.tools.map((tool: any) => ({ type: "function", function: { name: tool.name ?? tool.function?.name, description: tool.description ?? tool.function?.description, parameters: tool.parameters ?? tool.function?.parameters } })) } : {}) };
+  return { model, messages, ...(input.max_output_tokens === undefined ? {} : { max_tokens: input.max_output_tokens }), ...(input.stream ? { stream: true } : {}), ...samplingParams(input), ...(input.tools ? { tools: input.tools.map((tool: any) => ({ type: "function", function: { name: tool.name ?? tool.function?.name, description: tool.description ?? tool.function?.description, parameters: tool.parameters ?? tool.function?.parameters } })) } : {}) };
 }
 
 export function fromChatResponseToResponses(response: any, model: string): Record<string, unknown> {

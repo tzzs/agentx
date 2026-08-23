@@ -4,6 +4,7 @@ export interface AnthropicMessage { role: string; content: unknown; }
 export interface AnthropicRequest {
   model?: string; system?: string | Array<{ type: string; text?: string }>;
   max_tokens?: number; messages: AnthropicMessage[]; stream?: boolean;
+  temperature?: number; top_p?: number; stop_sequences?: string[];
   tools?: Array<{ name: string; description?: string; input_schema: unknown }>;
 }
 
@@ -30,7 +31,9 @@ export function toResponsesRequest(input: AnthropicRequest, model: string): Reco
   const body: Record<string, unknown> = {
     model, input: toResponsesInput(input.messages),
     ...(input.max_tokens === undefined ? {} : { max_output_tokens: input.max_tokens }),
-    ...(input.stream ? { stream: true } : {})
+    ...(input.stream ? { stream: true } : {}),
+    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+    ...(input.top_p === undefined ? {} : { top_p: input.top_p })
   };
   if (input.tools) body.tools = input.tools.map((tool) => ({ type: "function", name: tool.name, description: tool.description, parameters: tool.input_schema }));
   if (input.system !== undefined) {

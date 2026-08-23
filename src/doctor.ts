@@ -46,6 +46,7 @@ export async function runDoctor(options: Record<string, string | undefined> = {}
   const claudeFound = await executableExists("claude");
   const codexFound = await executableExists("codex");
   if (!claudeFound) issues.push("Claude Code was not found. Install Claude Code and ensure `claude` is on PATH.");
+  if (!codexFound) issues.push("Codex was not found. Install Codex and ensure `codex` is on PATH if you plan to use it.");
   const available = await portAvailable(config.port, config.host);
   if (!available) issues.push(`Port ${config.port} is in use. The adapter will try the next ports, or use --port to pick another.`);
   return {

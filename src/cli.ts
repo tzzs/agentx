@@ -80,6 +80,21 @@ function isInteractive(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
+/** Flags the adapter consumes itself; never forwarded to the launched client. */
+const ADAPTER_FLAGS = new Set(["--model", "--provider", "--port", "--host", "--api-key", "--verbose"]);
+
+/**
+ * Strip adapter flags from `agentx claude ...` arguments so the client only
+ * sees its own options. Both `--flag value` and inline `--flag=value` forms
+ * are removed; a bare `--verbose` is boolean-ish and consumes nothing.
+ */
+export function clientArguments(args: string[]): string[] {
+  const isAdapterFlag = (arg: string) => ADAPTER_FLAGS.has(arg) || (arg.startsWith("--") && arg.includes("=") && ADAPTER_FLAGS.has(`--${arg.slice(2).split("=", 1)[0]}`));
+  const valueTaken = new Set<number>();
+  args.forEach((arg, index) => { if (ADAPTER_FLAGS.has(arg) && arg !== "--verbose" && args[index + 1] !== undefined && !args[index + 1].startsWith("--")) valueTaken.add(index + 1); });
+  return args.filter((arg, index) => !isAdapterFlag(arg) && !valueTaken.has(index));
+}
+
 /** Prompt for a missing provider credential. Returns true when a key was obtained. */
 async function configureMissingProvider(provider: ProviderDefinition): Promise<boolean> {
   console.error(`${provider.name} is not configured.\n\nAPI key required.`);
@@ -215,11 +230,10 @@ async function main() {
   }
 
   const separator = args.indexOf("--");
-  const adapterFlags = new Set(["--model", "--provider", "--port", "--host", "--api-key", "--verbose"]);
   const commandArgs = separator >= 0
     ? args.slice(separator + 1)
     : command === "claude"
-      ? args.filter((arg, index) => !adapterFlags.has(arg) && !adapterFlags.has(args[index - 1] ?? ""))
+      ? clientArguments(args)
       : [];
 
   const executable = command === "claude" ? "claude"

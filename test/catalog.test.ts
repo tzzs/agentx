@@ -55,3 +55,15 @@ test("chat responses with array content convert without [object Object]", () => 
   const result = fromChatResponseToResponses({ choices: [{ message: { content: [{ type: "text", text: "Hi" }, { type: "image_url", image_url: { url: "https://x/y.png" } }] } }] }, "deepseek-v4-pro") as any;
   assert.deepEqual(result.output[0].content, [{ type: "output_text", text: "Hi" }]);
 });
+test("forwards sampling parameters to chat completions", () => {
+  const result = toChatRequest({ messages: [{ role: "user", content: "Hi" }], temperature: 0.2, top_p: 0.9, stop_sequences: ["STOP"] } as any, "deepseek-v4-pro") as any;
+  assert.equal(result.temperature, 0.2); assert.equal(result.top_p, 0.9); assert.deepEqual(result.stop, ["STOP"]);
+});
+test("omits sampling parameters when not requested", () => {
+  const result = toChatRequest({ messages: [{ role: "user", content: "Hi" }] }, "deepseek-v4-pro") as any;
+  assert.equal("temperature" in result, false); assert.equal("top_p" in result, false); assert.equal("stop" in result, false);
+});
+test("forwards temperature and top_p to Responses requests", () => {
+  const result = toResponsesRequest({ messages: [{ role: "user", content: "Hi" }], temperature: 0.5, top_p: 0.8 } as any, "gpt-5.6-luna") as any;
+  assert.equal(result.temperature, 0.5); assert.equal(result.top_p, 0.8);
+});

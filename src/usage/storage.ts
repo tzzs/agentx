@@ -112,25 +112,34 @@ class MemoryUsageStore implements UsageStore {
     return [...grouped.values()].sort((a, b) => b.tokens - a.tokens || (a.provider < b.provider ? -1 : 1) || (a.model < b.model ? -1 : 1));
   }
   async totals(period?: UsagePeriod): Promise<UsageTotals> { return this.sum(this.filter(period)); }
-  async close(): Promise<void> { this.rows = []; }
+  // Closing releases resources; in-memory rows are kept so stats stay readable
+  // after close (matters for tests and the CLI reading a shared instance).
+  async close(): Promise<void> {}
 }
 
 class JsonFileUsageStore extends MemoryUsageStore {
   private loadPromise?: Promise<void>;
+  /** Serializes writes so an older snapshot can never overwrite newer rows. */
+  private writeQueue: Promise<void> = Promise.resolve();
   constructor(private readonly file: string) { super(); }
   private load(): Promise<void> {
     if (!this.loadPromise) this.loadPromise = readFile(this.file, "utf8").then((text) => { this.rows = JSON.parse(text) as TokenUsageRow[]; }).catch(() => { this.rows = []; });
     return this.loadPromise;
   }
-  private async persist(): Promise<void> {
-    await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
-    await writeFile(this.file, `${JSON.stringify((this as any).rows, null, 2)}\n`, { mode: 0o600 });
+  private persist(): Promise<void> {
+    const write = this.writeQueue.then(async () => {
+      await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
+      await writeFile(this.file, `${JSON.stringify(this.rows, null, 2)}\n`, { mode: 0o600 });
+    });
+    // Keep the queue alive even when a write fails, but surface the error.
+    this.writeQueue = write.catch(() => {});
+    return write;
   }
   override async record(row: TokenUsageRow): Promise<void> { await this.load(); await super.record(row); await this.persist(); }
-  override async sessionTotals(sessionId: string): Promise<UsageTotals> { await this.load(); return super.sessionTotals(sessionId); }
-  override async providerStats(period?: UsagePeriod): Promise<ProviderUsageStat[]> { await this.load(); return super.providerStats(period); }
-  override async modelStats(period?: UsagePeriod): Promise<ModelUsageStat[]> { await this.load(); return super.modelStats(period); }
-  override async totals(period?: UsagePeriod): Promise<UsageTotals> { await this.load(); return super.totals(period); }
+  override async sessionTotals(sessionId: string): Promise<UsageTotals> { await this.load(); await this.writeQueue; return super.sessionTotals(sessionId); }
+  override async providerStats(period?: UsagePeriod): Promise<ProviderUsageStat[]> { await this.load(); await this.writeQueue; return super.providerStats(period); }
+  override async modelStats(period?: UsagePeriod): Promise<ModelUsageStat[]> { await this.load(); await this.writeQueue; return super.modelStats(period); }
+  override async totals(period?: UsagePeriod): Promise<UsageTotals> { await this.load(); await this.writeQueue; return super.totals(period); }
 }
 
 export type StoreBackend = "sqlite" | "json" | "memory";
