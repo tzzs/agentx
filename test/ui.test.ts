@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { providerEntries, runInteractiveLauncher, defaultModel } from "../src/ui.js";
+import { providerEntries, runInteractiveLauncher } from "../src/ui.js";
+import { defaultModelFor } from "../src/selection.js";
 
 test("lists all configured providers from the registry", async () => {
   const entries = await providerEntries();
@@ -19,7 +20,7 @@ test("reports configured status per provider", async () => {
 });
 
 test("falls back to a deterministic default model in non-interactive mode", () => {
-  const model = defaultModel("opencode");
+  const model = defaultModelFor("opencode");
   assert.equal(model, "gpt-5.6-luna");
 });
 

@@ -7,6 +7,7 @@ import type { ProviderModel } from "./providers/types.js";
 import type { TokenUsage } from "./usage/types.js";
 import { fromChatResponse, fromChatResponseToResponses, providerFor, providers, selectModel, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
 import { apiKeyFor, providerDisplayName } from "./providers/registry.js";
+import { defaultModelFor } from "./selection.js";
 import { extractUsage } from "./providers/usage/index.js";
 import { TokenUsageCollector } from "./usage/collector.js";
 import { defaultUsageStore } from "./usage/storage.js";
@@ -78,7 +79,10 @@ function watchedBody(stream: ReadableStream<Uint8Array> | null, progress: () => 
 }
 
 export async function startAdapter(config: Config, options: AdapterOptions = {}): Promise<Adapter> {
-  const initialProvider = providerFor(config.model, config.provider); const initialApiKey = apiKeyFor(initialProvider, config.apiKey);
+  // "auto" defers model resolution to per-request routing; validate against
+  // the provider's default model instead so startup still verifies the key.
+  const initialModel = config.model === "auto" ? defaultModelFor(config.provider ?? "opencode") : config.model;
+  const initialProvider = providerFor(initialModel, config.provider); const initialApiKey = apiKeyFor(initialProvider, config.apiKey);
   if (!initialApiKey) throw new Error(`API key not found for provider "${initialProvider.provider}". Set the provider API key environment variable or use --api-key <key>.`);
   // Claude Code validates the key shape before sending a request. This is still
   // a local-only random token and is never forwarded to the upstream provider.
@@ -127,7 +131,8 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
       if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
       try {
         const input = JSON.parse(await body(request));
-        const model = input.model ?? config.model;
+        // Honor auto routing here too: Codex echoes OPENAI_MODEL=auto back.
+        const model = selectModel(input as AnthropicRequest, input.model ?? config.model, config.provider);
         const provider = providerFor(model, config.provider); const apiKey = apiKeyFor(provider, config.apiKey);
         debug(config, `POST /v1/responses model=${model}`);
         const payload = provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model);
