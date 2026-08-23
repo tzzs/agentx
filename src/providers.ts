@@ -1,5 +1,3 @@
-export const RESPONSES_ENDPOINT = "https://opencode.ai/zen/go/v1/responses";
-
 export interface AnthropicMessage { role: string; content: unknown; }
 export interface AnthropicRequest {
   model?: string; system?: string | Array<{ type: string; text?: string }>;

@@ -41,21 +41,27 @@ export class SqliteUsageStore implements UsageStore {
       output_tokens INTEGER NOT NULL DEFAULT 0,
       total_tokens INTEGER NOT NULL DEFAULT 0,
       cached_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
       reasoning_tokens INTEGER NOT NULL DEFAULT 0,
       estimated INTEGER NOT NULL DEFAULT 0,
       session_id TEXT,
       created_at INTEGER NOT NULL
     )`);
+    // Older databases predate the cache_write_tokens column.
+    const columns = (this.db.prepare(`PRAGMA table_info(token_usage)`).all() as any[]).map((column) => column.name);
+    if (!columns.includes("cache_write_tokens")) {
+      this.db.exec(`ALTER TABLE token_usage ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0`);
+    }
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_provider ON token_usage(provider)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_created ON token_usage(created_at)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_session ON token_usage(session_id)`);
     this.insert = this.db.prepare(`INSERT INTO token_usage
-      (provider, model, input_tokens, output_tokens, total_tokens, cached_tokens, reasoning_tokens, estimated, session_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      (provider, model, input_tokens, output_tokens, total_tokens, cached_tokens, cache_write_tokens, reasoning_tokens, estimated, session_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   }
 
   async record(row: TokenUsageRow): Promise<void> {
-    this.insert.run(row.provider, row.model, row.inputTokens, row.outputTokens, row.totalTokens, row.cachedTokens, row.reasoningTokens, row.estimated ? 1 : 0, row.sessionId, row.createdAt);
+    this.insert.run(row.provider, row.model, row.inputTokens, row.outputTokens, row.totalTokens, row.cachedTokens, row.cacheWriteTokens, row.reasoningTokens, row.estimated ? 1 : 0, row.sessionId, row.createdAt);
   }
 
   private where(period?: UsagePeriod): { clause: string; args: number[] } {
@@ -76,8 +82,8 @@ export class SqliteUsageStore implements UsageStore {
 
   async modelStats(period?: UsagePeriod): Promise<ModelUsageStat[]> {
     const { clause, args } = this.where(period);
-    const rows = this.db.prepare(`SELECT provider, model, COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens, COALESCE(SUM(cached_tokens),0) AS cachedTokens, COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens, COALESCE(SUM(total_tokens),0) AS tokens, COUNT(*) AS requests FROM token_usage ${clause} GROUP BY provider, model ORDER BY tokens DESC, provider ASC, model ASC`).all(...args) as any[];
-    return rows.map((row) => ({ provider: row.provider, model: row.model, inputTokens: Number(row.inputTokens), outputTokens: Number(row.outputTokens), cachedTokens: Number(row.cachedTokens), reasoningTokens: Number(row.reasoningTokens), tokens: Number(row.tokens), requests: Number(row.requests) }));
+    const rows = this.db.prepare(`SELECT provider, model, COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens, COALESCE(SUM(cached_tokens),0) AS cachedTokens, COALESCE(SUM(cache_write_tokens),0) AS cacheWriteTokens, COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens, COALESCE(SUM(total_tokens),0) AS tokens, COUNT(*) AS requests FROM token_usage ${clause} GROUP BY provider, model ORDER BY tokens DESC, provider ASC, model ASC`).all(...args) as any[];
+    return rows.map((row) => ({ provider: row.provider, model: row.model, inputTokens: Number(row.inputTokens), outputTokens: Number(row.outputTokens), cachedTokens: Number(row.cachedTokens), cacheWriteTokens: Number(row.cacheWriteTokens), reasoningTokens: Number(row.reasoningTokens), tokens: Number(row.tokens), requests: Number(row.requests) }));
   }
 
   async totals(period?: UsagePeriod): Promise<UsageTotals> {
@@ -107,8 +113,8 @@ class MemoryUsageStore implements UsageStore {
     return [...grouped.entries()].map(([provider, value]) => ({ provider, ...value })).sort((a, b) => b.tokens - a.tokens || (a.provider < b.provider ? -1 : 1));
   }
   async modelStats(period?: UsagePeriod): Promise<ModelUsageStat[]> {
-    const grouped = new Map<string, { provider: string; model: string; inputTokens: number; outputTokens: number; cachedTokens: number; reasoningTokens: number; tokens: number; requests: number }>();
-    for (const row of this.filter(period)) { const key = `${row.provider}/${row.model}`; const entry = grouped.get(key) ?? { provider: row.provider, model: row.model, inputTokens: 0, outputTokens: 0, cachedTokens: 0, reasoningTokens: 0, tokens: 0, requests: 0 }; entry.inputTokens += row.inputTokens; entry.outputTokens += row.outputTokens; entry.cachedTokens += row.cachedTokens; entry.reasoningTokens += row.reasoningTokens; entry.tokens += row.totalTokens; entry.requests++; grouped.set(key, entry); }
+    const grouped = new Map<string, { provider: string; model: string; inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number; reasoningTokens: number; tokens: number; requests: number }>();
+    for (const row of this.filter(period)) { const key = `${row.provider}/${row.model}`; const entry = grouped.get(key) ?? { provider: row.provider, model: row.model, inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, tokens: 0, requests: 0 }; entry.inputTokens += row.inputTokens; entry.outputTokens += row.outputTokens; entry.cachedTokens += row.cachedTokens; entry.cacheWriteTokens += row.cacheWriteTokens; entry.reasoningTokens += row.reasoningTokens; entry.tokens += row.totalTokens; entry.requests++; grouped.set(key, entry); }
     return [...grouped.values()].sort((a, b) => b.tokens - a.tokens || (a.provider < b.provider ? -1 : 1) || (a.model < b.model ? -1 : 1));
   }
   async totals(period?: UsagePeriod): Promise<UsageTotals> { return this.sum(this.filter(period)); }

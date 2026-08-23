@@ -48,11 +48,6 @@ export async function providerEntries(): Promise<ProviderEntry[]> {
   return out;
 }
 
-/** Default usable model for a provider, honouring "auto" preferences. */
-export function defaultModel(provider: string): string {
-  return defaultModelFor(provider);
-}
-
 /**
  * Interactive runtime launcher.
  *
@@ -165,7 +160,7 @@ async function selectModel(provider: string, current: string): Promise<string | 
   const options = modelsFor(provider).map((entry) => ({ value: entry.model, label: entry.model }));
   // A stale saved default may hold the removed "auto" marker; show a concrete
   // model instead so the initial value always matches an option.
-  const initial = options.some((option) => option.value === current) ? current : defaultModel(provider);
+  const initial = options.some((option) => option.value === current) ? current : defaultModelFor(provider);
   return select({ message: `Model (${providerLabel(provider)})`, options, initialValue: initial });
 }
 
