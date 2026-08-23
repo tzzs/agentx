@@ -12,6 +12,9 @@ export function clientEnvironment(config: Config, adapter: Adapter, client: "ant
     : { ...inherited, AGENTX_MODEL: config.model, ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: adapter.token, ANTHROPIC_MODEL: config.model, ANTHROPIC_DEFAULT_OPUS_MODEL: config.model, ANTHROPIC_DEFAULT_SONNET_MODEL: config.model, ANTHROPIC_DEFAULT_HAIKU_MODEL: config.model, CLAUDE_CODE_SUBAGENT_MODEL: config.model };
 }
 
+/** Shell-conventional exit codes for signal terminations (128 + signal number). */
+const SIGNAL_NUMBERS: Record<string, number> = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGKILL: 9, SIGTERM: 15 };
+
 export async function runCommand(command: string, args: string[], config: Config, adapter: Adapter, client: "anthropic" | "openai" = "anthropic"): Promise<number> {
   const child = spawn(command, args, { stdio: "inherit", env: clientEnvironment(config, adapter, client), shell: process.platform === "win32" });
   // The child shares the terminal process group (stdio: "inherit", not detached),
@@ -23,6 +26,6 @@ export async function runCommand(command: string, args: string[], config: Config
   const stayAlive = () => {};
   process.once("SIGTERM", forwardSigterm);
   process.on("SIGINT", stayAlive);
-  try { return await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", (code, signal) => resolve(code ?? (signal ? 128 : 1))); }); }
+  try { return await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", (code, signal) => resolve(code ?? (signal ? 128 + (SIGNAL_NUMBERS[signal] ?? 128) : 1))); }); }
   finally { process.removeListener("SIGTERM", forwardSigterm); process.removeListener("SIGINT", stayAlive); }
 }

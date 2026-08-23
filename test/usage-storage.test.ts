@@ -114,3 +114,23 @@ test("json file store handles concurrent reads after a write", async () => {
     await store.close();
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test("json file store serializes concurrent writes without losing rows", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentx-usage-"));
+  try {
+    const store = await createUsageStore({ backend: "json", location: join(dir, "usage.json") });
+    await Promise.all(Array.from({ length: 20 }, (_, i) => store.record(normalizeUsage(sample({ inputTokens: i + 1, outputTokens: 0, totalTokens: i + 1 })))));
+    const totals = await store.totals("all");
+    assert.equal(totals.totalTokens, 210); // sum(1..20) — no lost updates
+    const reopened = await createUsageStore({ backend: "json", location: join(dir, "usage.json") });
+    assert.equal((await reopened.totals("all")).totalTokens, 210);
+    await store.close(); await reopened.close();
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("closing a memory store keeps recorded stats readable", async () => {
+  const store = await createUsageStore({ backend: "memory" });
+  await store.record(normalizeUsage(sample()));
+  await store.close();
+  assert.equal((await store.totals("all")).totalTokens, 150);
+});

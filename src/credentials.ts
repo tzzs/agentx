@@ -1,44 +1,111 @@
-import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { stdin as input, stdout as output } from "node:process";
+import { confirm, isCancel, password } from "@clack/prompts";
 import type { ProviderDefinition } from "./providers/types.js";
-import { enterRawMode, exitRawMode } from "./rawMode.js";
+import { credentialEnvName } from "./providers/registry.js";
 
-const require = createRequire(import.meta.url);
-const SERVICE = "agentx";
-
-function keytar(): any | undefined { try { return require("keytar"); } catch { return undefined; } }
-
-export async function storedCredential(provider: ProviderDefinition): Promise<string | undefined> {
-  return (await keytar()?.getPassword(SERVICE, provider.id)) || process.env[provider.apiKeyEnv];
+export function storedCredential(provider: ProviderDefinition): string | undefined {
+  return process.env[credentialEnvName(provider)] || process.env[provider.apiKeyEnv] || undefined;
 }
 
-export async function saveCredential(provider: ProviderDefinition, value: string): Promise<boolean> {
-  const backend = keytar(); if (!backend) return false; await backend.setPassword(SERVICE, provider.id, value); return true;
+/** Which environment variable provided the credential, for `auth status`. */
+export function credentialSource(provider: ProviderDefinition): string | undefined {
+  if (process.env[credentialEnvName(provider)]) return credentialEnvName(provider);
+  if (process.env[provider.apiKeyEnv]) return provider.apiKeyEnv;
+  return undefined;
 }
 
-export async function deleteCredential(provider: ProviderDefinition): Promise<boolean> {
-  const backend = keytar(); if (!backend) return false; await backend.deletePassword(SERVICE, provider.id); return true;
+/** Shell-profile setup instructions shown by `agentx auth login`. */
+export function credentialInstructions(provider: ProviderDefinition): string {
+  return [
+    `${provider.name} credentials are read from the environment.`,
+    "",
+    "Add this line to your shell profile (~/.zshrc or ~/.bashrc), then reload it:",
+    `  export ${credentialEnvName(provider)}="<your-${provider.id}-api-key>"`,
+    "",
+    `An already-set ${provider.apiKeyEnv} is also picked up directly.`,
+    "Run `source ~/.zshrc` afterwards and verify with `agentx auth status`.",
+  ].join("\n");
 }
-export function credentialStoreAvailable(): boolean { return Boolean(keytar()); }
-async function promptSecret(label: string): Promise<string> {
+
+/**
+ * Shell profile to persist credentials into, chosen from $SHELL with a
+ * fallback to whichever known profile already exists.
+ */
+export function shellProfilePath(): string {
+  const home = homedir();
+  const shell = process.env.SHELL ?? "";
+  const candidates: string[] = [];
+  if (shell.endsWith("fish")) {
+    candidates.push(join(home, ".config", "fish", "config.fish"));
+  } else if (shell.endsWith("zsh")) {
+    candidates.push(join(home, ".zshrc"));
+  } else if (shell.endsWith("bash")) {
+    candidates.push(join(home, ".bashrc"), join(home, ".bash_profile"));
+  } else {
+    candidates.push(join(home, ".bashrc"), join(home, ".zshrc"));
+  }
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return candidates[0];
+}
+
+function exportLine(provider: ProviderDefinition, key: string): string {
+  const escaped = key.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, "\\`").replace(/\$/g, "\\$");
+  return `export ${credentialEnvName(provider)}="${escaped}"`;
+}
+
+/** Append `export AGENTX_*_API_KEY=...` to the shell profile if not already set. */
+export async function persistCredentialToProfile(provider: ProviderDefinition, key: string): Promise<string> {
+  const profile = shellProfilePath();
+  const variable = credentialEnvName(provider);
+  let content = "";
+  try { content = await readFile(profile, "utf8"); } catch { /* new file */ }
+  if (new RegExp(`^\\s*export\\s+${variable}\\s*=`, "m").test(content)) return profile;
+  const separator = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
+  const line = exportLine(provider, key);
+  await mkdir(dirname(profile), { recursive: true, mode: 0o700 });
+  await writeFile(profile, `${content}${separator}${line}\n`, { mode: 0o600 });
+  return profile;
+}
+
+/**
+ * Prompt for a provider API key. After the value is entered the user is
+ * asked (default yes) whether to persist it as `AGENTX_<PROVIDER>_API_KEY`
+ * in the shell profile; otherwise the value is valid for the current session
+ * only and the user is told how to persist it manually.
+ */
+export async function promptCredential(provider: ProviderDefinition): Promise<string> {
   if (!input.isTTY || !output.isTTY) throw new Error("Secret input requires an interactive terminal.");
-  output.write(label); enterRawMode();
-  return new Promise((resolve, reject) => {
-    let value = "";
-    const cleanup = () => { exitRawMode(); input.off("data", onData); output.write("\n"); };
-    const onData = (chunk: Buffer) => { for (const byte of chunk) { if (byte === 3) { cleanup(); reject(new Error("Credential input cancelled.")); return; } if (byte === 13 || byte === 10) { cleanup(); resolve(value); return; } if (byte === 127 || byte === 8) value = value.slice(0, -1); else if (byte >= 32) value += String.fromCharCode(byte); } };
-    input.on("data", onData);
+  const value = await password({
+    message: `${provider.name} API key`,
+    validate: (entry) => (entry?.trim().length ? undefined : "API key cannot be empty."),
   });
-}
-export async function promptAndSaveCredential(provider: ProviderDefinition): Promise<string> {
-  const value = (await promptSecret(`${provider.name} API key: `)).trim(); if (!value) throw new Error("API key cannot be empty.");
-  if (!(await saveCredential(provider, value))) console.error("Warning: secure credential storage is unavailable; using this key for the current session only.");
-  return value;
+  if (isCancel(value)) throw new Error("Credential input cancelled.");
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error("API key cannot be empty.");
+  const persist = await confirm({
+    message: `Save ${credentialEnvName(provider)} to your shell profile for future sessions?`,
+    initialValue: true,
+  });
+  if (isCancel(persist)) throw new Error("Credential input cancelled.");
+  if (persist) {
+    const profile = await persistCredentialToProfile(provider, trimmed);
+    console.error(`✓ Saved ${credentialEnvName(provider)} to ${profile}\n  It will be picked up by new terminal sessions.`);
+  } else {
+    console.error(`Session-only key. Persist it by adding to your shell profile (e.g. ~/.zshrc):\n  export ${credentialEnvName(provider)}="<your-key>"`);
+  }
+  return trimmed;
 }
 
 export async function resolveCredential(provider: ProviderDefinition, override?: string): Promise<string> {
   if (override) return override;
-  const existing = await storedCredential(provider); if (existing) return existing;
-  if (!input.isTTY || !output.isTTY) throw new Error(`API key not found for ${provider.name}. Set ${provider.apiKeyEnv} in non-interactive mode.`);
-  return promptAndSaveCredential(provider);
+  const existing = storedCredential(provider);
+  if (existing) return existing;
+  if (!input.isTTY || !output.isTTY) throw new Error(`API key not found for ${provider.name}. Set ${credentialEnvName(provider)} (or ${provider.apiKeyEnv}) in non-interactive mode.`);
+  return promptCredential(provider);
 }

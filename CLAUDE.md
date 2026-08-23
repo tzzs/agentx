@@ -57,7 +57,7 @@ npm test          # 先构建，再执行 node --test dist/test/*.test.js
 
 入口 `src/cli.ts` 解析选项（CLI 参数优先于 `AGENTX_*` 环境变量，通过 `loadConfig`），解析 API key，保存非机密 profile，启动适配器（`src/server.ts`），然后用指向本地端点的 `ANTHROPIC_*`（Claude）或 `OPENAI_*`（Codex/Pi）环境变量启动客户端（`src/process.ts`）。`src/server.ts` 是无状态的——每个请求都携带完整对话，服务端不持久化任何内容。
 
-凭据解析顺序（在 `src/credentials.ts` 中）：`--api-key` → 提供商环境变量 → 操作系统凭据存储（可选的 `keytar`）→ 交互式提示。API key 绝不会写入 profiles 文件。
+凭据完全来自环境变量（在 `src/credentials.ts` 中解析）：`--api-key` → `AGENTX_<PROVIDER>_API_KEY`（带前缀的规范变量）→ 旧的无前缀变量（如 `OPENCODE_API_KEY`，直接兼容使用）→ 交互式提示（仅当前会话有效）。AgentX 自身不持久化任何密钥；带前缀的命名可避免与用户为其他工具设置的同名变量冲突。API key 绝不会写入 profiles 文件。
 
 ## 关键约束
 
