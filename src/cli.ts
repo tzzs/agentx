@@ -95,15 +95,15 @@ export function clientArguments(args: string[]): string[] {
   return args.filter((arg, index) => !isAdapterFlag(arg) && !valueTaken.has(index));
 }
 
-/** Prompt for a missing provider credential. Returns true when a key was obtained. */
-async function configureMissingProvider(provider: ProviderDefinition): Promise<boolean> {
+/** Prompt for a missing provider credential. Returns the key when obtained. */
+async function configureMissingProvider(provider: ProviderDefinition): Promise<string | undefined> {
   console.error(`${provider.name} is not configured.\n\nAPI key required.`);
   try {
-    await promptCredential(provider);
+    const key = await promptCredential(provider);
     console.error(`✓ ${provider.name} connected`);
-    return true;
+    return key;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -194,8 +194,7 @@ async function main() {
   } catch (error) {
     // Missing API key: offer a recovery flow instead of a bare error.
     if (isInteractive() && error instanceof Error && /API key not found/i.test(error.message)) {
-      const configured = await configureMissingProvider(selectedProvider);
-      config.apiKey = configured ? await resolveCredential(selectedProvider) : "";
+      config.apiKey = (await configureMissingProvider(selectedProvider)) ?? "";
     } else {
       throw error;
     }

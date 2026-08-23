@@ -61,9 +61,9 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## Credentials and Profiles
 
-Credentials come exclusively from environment variables: AgentX-specific variables are namespaced with the `AGENTX_` prefix (e.g. `AGENTX_OPENCODE_API_KEY`) so they never clash with same-named variables set for other tools; at runtime the value is injected into upstream requests as the plain key — the prefix exists only in the variable name. A legacy unprefixed variable (such as `OPENCODE_API_KEY`) is still picked up directly if it is already set. Resolution order: `--api-key`, `AGENTX_<PROVIDER>_API_KEY`, legacy `<PROVIDER>_API_KEY`, then an interactive prompt (session-only, with instructions on how to persist it).
+Credentials come exclusively from environment variables: AgentX-specific variables are namespaced with the `AGENTX_` prefix (e.g. `AGENTX_OPENCODE_API_KEY`) so they never clash with same-named variables set for other tools; at runtime the value is injected into upstream requests as the plain key — the prefix exists only in the variable name. A legacy unprefixed variable (such as `OPENCODE_API_KEY`) is still picked up directly if it is already set. Resolution order: `--api-key`, `AGENTX_<PROVIDER>_API_KEY`, legacy `<PROVIDER>_API_KEY`, then an interactive prompt. When you type a key interactively, AgentX asks (default: yes) whether to save it as `AGENTX_<PROVIDER>_API_KEY` in your shell profile; declining keeps it valid for the current session only and prints instructions on how to persist it manually.
 
-Non-secret provider profiles and model mappings are stored in `~/.config/agentx/profiles.json`; the default runtime per client and the last model per provider are stored in `~/.config/agentx/runtime.json`. API keys are never written to either file or to any AgentX-managed storage.
+Non-secret provider profiles and model mappings are stored in `~/.config/agentx/profiles.json`; the default runtime per client and the last model per provider are stored in `~/.config/agentx/runtime.json`. API keys are never written to either file or to any AgentX-managed storage; with explicit consent they are appended to your shell profile.
 
 ## Providers
 
