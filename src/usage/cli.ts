@@ -28,7 +28,7 @@ export function renderUsageStats(stats: { models: ModelUsageStat[]; totals: Usag
   const cachedHeader = showCached ? `  ${"Cached".padStart(cachedWidth)}` : "";
   lines.push(`${"Provider".padEnd(providerWidth)}  ${"Model".padEnd(modelWidth)}  Tokens  Requests${cachedHeader}  Cost`);
   for (const item of stats.models) {
-    const cost = calculateCost(item.provider, item.model, { provider: item.provider, model: item.model, inputTokens: item.inputTokens, outputTokens: item.outputTokens, cachedInputTokens: item.cachedTokens, reasoningTokens: item.reasoningTokens, totalTokens: item.tokens });
+    const cost = calculateCost(item.provider, item.model, { provider: item.provider, model: item.model, inputTokens: item.inputTokens, outputTokens: item.outputTokens, cachedInputTokens: item.cachedTokens, cacheWriteTokens: item.cacheWriteTokens, reasoningTokens: item.reasoningTokens, totalTokens: item.tokens });
     const cached = showCached ? `  ${compact(item.cachedTokens).padStart(cachedWidth)}` : "";
     lines.push(`${item.provider.padEnd(providerWidth)}  ${item.model.padEnd(modelWidth)}  ${compact(item.tokens).padStart(6)}  ${String(item.requests).padStart(8)}${cached}  $${cost.toFixed(4)}`);
   }

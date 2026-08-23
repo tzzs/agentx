@@ -49,6 +49,26 @@ function estimatedUsage(provider: string, model: string, inputTokens: number, ou
   return { provider, model, inputTokens: input, outputTokens, totalTokens: input + outputTokens, estimated: true, ...(sessionId ? { sessionId } : {}) };
 }
 
+/** Cache-token fields shared by chat-completions and Responses usage payloads. */
+function cacheTokensOf(usage: any): { cached?: number; reasoning?: number } {
+  const cached = usage?.prompt_tokens_details?.cached_tokens
+    ?? usage?.input_tokens_details?.cached_tokens
+    ?? usage?.cached_tokens;
+  const reasoning = usage?.completion_tokens_details?.reasoning_tokens ?? usage?.output_tokens_details?.reasoning_tokens;
+  return {
+    ...(cached === undefined || cached === null ? {} : { cached: Number(cached) }),
+    ...(reasoning === undefined || reasoning === null ? {} : { reasoning: Number(reasoning) }),
+  };
+}
+
+/** Attach captured cache/reasoning tokens to a usage record when present. */
+function withCacheTokens(usage: TokenUsage, source: any): TokenUsage {
+  const { cached, reasoning } = cacheTokensOf(source);
+  if (cached !== undefined) usage.cachedInputTokens = cached;
+  if (reasoning !== undefined) usage.reasoningTokens = reasoning;
+  return usage;
+}
+
 /** Stop reading from the upstream as soon as the local client disconnects. */
 function cancelOnDisconnect(response: ServerResponse, reader: ReadableStreamDefaultReader<Uint8Array>) {
   response.on("close", () => { void reader.cancel().catch(() => {}); });
@@ -75,8 +95,11 @@ export async function pipeChatStreamToResponses(upstream: Response, response: Se
   if (!reader) throw new Error("Upstream returned no stream");
   cancelOnDisconnect(response, reader);
   response.writeHead(200, SSE_HEADERS);
+  // try/finally guarantees the interval is cleared even if a write to the
+  // local client throws before the main try block is entered.
   const stopHeartbeat = startHeartbeat(response);
-  const id = `resp_${crypto.randomUUID()}`; let text = ""; let inputTokens = 0; let outputTokens = 0; let sawUsage = false; let truncated = false; const calls = new Map<number, { id: string; name: string; arguments: string; announced: boolean }>();
+  try {
+  const id = `resp_${crypto.randomUUID()}`; let text = ""; let inputTokens = 0; let outputTokens = 0; let sawUsage = false; let truncated = false; let lastUsage: any; const calls = new Map<number, { id: string; name: string; arguments: string; announced: boolean }>();
   event(response, "response.created", { type: "response.created", response: { id, object: "response", status: "in_progress", model, output: [] } });
   const consume = (line: string) => {
     if (!line.startsWith("data:")) return; const value = line.slice(5).trim(); if (!value || value === "[DONE]") return;
@@ -97,7 +120,7 @@ export async function pipeChatStreamToResponses(upstream: Response, response: Se
         if (!call.announced) { event(response, "response.output_item.added", { type: "response.output_item.added", output_index: index, item: { type: "function_call", call_id: call.id, name: call.name, arguments: "" } }); call.announced = true; }
         if (tool.function?.arguments) { call.arguments += tool.function.arguments; event(response, "response.function_call_arguments.delta", { type: "response.function_call_arguments.delta", call_id: call.id, delta: tool.function.arguments }); }
       }
-      if (item.usage) { inputTokens = item.usage.prompt_tokens ?? inputTokens; outputTokens = item.usage.completion_tokens ?? outputTokens; sawUsage = true; }
+      if (item.usage) { inputTokens = item.usage.prompt_tokens ?? inputTokens; outputTokens = item.usage.completion_tokens ?? outputTokens; lastUsage = item.usage; sawUsage = true; }
     } catch (error) {
       // In-band upstream failures must end the stream; only parse noise is ignored.
       if (error instanceof UpstreamFailure) throw error;
@@ -115,7 +138,8 @@ export async function pipeChatStreamToResponses(upstream: Response, response: Se
   }
   stopHeartbeat();
   response.end();
-  reportUsage(options, sawUsage, inputTokens, outputTokens);
+  reportUsage(options, sawUsage, inputTokens, outputTokens, lastUsage);
+  } finally { stopHeartbeat(); }
 }
 
 export async function pipeResponsesPassthrough(upstream: Response, response: ServerResponse, model: string, options?: StreamUsageOptions) {
@@ -123,14 +147,21 @@ export async function pipeResponsesPassthrough(upstream: Response, response: Ser
   if (!reader) throw new Error("Upstream returned no stream");
   cancelOnDisconnect(response, reader);
   response.writeHead(200, SSE_HEADERS);
+  // try/finally guarantees the interval is cleared even if a write to the
+  // local client throws before the main try block is entered.
   const stopHeartbeat = startHeartbeat(response);
-  let usage: TokenUsage | null = null; let outputTokens = 0;
+  try {
+  let usage: TokenUsage | null = null; let outputTokens = 0; let lastUsage: any;
   const consume = (line: string) => {
     if (!line.startsWith("data:")) return; const value = line.slice(5).trim(); if (!value || value === "[DONE]") return;
     try {
       const item = JSON.parse(value);
       if (item.type === "response.output_text.delta" && typeof item.delta === "string") outputTokens++;
-      if (item.response?.usage && options) { const inputTokens = item.response.usage.input_tokens ?? 0; const outputTokens = item.response.usage.output_tokens ?? 0; usage = { provider: options.provider, model, inputTokens, outputTokens, totalTokens: item.response.usage.total_tokens ?? (inputTokens + outputTokens), ...(options.sessionId ? { sessionId: options.sessionId } : {}) }; }
+      if (item.response?.usage && options) {
+        const inputTokens = item.response.usage.input_tokens ?? 0; const usageOutputTokens = item.response.usage.output_tokens ?? 0;
+        lastUsage = item.response.usage;
+        usage = withCacheTokens({ provider: options.provider, model, inputTokens, outputTokens: usageOutputTokens, totalTokens: item.response.usage.total_tokens ?? (inputTokens + usageOutputTokens), ...(options.sessionId ? { sessionId: options.sessionId } : {}) }, item.response.usage);
+      }
     } catch { /* Ignore incomplete provider events. */ }
   };
   try {
@@ -142,7 +173,8 @@ export async function pipeResponsesPassthrough(upstream: Response, response: Ser
   }
   stopHeartbeat();
   response.end();
-  reportUsage(options, usage !== null, (usage as TokenUsage | null)?.inputTokens ?? 0, (usage as TokenUsage | null)?.outputTokens ?? outputTokens);
+  reportUsage(options, usage !== null, (usage as TokenUsage | null)?.inputTokens ?? 0, (usage as TokenUsage | null)?.outputTokens ?? outputTokens, lastUsage);
+  } finally { stopHeartbeat(); }
 }
 
 export async function pipeResponsesStream(upstream: Response, response: ServerResponse, model: string, options?: StreamUsageOptions) {
@@ -150,10 +182,13 @@ export async function pipeResponsesStream(upstream: Response, response: ServerRe
   if (!reader) throw new Error("Upstream returned no stream");
   cancelOnDisconnect(response, reader);
   response.writeHead(200, SSE_HEADERS);
+  // try/finally guarantees the interval is cleared even if a write to the
+  // local client throws before the main try block is entered.
   const stopHeartbeat = startHeartbeat(response);
+  try {
   const id = `msg_${crypto.randomUUID()}`;
   event(response, "message_start", { type: "message_start", message: { id, type: "message", role: "assistant", model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } } });
-  let outputTokens = 0; let inputTokens = 0; let sawUsage = false; let blockIndex = 0; let blockStarted = false; let blockType: "text" | "tool_use" | undefined; let toolStop = false; let truncated = false;
+  let outputTokens = 0; let inputTokens = 0; let sawUsage = false; let blockIndex = 0; let blockStarted = false; let blockType: "text" | "tool_use" | undefined; let toolStop = false; let truncated = false; let lastUsage: any;
   // Parallel tool calls arrive interleaved and keyed by chat `index` or
   // Responses `item_id`; each key gets its own Anthropic content block.
   const calls = new Map<string | number, { id: string; name: string }>();
@@ -209,7 +244,8 @@ export async function pipeResponsesStream(upstream: Response, response: ServerRe
         openTool(key, key, item.name ?? known?.name ?? "");
         event(response, "content_block_delta", { type: "content_block_delta", index: blockIndex, delta: { type: "input_json_delta", partial_json: responseArgs } });
       }
-      if (item.response?.usage) { inputTokens = item.response.usage.input_tokens ?? inputTokens; outputTokens = item.response.usage.output_tokens ?? outputTokens; sawUsage = true; }
+      if (item.response?.usage) { inputTokens = item.response.usage.input_tokens ?? inputTokens; outputTokens = item.response.usage.output_tokens ?? outputTokens; lastUsage = item.response.usage; sawUsage = true; }
+      if (item.usage) { inputTokens = item.usage.prompt_tokens ?? inputTokens; outputTokens = item.usage.completion_tokens ?? outputTokens; lastUsage = item.usage; sawUsage = true; }
     } catch (error) {
       // In-band upstream failures must end the stream; only parse noise is ignored.
       if (error instanceof UpstreamFailure) throw error;
@@ -229,12 +265,13 @@ export async function pipeResponsesStream(upstream: Response, response: ServerRe
   }
   stopHeartbeat();
   response.end();
-  reportUsage(options, sawUsage, inputTokens, outputTokens);
+  reportUsage(options, sawUsage, inputTokens, outputTokens, lastUsage);
+  } finally { stopHeartbeat(); }
 }
 
-function reportUsage(options: StreamUsageOptions | undefined, sawUsage: boolean, inputTokens: number, outputTokens: number) {
+function reportUsage(options: StreamUsageOptions | undefined, sawUsage: boolean, inputTokens: number, outputTokens: number, lastUsage?: any) {
   if (!options?.onUsage) return;
   options.onUsage(sawUsage
-    ? { provider: options.provider, model: options.model, inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, ...(options.sessionId ? { sessionId: options.sessionId } : {}) }
+    ? withCacheTokens({ provider: options.provider, model: options.model, inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, ...(options.sessionId ? { sessionId: options.sessionId } : {}) }, lastUsage)
     : estimatedUsage(options.provider, options.model, inputTokens, outputTokens, options.inputEstimate, options.sessionId));
 }

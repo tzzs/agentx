@@ -79,7 +79,7 @@ test("renders usage statistics for the CLI", () => {
   const text = renderUsageStats({
     period: "all",
     totals: { inputTokens: 120000, outputTokens: 35000, totalTokens: 155000 },
-    models: [{ provider: "openai", model: "gpt-5", inputTokens: 90000, outputTokens: 30000, cachedTokens: 0, reasoningTokens: 0, tokens: 120000, requests: 35 }, { provider: "anthropic", model: "claude-sonnet-4", inputTokens: 25000, outputTokens: 9000, cachedTokens: 1000, reasoningTokens: 0, tokens: 35000, requests: 20 }]
+    models: [{ provider: "openai", model: "gpt-5", inputTokens: 90000, outputTokens: 30000, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, tokens: 120000, requests: 35 }, { provider: "anthropic", model: "claude-sonnet-4", inputTokens: 25000, outputTokens: 9000, cachedTokens: 1000, cacheWriteTokens: 0, reasoningTokens: 0, tokens: 35000, requests: 20 }]
   });
   assert.match(text, /Token Usage \(All time\)/);
   assert.match(text, /openai/);
@@ -94,4 +94,23 @@ test("pricing providers calculate estimated cost", () => {
   assert.ok(googlePricing.calculate("gemini-2.5-pro", usage) > 0);
   assert.ok(calculateCost("unknown", "model", usage) > 0);
   assert.equal(openAIPricing.calculate("gpt-4o", { provider: "openai", model: "gpt-4o", inputTokens: 0, outputTokens: 0, totalTokens: 0 }), 0);
+});
+
+test("cached input is billed as a subset of input, not on top of it", () => {
+  const usage = { provider: "openai", model: "gpt-4o", inputTokens: 1000, outputTokens: 0, totalTokens: 1000, cachedInputTokens: 900 };
+  // (1000-900) * $5/M + 900 * $2.50/M = $0.00275
+  assert.equal(openAIPricing.calculate("gpt-4o", usage), 0.00275);
+});
+
+test("stream pipes capture cache and reasoning tokens from final usage", async () => {
+  const chunks = [
+    'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+    'data: {"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":80},"completion_tokens_details":{"reasoning_tokens":3}}}\n\n',
+    "data: [DONE]\n\n"
+  ];
+  const upstream = new Response(new ReadableStream({ start(c) { for (const ch of chunks) c.enqueue(new TextEncoder().encode(ch)); c.close(); } }));
+  let text = ""; const output = { writeHead() {}, write(v: string) { text += v; }, end() {}, on() {} };
+  const usages: TokenUsage[] = [];
+  await pipeChatStreamToResponses(upstream, output as never, "gpt-4o", { provider: "openai", model: "gpt-4o", protocol: "chat-completions", onUsage: (u) => usages.push(u) });
+  assert.deepEqual(usages[0], { provider: "openai", model: "gpt-4o", inputTokens: 100, outputTokens: 5, totalTokens: 105, cachedInputTokens: 80, reasoningTokens: 3 });
 });
