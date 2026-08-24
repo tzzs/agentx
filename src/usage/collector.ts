@@ -11,6 +11,7 @@ export function normalizeUsage(usage: TokenUsage): TokenUsageRow {
     outputTokens,
     totalTokens: Number(usage.totalTokens ?? (inputTokens + outputTokens)),
     cachedTokens: Number(usage.cachedInputTokens ?? 0),
+    cacheWriteTokens: Number(usage.cacheWriteTokens ?? 0),
     reasoningTokens: Number(usage.reasoningTokens ?? 0),
     estimated: Boolean(usage.estimated),
     sessionId: usage.sessionId ?? null,

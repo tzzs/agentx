@@ -10,6 +10,25 @@ export interface Config {
   logLevel: string;
 }
 
+/**
+ * Parse `--key value` CLI flags into a plain map.
+ * - `--key=value` and `--key value` are equivalent
+ * - a flag followed by another flag (or end of input) is boolean-ish and maps to "true",
+ *   so `--verbose --model m` keeps both flags intact
+ */
+export function parseCliOptions(args: string[]): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  for (let i = 0; i < args.length; i++) {
+    const key = args[i];
+    if (!key?.startsWith("--")) continue;
+    const [name, inline] = key.slice(2).split("=", 2);
+    if (inline !== undefined) { out[name] = inline; continue; }
+    const value = args[i + 1];
+    out[name] = value === undefined || value.startsWith("--") ? "true" : (i++, value);
+  }
+  return out;
+}
+
 export function loadConfig(options: Record<string, string | undefined> = {}): Config {
   const apiKey = options.apiKey ?? options["api-key"] ?? "";
   const provider = options.provider ?? process.env.AGENTX_PROVIDER;
@@ -24,6 +43,6 @@ export function loadConfig(options: Record<string, string | undefined> = {}): Co
     model: options.model ?? process.env.AGENTX_MODEL ?? rememberedModel ?? defaultModel,
     provider,
     apiKey,
-    logLevel: process.env.AGENTX_LOG_LEVEL ?? "info"
+    logLevel: options.verbose ? "debug" : process.env.AGENTX_LOG_LEVEL ?? "info"
   };
 }

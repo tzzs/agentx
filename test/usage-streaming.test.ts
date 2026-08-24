@@ -17,7 +17,7 @@ test("pipeResponsesStream reports usage from the final chunk", async () => {
     "data: [DONE]\n\n"
   ];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {} };
+  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {}, on() {} };
   const opts = collect({ provider: "opencode", model: "gpt-5.6-luna", protocol: "responses" });
   await pipeResponsesStream(upstream, output as never, "gpt-5.6-luna", opts);
   assert.equal(opts.usages.length, 1);
@@ -30,7 +30,7 @@ test("pipeResponsesStream records cached and reasoning tokens from usage details
     'data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":20,"input_tokens_details":{"cached_tokens":80},"output_tokens_details":{"reasoning_tokens":12}}}}\n\n'
   ];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {} };
+  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {}, on() {} };
   const opts = collect({ provider: "opencode", model: "gpt-5.6-luna", protocol: "responses" });
   await pipeResponsesStream(upstream, output as never, "gpt-5.6-luna", opts);
   assert.deepEqual(opts.usages[0], { provider: "opencode", model: "gpt-5.6-luna", inputTokens: 100, outputTokens: 20, totalTokens: 120, cachedInputTokens: 80, reasoningTokens: 12 });
@@ -43,7 +43,7 @@ test("pipeResponsesStream reads top-level chat completions usage for chat upstre
     "data: [DONE]\n\n"
   ];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {} };
+  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {}, on() {} };
   const opts = collect({ provider: "deepseek", model: "deepseek-v4-pro", protocol: "chat-completions" });
   await pipeResponsesStream(upstream, output as never, "deepseek-v4-pro", opts);
   assert.deepEqual(opts.usages[0], { provider: "deepseek", model: "deepseek-v4-pro", inputTokens: 50, outputTokens: 10, totalTokens: 60, cachedInputTokens: 32 });
@@ -52,7 +52,7 @@ test("pipeResponsesStream reads top-level chat completions usage for chat upstre
 test("pipeResponsesStream estimates usage when the provider sends none", async () => {
   const chunks = ['data: {"type":"response.output_text.delta","delta":"A"}\n\n', 'data: {"type":"response.output_text.delta","delta":"B"}\n\n', "data: [DONE]\n\n"];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {} };
+  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {}, on() {} };
   const opts = collect({ provider: "opencode", model: "gpt-5.6-luna", protocol: "responses" });
   await pipeResponsesStream(upstream, output as never, "gpt-5.6-luna", opts);
   assert.equal(opts.usages[0].estimated, true);
@@ -66,7 +66,7 @@ test("pipeChatStreamToResponses reports usage from the final chunk", async () =>
     "data: [DONE]\n\n"
   ];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {} };
+  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {}, on() {} };
   const usages: TokenUsage[] = [];
   await pipeChatStreamToResponses(upstream, output as never, "deepseek-v4-pro", { provider: "deepseek", model: "deepseek-v4-pro", protocol: "chat-completions", onUsage: (usage) => usages.push(usage) });
   assert.deepEqual(usages[0], { provider: "deepseek", model: "deepseek-v4-pro", inputTokens: 50, outputTokens: 10, totalTokens: 60 });
@@ -79,7 +79,7 @@ test("pipeChatStreamToResponses records cached and reasoning tokens when provide
     "data: [DONE]\n\n"
   ];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {} };
+  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {}, on() {} };
   const usages: TokenUsage[] = [];
   await pipeChatStreamToResponses(upstream, output as never, "deepseek-v4-pro", { provider: "deepseek", model: "deepseek-v4-pro", protocol: "chat-completions", onUsage: (usage) => usages.push(usage) });
   assert.deepEqual(usages[0], { provider: "deepseek", model: "deepseek-v4-pro", inputTokens: 50, outputTokens: 10, totalTokens: 60, cachedInputTokens: 40, reasoningTokens: 6 });
@@ -92,7 +92,7 @@ test("pipeResponsesPassthrough forwards chunks and captures usage", async () => 
     "data: [DONE]\n\n"
   ];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {} };
+  let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {}, on() {} };
   const usages: TokenUsage[] = [];
   await pipeResponsesPassthrough(upstream, output as never, "gpt-5.6-luna", { provider: "opencode", model: "gpt-5.6-luna", protocol: "responses", onUsage: (usage) => usages.push(usage) });
   assert.equal(text.includes("output_text"), true);
@@ -104,7 +104,7 @@ test("pipeResponsesPassthrough records cached and reasoning tokens from usage de
     'data: {"type":"response.completed","response":{"usage":{"input_tokens":90,"output_tokens":8,"input_tokens_details":{"cached_tokens":70},"output_tokens_details":{"reasoning_tokens":5}}}}\n\n'
   ];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  const output = { writeHead() {}, write() {}, end() {} };
+  const output = { writeHead() {}, write() {}, end() {}, on() {} };
   const usages: TokenUsage[] = [];
   await pipeResponsesPassthrough(upstream, output as never, "gpt-5.6-luna", { provider: "opencode", model: "gpt-5.6-luna", protocol: "responses", onUsage: (usage) => usages.push(usage) });
   assert.deepEqual(usages[0], { provider: "opencode", model: "gpt-5.6-luna", inputTokens: 90, outputTokens: 8, totalTokens: 98, cachedInputTokens: 70, reasoningTokens: 5 });
@@ -117,7 +117,7 @@ test("pipeResponsesPassthrough estimates usage from deltas when the provider sen
     "data: [DONE]\n\n"
   ];
   const upstream = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
-  const output = { writeHead() {}, write() {}, end() {} };
+  const output = { writeHead() {}, write() {}, end() {}, on() {} };
   const usages: TokenUsage[] = [];
   await pipeResponsesPassthrough(upstream, output as never, "gpt-5.6-luna", { provider: "opencode", model: "gpt-5.6-luna", protocol: "responses", onUsage: (usage) => usages.push(usage) });
   assert.equal(usages[0].estimated, true);
@@ -128,7 +128,7 @@ test("renders usage statistics for the CLI", () => {
   const text = renderUsageStats({
     period: "all",
     totals: { inputTokens: 120000, outputTokens: 35000, totalTokens: 155000 },
-    models: [{ provider: "openai", model: "gpt-5", inputTokens: 90000, outputTokens: 30000, cachedTokens: 0, reasoningTokens: 0, tokens: 120000, requests: 35 }, { provider: "anthropic", model: "claude-sonnet-4", inputTokens: 25000, outputTokens: 9000, cachedTokens: 1000, reasoningTokens: 0, tokens: 35000, requests: 20 }]
+    models: [{ provider: "openai", model: "gpt-5", inputTokens: 90000, outputTokens: 30000, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, tokens: 120000, requests: 35 }, { provider: "anthropic", model: "claude-sonnet-4", inputTokens: 25000, outputTokens: 9000, cachedTokens: 1000, cacheWriteTokens: 0, reasoningTokens: 0, tokens: 35000, requests: 20 }]
   });
   assert.match(text, /Token Usage \(All time\)/);
   assert.match(text, /openai/);
@@ -143,4 +143,23 @@ test("pricing providers calculate estimated cost", () => {
   assert.ok(googlePricing.calculate("gemini-2.5-pro", usage) > 0);
   assert.ok(calculateCost("unknown", "model", usage) > 0);
   assert.equal(openAIPricing.calculate("gpt-4o", { provider: "openai", model: "gpt-4o", inputTokens: 0, outputTokens: 0, totalTokens: 0 }), 0);
+});
+
+test("cached input is billed as a subset of input, not on top of it", () => {
+  const usage = { provider: "openai", model: "gpt-4o", inputTokens: 1000, outputTokens: 0, totalTokens: 1000, cachedInputTokens: 900 };
+  // (1000-900) * $5/M + 900 * $2.50/M = $0.00275
+  assert.equal(openAIPricing.calculate("gpt-4o", usage), 0.00275);
+});
+
+test("stream pipes capture cache and reasoning tokens from final usage", async () => {
+  const chunks = [
+    'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+    'data: {"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":80},"completion_tokens_details":{"reasoning_tokens":3}}}\n\n',
+    "data: [DONE]\n\n"
+  ];
+  const upstream = new Response(new ReadableStream({ start(c) { for (const ch of chunks) c.enqueue(new TextEncoder().encode(ch)); c.close(); } }));
+  let text = ""; const output = { writeHead() {}, write(v: string) { text += v; }, end() {}, on() {} };
+  const usages: TokenUsage[] = [];
+  await pipeChatStreamToResponses(upstream, output as never, "gpt-4o", { provider: "openai", model: "gpt-4o", protocol: "chat-completions", onUsage: (u) => usages.push(u) });
+  assert.deepEqual(usages[0], { provider: "openai", model: "gpt-4o", inputTokens: 100, outputTokens: 5, totalTokens: 105, cachedInputTokens: 80, reasoningTokens: 3 });
 });

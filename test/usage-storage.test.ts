@@ -31,8 +31,8 @@ for (const backend of ["sqlite", "memory", "json"] as const) {
       assert.deepEqual(providers, [{ provider: "anthropic", tokens: 300, requests: 1 }, { provider: "openai", tokens: 300, requests: 2 }]);
       const models = await store.modelStats("all");
       assert.deepEqual(models, [
-        { provider: "anthropic", model: "claude-sonnet-4", inputTokens: 200, outputTokens: 100, cachedTokens: 0, reasoningTokens: 0, tokens: 300, requests: 1 },
-        { provider: "openai", model: "gpt-4o", inputTokens: 200, outputTokens: 100, cachedTokens: 0, reasoningTokens: 0, tokens: 300, requests: 2 }
+        { provider: "anthropic", model: "claude-sonnet-4", inputTokens: 200, outputTokens: 100, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, tokens: 300, requests: 1 },
+        { provider: "openai", model: "gpt-4o", inputTokens: 200, outputTokens: 100, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, tokens: 300, requests: 2 }
       ]);
       await store.close();
     } finally { await rm(dir, { recursive: true, force: true }); }
@@ -75,7 +75,7 @@ test("sqlite backend falls back to JSON when the database cannot be opened", asy
 
 test("normalizeUsage fills missing defaults", () => {
   const row = normalizeUsage({ provider: "p", model: "m", inputTokens: 100, outputTokens: 50 });
-  assert.deepEqual(row, { provider: "p", model: "m", inputTokens: 100, outputTokens: 50, totalTokens: 150, cachedTokens: 0, reasoningTokens: 0, estimated: false, sessionId: null, createdAt: row.createdAt });
+  assert.deepEqual(row, { provider: "p", model: "m", inputTokens: 100, outputTokens: 50, totalTokens: 150, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, estimated: false, sessionId: null, createdAt: row.createdAt });
   assert.equal(Number.isFinite(row.createdAt), true);
 });
 
@@ -113,4 +113,34 @@ test("json file store handles concurrent reads after a write", async () => {
     assert.equal(models[0].tokens, 125);
     await store.close();
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("json file store serializes concurrent writes without losing rows", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentx-usage-"));
+  try {
+    const store = await createUsageStore({ backend: "json", location: join(dir, "usage.json") });
+    await Promise.all(Array.from({ length: 20 }, (_, i) => store.record(normalizeUsage(sample({ inputTokens: i + 1, outputTokens: 0, totalTokens: i + 1 })))));
+    const totals = await store.totals("all");
+    assert.equal(totals.totalTokens, 210); // sum(1..20) — no lost updates
+    const reopened = await createUsageStore({ backend: "json", location: join(dir, "usage.json") });
+    assert.equal((await reopened.totals("all")).totalTokens, 210);
+    await store.close(); await reopened.close();
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("closing a memory store keeps recorded stats readable", async () => {
+  const store = await createUsageStore({ backend: "memory" });
+  await store.record(normalizeUsage(sample()));
+  await store.close();
+  assert.equal((await store.totals("all")).totalTokens, 150);
+});
+
+test("cache write tokens survive normalization, storage, and stats", async () => {
+  const store = await createUsageStore({ backend: "memory" });
+  await store.record(normalizeUsage(sample({ provider: "anthropic", model: "claude-sonnet-4", cachedInputTokens: 500, cacheWriteTokens: 200 })));
+  await store.record(normalizeUsage(sample({ provider: "anthropic", model: "claude-sonnet-4", cachedInputTokens: 100 })));
+  const models = await store.modelStats("all");
+  assert.equal(models[0].cachedTokens, 600);
+  assert.equal(models[0].cacheWriteTokens, 200);
+  await store.close();
 });

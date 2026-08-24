@@ -27,7 +27,7 @@
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0"
   },
-  "optionalDependencies": {
-    "keytar": "^7.9.0"
+  "dependencies": {
+    "@clack/prompts": "^1.7.0"
   }
 }

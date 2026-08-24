@@ -41,21 +41,27 @@ export class SqliteUsageStore implements UsageStore {
       output_tokens INTEGER NOT NULL DEFAULT 0,
       total_tokens INTEGER NOT NULL DEFAULT 0,
       cached_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
       reasoning_tokens INTEGER NOT NULL DEFAULT 0,
       estimated INTEGER NOT NULL DEFAULT 0,
       session_id TEXT,
       created_at INTEGER NOT NULL
     )`);
+    // Older databases predate the cache_write_tokens column.
+    const columns = (this.db.prepare(`PRAGMA table_info(token_usage)`).all() as any[]).map((column) => column.name);
+    if (!columns.includes("cache_write_tokens")) {
+      this.db.exec(`ALTER TABLE token_usage ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0`);
+    }
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_provider ON token_usage(provider)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_created ON token_usage(created_at)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_session ON token_usage(session_id)`);
     this.insert = this.db.prepare(`INSERT INTO token_usage
-      (provider, model, input_tokens, output_tokens, total_tokens, cached_tokens, reasoning_tokens, estimated, session_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      (provider, model, input_tokens, output_tokens, total_tokens, cached_tokens, cache_write_tokens, reasoning_tokens, estimated, session_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   }
 
   async record(row: TokenUsageRow): Promise<void> {
-    this.insert.run(row.provider, row.model, row.inputTokens, row.outputTokens, row.totalTokens, row.cachedTokens, row.reasoningTokens, row.estimated ? 1 : 0, row.sessionId, row.createdAt);
+    this.insert.run(row.provider, row.model, row.inputTokens, row.outputTokens, row.totalTokens, row.cachedTokens, row.cacheWriteTokens, row.reasoningTokens, row.estimated ? 1 : 0, row.sessionId, row.createdAt);
   }
 
   private where(period?: UsagePeriod): { clause: string; args: number[] } {
@@ -76,8 +82,8 @@ export class SqliteUsageStore implements UsageStore {
 
   async modelStats(period?: UsagePeriod): Promise<ModelUsageStat[]> {
     const { clause, args } = this.where(period);
-    const rows = this.db.prepare(`SELECT provider, model, COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens, COALESCE(SUM(cached_tokens),0) AS cachedTokens, COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens, COALESCE(SUM(total_tokens),0) AS tokens, COUNT(*) AS requests FROM token_usage ${clause} GROUP BY provider, model ORDER BY tokens DESC, provider ASC, model ASC`).all(...args) as any[];
-    return rows.map((row) => ({ provider: row.provider, model: row.model, inputTokens: Number(row.inputTokens), outputTokens: Number(row.outputTokens), cachedTokens: Number(row.cachedTokens), reasoningTokens: Number(row.reasoningTokens), tokens: Number(row.tokens), requests: Number(row.requests) }));
+    const rows = this.db.prepare(`SELECT provider, model, COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens, COALESCE(SUM(cached_tokens),0) AS cachedTokens, COALESCE(SUM(cache_write_tokens),0) AS cacheWriteTokens, COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens, COALESCE(SUM(total_tokens),0) AS tokens, COUNT(*) AS requests FROM token_usage ${clause} GROUP BY provider, model ORDER BY tokens DESC, provider ASC, model ASC`).all(...args) as any[];
+    return rows.map((row) => ({ provider: row.provider, model: row.model, inputTokens: Number(row.inputTokens), outputTokens: Number(row.outputTokens), cachedTokens: Number(row.cachedTokens), cacheWriteTokens: Number(row.cacheWriteTokens), reasoningTokens: Number(row.reasoningTokens), tokens: Number(row.tokens), requests: Number(row.requests) }));
   }
 
   async totals(period?: UsagePeriod): Promise<UsageTotals> {
@@ -90,7 +96,7 @@ export class SqliteUsageStore implements UsageStore {
 }
 
 class MemoryUsageStore implements UsageStore {
-  private rows: TokenUsageRow[] = [];
+  protected rows: TokenUsageRow[] = [];
 
   async record(row: TokenUsageRow): Promise<void> { this.rows.push(row); }
   private filter(period?: UsagePeriod): TokenUsageRow[] {
@@ -107,30 +113,39 @@ class MemoryUsageStore implements UsageStore {
     return [...grouped.entries()].map(([provider, value]) => ({ provider, ...value })).sort((a, b) => b.tokens - a.tokens || (a.provider < b.provider ? -1 : 1));
   }
   async modelStats(period?: UsagePeriod): Promise<ModelUsageStat[]> {
-    const grouped = new Map<string, { provider: string; model: string; inputTokens: number; outputTokens: number; cachedTokens: number; reasoningTokens: number; tokens: number; requests: number }>();
-    for (const row of this.filter(period)) { const key = `${row.provider}/${row.model}`; const entry = grouped.get(key) ?? { provider: row.provider, model: row.model, inputTokens: 0, outputTokens: 0, cachedTokens: 0, reasoningTokens: 0, tokens: 0, requests: 0 }; entry.inputTokens += row.inputTokens; entry.outputTokens += row.outputTokens; entry.cachedTokens += row.cachedTokens; entry.reasoningTokens += row.reasoningTokens; entry.tokens += row.totalTokens; entry.requests++; grouped.set(key, entry); }
+    const grouped = new Map<string, { provider: string; model: string; inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number; reasoningTokens: number; tokens: number; requests: number }>();
+    for (const row of this.filter(period)) { const key = `${row.provider}/${row.model}`; const entry = grouped.get(key) ?? { provider: row.provider, model: row.model, inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, tokens: 0, requests: 0 }; entry.inputTokens += row.inputTokens; entry.outputTokens += row.outputTokens; entry.cachedTokens += row.cachedTokens; entry.cacheWriteTokens += row.cacheWriteTokens; entry.reasoningTokens += row.reasoningTokens; entry.tokens += row.totalTokens; entry.requests++; grouped.set(key, entry); }
     return [...grouped.values()].sort((a, b) => b.tokens - a.tokens || (a.provider < b.provider ? -1 : 1) || (a.model < b.model ? -1 : 1));
   }
   async totals(period?: UsagePeriod): Promise<UsageTotals> { return this.sum(this.filter(period)); }
-  async close(): Promise<void> { this.rows = []; }
+  // Closing releases resources; in-memory rows are kept so stats stay readable
+  // after close (matters for tests and the CLI reading a shared instance).
+  async close(): Promise<void> {}
 }
 
 class JsonFileUsageStore extends MemoryUsageStore {
   private loadPromise?: Promise<void>;
+  /** Serializes writes so an older snapshot can never overwrite newer rows. */
+  private writeQueue: Promise<void> = Promise.resolve();
   constructor(private readonly file: string) { super(); }
   private load(): Promise<void> {
-    if (!this.loadPromise) this.loadPromise = readFile(this.file, "utf8").then((text) => { (this as any).rows = JSON.parse(text) as TokenUsageRow[]; }).catch(() => { (this as any).rows = []; });
+    if (!this.loadPromise) this.loadPromise = readFile(this.file, "utf8").then((text) => { this.rows = JSON.parse(text) as TokenUsageRow[]; }).catch(() => { this.rows = []; });
     return this.loadPromise;
   }
-  private async persist(): Promise<void> {
-    await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
-    await writeFile(this.file, `${JSON.stringify((this as any).rows, null, 2)}\n`, { mode: 0o600 });
+  private persist(): Promise<void> {
+    const write = this.writeQueue.then(async () => {
+      await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
+      await writeFile(this.file, `${JSON.stringify(this.rows, null, 2)}\n`, { mode: 0o600 });
+    });
+    // Keep the queue alive even when a write fails, but surface the error.
+    this.writeQueue = write.catch(() => {});
+    return write;
   }
   override async record(row: TokenUsageRow): Promise<void> { await this.load(); await super.record(row); await this.persist(); }
-  override async sessionTotals(sessionId: string): Promise<UsageTotals> { await this.load(); return super.sessionTotals(sessionId); }
-  override async providerStats(period?: UsagePeriod): Promise<ProviderUsageStat[]> { await this.load(); return super.providerStats(period); }
-  override async modelStats(period?: UsagePeriod): Promise<ModelUsageStat[]> { await this.load(); return super.modelStats(period); }
-  override async totals(period?: UsagePeriod): Promise<UsageTotals> { await this.load(); return super.totals(period); }
+  override async sessionTotals(sessionId: string): Promise<UsageTotals> { await this.load(); await this.writeQueue; return super.sessionTotals(sessionId); }
+  override async providerStats(period?: UsagePeriod): Promise<ProviderUsageStat[]> { await this.load(); await this.writeQueue; return super.providerStats(period); }
+  override async modelStats(period?: UsagePeriod): Promise<ModelUsageStat[]> { await this.load(); await this.writeQueue; return super.modelStats(period); }
+  override async totals(period?: UsagePeriod): Promise<UsageTotals> { await this.load(); await this.writeQueue; return super.totals(period); }
 }
 
 export type StoreBackend = "sqlite" | "json" | "memory";
@@ -165,10 +180,6 @@ export async function createUsageStore(options: { location?: string; backend?: S
 }
 
 /** Shared default store used by the adapter server and the CLI statistics command. */
-export async function defaultUsageStore(): Promise<UsageStore> {
-  const backend = defaultStoreBackend();
-  if (backend === "memory") return new MemoryUsageStore();
-  const jsonLocation = defaultUsageLocation("json");
-  if (backend === "json") return new JsonFileUsageStore(jsonLocation);
-  return sqliteOrFallback(defaultUsageLocation("sqlite"), jsonLocation);
+export function defaultUsageStore(): Promise<UsageStore> {
+  return createUsageStore({ backend: defaultStoreBackend() });
 }

@@ -2,7 +2,8 @@ import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { loadConfig } from "./config.js";
 import { providers } from "./catalog.js";
-import { providerById } from "./providers/registry.js";
+import { credentialEnvName, providerById } from "./providers/registry.js";
+import { storedCredential } from "./credentials.js";
 
 export interface DoctorResult {
   nodeVersion: string;
@@ -39,12 +40,13 @@ export async function runDoctor(options: Record<string, string | undefined> = {}
   const config = loadConfig(options);
   const wsl = Boolean(process.env.WSL_INTEROP);
   const provider = providerById(config.provider ?? "opencode");
-  const apiKey = config.apiKey || process.env[provider.apiKeyEnv] || "";
+  const apiKey = config.apiKey || storedCredential(provider) || "";
   const issues: string[] = [];
-  if (!apiKey) issues.push(`Set ${provider.apiKeyEnv} before starting the adapter, or pass --api-key <key>.`);
+  if (!apiKey) issues.push(`Set ${credentialEnvName(provider)} (or ${provider.apiKeyEnv}) before starting the adapter, or pass --api-key <key>.`);
   const claudeFound = await executableExists("claude");
   const codexFound = await executableExists("codex");
   if (!claudeFound) issues.push("Claude Code was not found. Install Claude Code and ensure `claude` is on PATH.");
+  if (!codexFound) issues.push("Codex was not found. Install Codex and ensure `codex` is on PATH if you plan to use it.");
   const available = await portAvailable(config.port, config.host);
   if (!available) issues.push(`Port ${config.port} is in use. The adapter will try the next ports, or use --port to pick another.`);
   return {

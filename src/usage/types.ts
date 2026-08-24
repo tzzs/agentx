@@ -28,6 +28,7 @@ export interface TokenUsageRow {
   outputTokens: number;
   totalTokens: number;
   cachedTokens: number;
+  cacheWriteTokens: number;
   reasoningTokens: number;
   estimated: boolean;
   sessionId: string | null;
@@ -52,16 +53,13 @@ export interface ModelUsageStat {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
+  cacheWriteTokens: number;
   reasoningTokens: number;
   tokens: number;
   requests: number;
 }
 
 export type { ProviderCapabilities } from "../providers/types.js";
-
-export interface ProviderUsageAdapter {
-  extractUsage(response: any): TokenUsage | null;
-}
 
 export interface PricingProvider {
   calculate(model: string, usage: TokenUsage): number;

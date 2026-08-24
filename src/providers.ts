@@ -1,27 +1,37 @@
-export const RESPONSES_ENDPOINT = "https://opencode.ai/zen/go/v1/responses";
-
 export interface AnthropicMessage { role: string; content: unknown; }
 export interface AnthropicRequest {
   model?: string; system?: string | Array<{ type: string; text?: string }>;
   max_tokens?: number; messages: AnthropicMessage[]; stream?: boolean;
+  temperature?: number; top_p?: number; stop_sequences?: string[];
   tools?: Array<{ name: string; description?: string; input_schema: unknown }>;
+}
+
+/** Build a data URI (or pass through remote URLs) from an Anthropic image source. */
+export function imageDataUri(source: any): string | undefined {
+  if (!source) return undefined;
+  if (source.type === "url" && typeof source.url === "string") return source.url;
+  if (source.type === "base64" && typeof source.data === "string") return `data:${source.media_type ?? "image/png"};base64,${source.data}`;
+  return undefined;
 }
 
 function convertContent(content: any, role: string): any {
   if (!Array.isArray(content)) return content;
   return content.map((part) => {
     if (part.type === "text") return { type: role === "assistant" ? "output_text" : "input_text", text: part.text ?? "" };
+    if (part.type === "image") { const url = imageDataUri(part.source); return url ? { type: "input_image", image_url: url } : null; }
     if (part.type === "tool_result") return { type: "function_call_output", call_id: part.tool_use_id, output: typeof part.content === "string" ? part.content : JSON.stringify(part.content) };
     if (part.type === "tool_use") return { type: "function_call", call_id: part.id, name: part.name, arguments: JSON.stringify(part.input ?? {}) };
     return part;
-  });
+  }).filter((part) => part !== null);
 }
 
 export function toResponsesRequest(input: AnthropicRequest, model: string): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model, input: toResponsesInput(input.messages),
     ...(input.max_tokens === undefined ? {} : { max_output_tokens: input.max_tokens }),
-    ...(input.stream ? { stream: true } : {})
+    ...(input.stream ? { stream: true } : {}),
+    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+    ...(input.top_p === undefined ? {} : { top_p: input.top_p })
   };
   if (input.tools) body.tools = input.tools.map((tool) => ({ type: "function", name: tool.name, description: tool.description, parameters: tool.input_schema }));
   if (input.system !== undefined) {

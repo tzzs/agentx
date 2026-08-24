@@ -17,9 +17,12 @@ test("supports arbitrary OpenRouter model ids", () => {
   assert.equal(provider.provider, "openrouter"); assert.equal(provider.model, "anthropic/claude-sonnet-4");
 });
 
-test("uses provider-specific credentials", () => {
-  process.env.DEEPSEEK_API_KEY = "deepseek-test-key";
-  assert.equal(apiKeyFor(providerFor("deepseek-v4-pro", "deepseek")), "deepseek-test-key");
+test("uses provider-specific credentials with the agentx prefix taking precedence", () => {
+  process.env.AGENTX_DEEPSEEK_API_KEY = "prefixed-key";
+  process.env.DEEPSEEK_API_KEY = "legacy-key";
+  assert.equal(apiKeyFor(providerFor("deepseek-v4-pro", "deepseek")), "prefixed-key");
+  delete process.env.AGENTX_DEEPSEEK_API_KEY;
+  assert.equal(apiKeyFor(providerFor("deepseek-v4-pro", "deepseek")), "legacy-key");
   delete process.env.DEEPSEEK_API_KEY;
   assert.equal(providerRegistry.some((provider) => provider.id === "openrouter"), true);
 });
