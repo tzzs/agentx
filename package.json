@@ -7,7 +7,8 @@
     "agentx": "dist/src/cli.js"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "engines": {
     "node": ">=20"
@@ -17,7 +18,7 @@
     "test": "npm run build && node --test dist/test/*.test.js"
   },
   "files": [
-    "dist",
+    "dist/src",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"

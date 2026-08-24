@@ -77,7 +77,7 @@ test("keeps parallel Chat Completions tool calls in separate blocks", async () =
     'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-a","function":{"name":"read","arguments":"{\\"file\\":"}}]}}]}\n\n',
     'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call-b","function":{"name":"write","arguments":"{\\"text\\":\\"hi\\"}"}}]}}]}\n\n',
     'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"a.txt\\"}"}}]}}]}\n\n',
-    'data: [DONE]\n\n'
+    "data: [DONE]\n\n"
   ]);
   const output = sink();
   await pipeResponsesStream(upstream, output as never, "deepseek-v4-pro", { provider: "opencode", model: "deepseek-v4-pro", protocol: "chat-completions" });
@@ -123,4 +123,51 @@ test("announces repeated chat tool deltas exactly once", async () => {
   const output = sink();
   await pipeChatStreamToResponses(upstream, output as never, "deepseek-v4-pro");
   assert.equal((output.text.match(/event: response\.output_item\.added/g) ?? []).length, 1);
+});
+
+test("translates reasoning summaries into Anthropic thinking blocks before text", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"type":"response.reasoning_summary_text.delta","delta":"thinking hard"}\n\n',
+    'data: {"type":"response.output_text.delta","delta":"Answer"}\n\n'
+  ]);
+  const output = sink();
+  await pipeResponsesStream(upstream, output as never, "gpt-5.6-luna");
+  assert.match(output.text, /"content_block":\{"type":"thinking","thinking":""\}/);
+  assert.match(output.text, /"type":"thinking_delta","thinking":"thinking hard"/);
+  const thinkingStart = output.text.indexOf('"type":"thinking"');
+  const stop = output.text.indexOf("event: content_block_stop");
+  const textStart = output.text.indexOf('content_block":{"type":"text"');
+  assert.ok(thinkingStart >= 0 && thinkingStart < stop && stop < textStart, "thinking block must close before the text block opens");
+});
+test("maps chat reasoning_content into Anthropic thinking blocks", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"choices":[{"delta":{"reasoning_content":"ponder"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'
+  ]);
+  const output = sink();
+  await pipeResponsesStream(upstream, output as never, "deepseek-v4-pro", { provider: "deepseek", model: "deepseek-v4-pro", protocol: "chat-completions" });
+  assert.match(output.text, /"type":"thinking_delta","thinking":"ponder"/);
+  assert.match(output.text, /"type":"text_delta","text":"Hi"/);
+});
+test("reports cache read tokens in the final Anthropic usage", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"type":"response.output_text.delta","delta":"OK"}\n\n',
+    'data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":20,"input_tokens_details":{"cached_tokens":80}}}}\n\n'
+  ]);
+  const output = sink();
+  await pipeResponsesStream(upstream, output as never, "gpt-5.6-luna");
+  assert.match(output.text, /"cache_read_input_tokens":80/);
+});
+test("translates chat reasoning into Responses reasoning events for Codex clients", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"choices":[{"delta":{"reasoning_content":"step one"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"Done"}}]}\n\n',
+    "data: [DONE]\n\n"
+  ]);
+  const output = sink();
+  await pipeChatStreamToResponses(upstream, output as never, "deepseek-v4-pro", { provider: "deepseek", model: "deepseek-v4-pro", protocol: "chat-completions" });
+  assert.match(output.text, /"item":\{"type":"reasoning","id":"rs_/);
+  assert.match(output.text, /event: response\.reasoning_summary_text\.delta\ndata: .*"delta":"step one"/);
+  assert.match(output.text, /event: response\.output_text\.delta/);
+  assert.match(output.text, /"summary":\[\{"type":"summary_text","text":"step one"\}\]/);
 });

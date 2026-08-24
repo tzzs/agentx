@@ -82,10 +82,11 @@ function chatText(content: any): string {
 
 export function fromChatResponse(response: any, model: string): Record<string, unknown> {
   const message = response.choices?.[0]?.message ?? {}; const content = [];
+  if (message.reasoning_content) content.push({ type: "thinking", thinking: message.reasoning_content });
   const text = chatText(message.content);
   if (text) content.push({ type: "text", text });
   for (const call of message.tool_calls ?? []) content.push({ type: "tool_use", id: call.id, name: call.function?.name, input: parse(call.function?.arguments) });
-  return { id: response.id ?? `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model, content, stop_reason: message.tool_calls?.length ? "tool_use" : response.choices?.[0]?.finish_reason === "length" ? "max_tokens" : "end_turn", stop_sequence: null, usage: { input_tokens: response.usage?.prompt_tokens ?? 0, output_tokens: response.usage?.completion_tokens ?? 0 } };
+  return { id: response.id ?? `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model, content, stop_reason: message.tool_calls?.length ? "tool_use" : response.choices?.[0]?.finish_reason === "length" ? "max_tokens" : "end_turn", stop_sequence: null, usage: { input_tokens: response.usage?.prompt_tokens ?? 0, output_tokens: response.usage?.completion_tokens ?? 0, cache_creation_input_tokens: 0, cache_read_input_tokens: response.usage?.prompt_tokens_details?.cached_tokens ?? 0 } };
 }
 
 export function toChatCompletionsRequest(input: any, model: string) {
@@ -106,10 +107,13 @@ export function toChatCompletionsRequest(input: any, model: string) {
 
 export function fromChatResponseToResponses(response: any, model: string): Record<string, unknown> {
   const message = response.choices?.[0]?.message ?? {}; const output: any[] = [];
+  if (message.reasoning_content) output.push({ type: "reasoning", id: `rs_${crypto.randomUUID()}`, summary: [{ type: "summary_text", text: message.reasoning_content }] });
   const text = chatText(message.content);
   if (text) output.push({ type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text }] });
   for (const call of message.tool_calls ?? []) output.push({ type: "function_call", call_id: call.id, name: call.function?.name, arguments: call.function?.arguments ?? "{}", status: "completed" });
-  return { id: response.id ?? `resp_${crypto.randomUUID()}`, object: "response", status: "completed", model, output, usage: { input_tokens: response.usage?.prompt_tokens ?? 0, output_tokens: response.usage?.completion_tokens ?? 0, total_tokens: response.usage?.total_tokens ?? 0 } };
+  const cached = response.usage?.prompt_tokens_details?.cached_tokens;
+  const reasoning = response.usage?.completion_tokens_details?.reasoning_tokens;
+  return { id: response.id ?? `resp_${crypto.randomUUID()}`, object: "response", status: "completed", model, output, usage: { input_tokens: response.usage?.prompt_tokens ?? 0, output_tokens: response.usage?.completion_tokens ?? 0, total_tokens: response.usage?.total_tokens ?? 0, ...(cached !== undefined && cached !== null ? { input_tokens_details: { cached_tokens: Number(cached) } } : {}), ...(reasoning !== undefined && reasoning !== null ? { output_tokens_details: { reasoning_tokens: Number(reasoning) } } : {}) } };
 }
 
 function responseContent(content: any): any {

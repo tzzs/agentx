@@ -33,6 +33,17 @@ test("converts Chat Completions responses to Responses", () => {
   const result = fromChatResponseToResponses({ id: "c2", choices: [{ message: { content: "OK" } }], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } }, "deepseek-v4-pro") as any;
   assert.equal(result.object, "response"); assert.deepEqual(result.output[0].content, [{ type: "output_text", text: "OK" }]); assert.equal(result.usage.input_tokens, 2);
 });
+test("maps chat reasoning content and cached tokens for Anthropic clients", () => {
+  const result = fromChatResponse({ id: "c3", choices: [{ message: { reasoning_content: "pondering", content: "Hi" } }], usage: { prompt_tokens: 30, completion_tokens: 4, prompt_tokens_details: { cached_tokens: 24 } } }, "deepseek-v4-pro") as any;
+  assert.deepEqual(result.content, [{ type: "thinking", thinking: "pondering" }, { type: "text", text: "Hi" }]);
+  assert.equal(result.usage.cache_read_input_tokens, 24);
+});
+test("maps chat reasoning content and usage details for Codex clients", () => {
+  const result = fromChatResponseToResponses({ id: "c4", choices: [{ message: { reasoning_content: "pondering", content: "Hi" } }], usage: { prompt_tokens: 30, completion_tokens: 4, total_tokens: 34, prompt_tokens_details: { cached_tokens: 24 }, completion_tokens_details: { reasoning_tokens: 3 } } }, "deepseek-v4-pro") as any;
+  assert.deepEqual(result.output[0], { type: "reasoning", id: result.output[0].id, summary: [{ type: "summary_text", text: "pondering" }] });
+  assert.equal(result.usage.input_tokens_details.cached_tokens, 24);
+  assert.equal(result.usage.output_tokens_details.reasoning_tokens, 3);
+});
 test("keeps structured parts when converting Responses input for Chat Completions", () => {
   const result = toChatCompletionsRequest({ input: [{ role: "user", content: [{ type: "input_text", text: "Look" }, { type: "input_image", image_url: "data:image/png;base64,AAA" }] }] }, "deepseek-v4-pro") as any;
   assert.deepEqual(result.messages[0].content, [
