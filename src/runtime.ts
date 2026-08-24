@@ -1,6 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { homedir } from "node:os";
+import { atomicWriteFile } from "./fsutil.js";
 
 /**
  * A runtime is the combination of a provider and the model it will use for a
@@ -45,12 +46,7 @@ export async function loadRuntimeState(): Promise<RuntimeState> {
 }
 
 async function writeRuntimeState(state: RuntimeState): Promise<void> {
-  const file = stateFile();
-  const directory = dirname(file);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const temporary = `${file}.tmp-${process.pid}`;
-  await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  await rename(temporary, file);
+  await atomicWriteFile(stateFile(), `${JSON.stringify(state, null, 2)}\n`);
 }
 
 /** Default runtime for a client, if one has been saved. */

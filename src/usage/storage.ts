@@ -1,7 +1,8 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { ModelUsageStat, ProviderUsageStat, TokenUsageRow, UsagePeriod, UsageStore, UsageTotals } from "./types.js";
+import { atomicWriteFile } from "../fsutil.js";
 
 export function periodStart(period: UsagePeriod, now = Date.now()): number | undefined {
   switch (period) {
@@ -133,10 +134,7 @@ class JsonFileUsageStore extends MemoryUsageStore {
     return this.loadPromise;
   }
   private persist(): Promise<void> {
-    const write = this.writeQueue.then(async () => {
-      await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
-      await writeFile(this.file, `${JSON.stringify(this.rows, null, 2)}\n`, { mode: 0o600 });
-    });
+    const write = this.writeQueue.then(() => atomicWriteFile(this.file, `${JSON.stringify(this.rows, null, 2)}\n`));
     // Keep the queue alive even when a write fails, but surface the error.
     this.writeQueue = write.catch(() => {});
     return write;

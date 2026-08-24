@@ -42,14 +42,11 @@ export interface StreamUsageOptions {
   model: string;
   protocol: "responses" | "chat-completions";
   sessionId?: string;
-  /** Rough request size (~tokens) used when the provider reports no usage. */
-  inputEstimate?: number;
   onUsage?: (usage: TokenUsage) => void;
 }
 
-function estimatedUsage(provider: string, model: string, inputTokens: number, outputTokens: number, inputEstimate: number | undefined, sessionId?: string): TokenUsage {
-  const input = Math.max(inputTokens, inputEstimate ?? 0);
-  return { provider, model, inputTokens: input, outputTokens, totalTokens: input + outputTokens, estimated: true, ...(sessionId ? { sessionId } : {}) };
+function estimatedUsage(provider: string, model: string, inputTokens: number, outputTokens: number, sessionId?: string): TokenUsage {
+  return { provider, model, inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, estimated: true, ...(sessionId ? { sessionId } : {}) };
 }
 
 /** Cache-token fields shared by chat-completions and Responses usage payloads. */
@@ -111,7 +108,7 @@ export async function pipeChatStreamToResponses(upstream: Response, response: Se
   cancelOnDisconnect(response, reader);
   response.writeHead(200, SSE_HEADERS);
   // try/finally guarantees the interval is cleared even if a write to the
-  // local client throws before the main try block is entered.
+  // local client throws.
   const stopHeartbeat = startHeartbeat(response);
   try {
   const id = `resp_${crypto.randomUUID()}`; let text = ""; let inputTokens = 0; let outputTokens = 0; let sawUsage = false; let truncated = false; let lastUsage: any; let rsId = ""; let rsText = ""; const calls = new Map<number, { id: string; name: string; arguments: string; announced: boolean }>();
@@ -168,7 +165,6 @@ export async function pipeChatStreamToResponses(upstream: Response, response: Se
   } catch (error) {
     event(response, "response.failed", { type: "response.failed", response: { id, object: "response", status: "failed", model, error: { code: "upstream_error", message: errorMessage(error) } } });
   }
-  stopHeartbeat();
   response.end();
   reportUsage(options, sawUsage, inputTokens, outputTokens, lastUsage);
   } finally { stopHeartbeat(); }
@@ -203,7 +199,6 @@ export async function pipeResponsesPassthrough(upstream: Response, response: Ser
     const id = `resp_${crypto.randomUUID()}`;
     event(response, "response.failed", { type: "response.failed", response: { id, object: "response", status: "failed", model, error: { code: "upstream_error", message: errorMessage(error) } } });
   }
-  stopHeartbeat();
   response.end();
   reportUsage(options, usage !== null, (usage as TokenUsage | null)?.inputTokens ?? 0, (usage as TokenUsage | null)?.outputTokens ?? outputTokens, lastUsage);
   } finally { stopHeartbeat(); }
@@ -305,7 +300,6 @@ export async function pipeResponsesStream(upstream: Response, response: ServerRe
     stopBlock();
     event(response, "error", { type: "error", error: { type: "api_error", message: errorMessage(error) } });
   }
-  stopHeartbeat();
   response.end();
   reportUsage(options, sawUsage, inputTokens, outputTokens, lastUsage);
   } finally { stopHeartbeat(); }
@@ -315,5 +309,5 @@ function reportUsage(options: StreamUsageOptions | undefined, sawUsage: boolean,
   if (!options?.onUsage) return;
   options.onUsage(sawUsage
     ? withCacheTokens({ provider: options.provider, model: options.model, inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, ...(options.sessionId ? { sessionId: options.sessionId } : {}) }, lastUsage)
-    : estimatedUsage(options.provider, options.model, inputTokens, outputTokens, options.inputEstimate, options.sessionId));
+    : estimatedUsage(options.provider, options.model, inputTokens, outputTokens, options.sessionId));
 }

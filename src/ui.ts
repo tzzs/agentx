@@ -137,23 +137,17 @@ function modelsFor(provider: string): Array<{ model: string }> {
   return definition.models.map((item) => ({ model: item.model }));
 }
 
-/** Build the Change Provider list, marking and preselecting the current one. */
-function providerOptions(entries: ProviderEntry[], current: string): { options: Array<{ value: string; label: string; hint: string }>; initialValue: string } {
-  const ordered = [...entries].sort((a, b) => Number(b.configured) - Number(a.configured));
-  const options = ordered.map((entry) => {
-    const base = entry.definition.name;
-    return {
-      value: entry.definition.id,
-      label: base,
-      hint: entry.configured ? `connected · ${entry.modelCount} models` : "not configured",
-    };
-  });
-  return { options, initialValue: current };
+/** Build the provider picker list; configured providers are listed first. */
+function providerOptions(entries: ProviderEntry[]): Array<{ value: string; label: string; hint: string }> {
+  return [...entries].sort((a, b) => Number(b.configured) - Number(a.configured)).map((entry) => ({
+    value: entry.definition.id,
+    label: entry.definition.name,
+    hint: entry.configured ? `connected · ${entry.modelCount} models` : "not configured",
+  }));
 }
 
 async function selectProvider(entries: ProviderEntry[], current: string): Promise<string | symbol> {
-  const { options, initialValue } = providerOptions(entries, current);
-  return select({ message: "Provider", options, initialValue });
+  return select({ message: "Provider", options: providerOptions(entries), initialValue: current });
 }
 
 async function selectModel(provider: string, current: string): Promise<string | symbol> {
@@ -184,14 +178,8 @@ async function selectAction(client: string, provider: string, model: string): Pr
  * undefined when cancelled.
  */
 async function chooseRuntime(entries: ProviderEntry[], prompt: string): Promise<{ provider: string; apiKey?: string } | undefined> {
-  const ordered = [...entries].sort((a, b) => Number(b.configured) - Number(a.configured));
-  const entryMap = new Map(ordered.map((entry) => [entry.definition.id, entry]));
-  const options = ordered.map((entry) => ({
-    value: entry.definition.id,
-    label: entry.definition.name,
-    hint: entry.configured ? `connected · ${entry.modelCount} models` : "not configured",
-  }));
-  const chosen = await select({ message: prompt, options });
+  const entryMap = new Map(entries.map((entry) => [entry.definition.id, entry]));
+  const chosen = await select({ message: prompt, options: providerOptions(entries) });
   if (isCancel(chosen)) return undefined;
   const entry = entryMap.get(chosen);
   let apiKey: string | undefined;
