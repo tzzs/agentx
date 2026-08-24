@@ -32,12 +32,16 @@ export function toResponsesRequest(input: AnthropicRequest, model: string): Reco
   return body;
 }
 
+/** Thinking blocks are local-only reasoning echoes from Claude Code; upstream providers never accept them. */
+function isThinkingPart(part: any): boolean { return part?.type === "thinking" || part?.type === "redacted_thinking"; }
+
 function toResponsesInput(messages: AnthropicMessage[]): any[] {
   const output: any[] = [];
   for (const message of messages) {
     if (!Array.isArray(message.content)) { output.push({ ...message, content: convertContent(message.content, message.role) }); continue; }
     const textParts: any[] = [];
     for (const part of message.content as any[]) {
+      if (isThinkingPart(part)) continue;
       if (part.type === "tool_use") { output.push({ type: "function_call", call_id: part.id, name: part.name, arguments: JSON.stringify(part.input ?? {}) }); continue; }
       if (part.type === "tool_result") { output.push({ type: "function_call_output", call_id: part.tool_use_id, output: typeof part.content === "string" ? part.content : JSON.stringify(part.content ?? "") }); continue; }
       const converted = convertContent([part], message.role)[0]; if (converted) textParts.push(converted);
@@ -45,6 +49,16 @@ function toResponsesInput(messages: AnthropicMessage[]): any[] {
     if (textParts.length) output.push({ role: message.role, content: textParts });
   }
   return output;
+}
+
+function reasoningText(output: any[]): string {
+  return (output ?? [])
+    .filter((item: any) => item.type === "reasoning")
+    .flatMap((item: any) => [
+      ...(item.summary ?? []).map((part: any) => part.text ?? ""),
+      ...(item.content ?? []).filter((part: any) => part.type === "reasoning_text").map((part: any) => part.text ?? "")
+    ])
+    .join("");
 }
 
 export function fromResponsesResponse(response: any, model: string): Record<string, unknown> {
@@ -55,11 +69,18 @@ export function fromResponsesResponse(response: any, model: string): Record<stri
     .filter((part: any) => part.type === "output_text")
     .map((part: any) => part.text ?? "").join("");
   const toolUses = output.filter((item: any) => item.type === "function_call").map((item: any) => ({ type: "tool_use", id: item.call_id ?? item.id, name: item.name, input: parseArguments(item.arguments) }));
+  const thinking = reasoningText(output);
   return {
     id: response.id ?? `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model,
-    content: [...(text ? [{ type: "text", text }] : []), ...toolUses], stop_reason: toolUses.length ? "tool_use" : response.status === "incomplete" ? "max_tokens" : "end_turn",
+    content: [...(thinking ? [{ type: "thinking", thinking }] : []), ...(text ? [{ type: "text", text }] : []), ...toolUses],
+    stop_reason: toolUses.length ? "tool_use" : response.status === "incomplete" ? "max_tokens" : "end_turn",
     stop_sequence: null,
-    usage: { input_tokens: response.usage?.input_tokens ?? 0, output_tokens: response.usage?.output_tokens ?? 0 }
+    usage: {
+      input_tokens: response.usage?.input_tokens ?? 0,
+      output_tokens: response.usage?.output_tokens ?? 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: response.usage?.input_tokens_details?.cached_tokens ?? 0
+    }
   };
 }
 
