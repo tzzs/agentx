@@ -28,11 +28,12 @@ test("points Codex at the local adapter via -c provider overrides", () => {
   ]);
 });
 
-test("omits -m for auto so the adapter routes the tier per request", () => {
-  const config = { host: "localhost", port: 8787, model: "auto", apiKey: "k", logLevel: "info" };
-  const args = codexLaunchArgs(config as any, { port: 9000 } as any);
+test("attaches the generated model catalog when one was written", () => {
+  const adapter = { port: 8788, token: "tok" } as any;
+  const config = { host: "127.0.0.1", port: 8787, model: "auto", apiKey: "k", logLevel: "info" };
+  const args = codexLaunchArgs(config as any, adapter, "/tmp/catalog/models.json");
+  assert.deepEqual(args.slice(10), ["-c", "model_catalog_json='/tmp/catalog/models.json'"]);
   assert.ok(!args.includes("-m"));
-  assert.ok(args.some((arg) => arg.includes("base_url='http://localhost:9000/v1'")));
 });
 
 test("keeps every Claude Code tier on the selected model by default", async () => {

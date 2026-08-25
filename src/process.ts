@@ -39,13 +39,14 @@ export function clientEnvironment(config: Config, adapter: Adapter, client: "ant
  * state is ever consulted. Values use TOML literal strings (single quotes) so
  * they survive Windows shell re-parsing.
  */
-export function codexLaunchArgs(config: Config, adapter: Adapter): string[] {
+export function codexLaunchArgs(config: Config, adapter: Adapter, catalogPath?: string): string[] {
   return [
     "-c", "model_provider='agentx'",
     "-c", "model_providers.agentx.name='AgentX'",
     "-c", `model_providers.agentx.base_url='http://${config.host}:${adapter.port}/v1'`,
     "-c", "model_providers.agentx.wire_api='responses'",
     "-c", "model_providers.agentx.env_key='OPENAI_API_KEY'",
+    ...(catalogPath ? ["-c", `model_catalog_json='${catalogPath}'`] : []),
     ...(config.model === "auto" ? [] : ["-m", config.model]),
   ];
 }

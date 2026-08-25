@@ -101,7 +101,7 @@ npx agentx codex
 npx agentx codex --model gpt-5.6-luna
 ```
 
-启动器通过 `-c` 参数定义一个内联的 `agentx` 模型 Provider，指向 `http://127.0.0.1:<port>/v1`，其 Bearer Token 是以 `OPENAI_API_KEY` 注入的临时本地 Token。新版 Codex 已不再读取这些环境变量，该方式可以正常工作，并完全绕过 Codex 的登录页——无需 ChatGPT 登录或 `~/.codex/auth.json`，也不会修改你已有的 `~/.codex/config.toml`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
+启动器通过 `-c` 参数定义一个内联的 `agentx` 模型 Provider，指向 `http://127.0.0.1:<port>/v1`，其 Bearer Token 是以 `OPENAI_API_KEY` 注入的临时本地 Token。启动时还会生成一份模型目录（`~/.config/agentx/codex-models.json`，经 `model_catalog_json` 传入），让目录中的模型以真实元数据加载，而不是触发 Codex 的 fallback 元数据警告。新版 Codex 已不再读取那些环境变量，该方式可以正常工作，并完全绕过 Codex 的登录页——无需 ChatGPT 登录或 `~/.codex/auth.json`，也不会修改你已有的 `~/.codex/config.toml`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
 
 ## 安装
 
