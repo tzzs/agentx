@@ -5,7 +5,7 @@ import { fromResponsesResponse, toResponsesRequest } from "./providers.js";
 import { pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream, type StreamUsageOptions } from "./streaming.js";
 import type { ProviderModel } from "./providers/types.js";
 import type { TokenUsage } from "./usage/types.js";
-import { fromChatResponse, fromChatResponseToResponses, providerFor, providers, selectModel, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
+import { fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, providers, selectModel, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
 import { apiKeyFor, providerDisplayName } from "./providers/registry.js";
 import { defaultModelFor } from "./selection.js";
 import { extractUsage } from "./providers/usage/index.js";
@@ -171,7 +171,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     if (pathname === "/v1/responses" && request.method === "POST") {
       // Honor auto routing here too: Codex echoes OPENAI_MODEL=auto back.
       const proxied = await proxyRequest(config, request, response, token, {
-        defaultModel: (input) => input.model ?? config.model,
+        defaultModel: (input) => honorRequestedModel(input.model, config.model, config.provider),
         payload: (input, model) => {
           const provider = providerFor(model, config.provider);
           return provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model);
@@ -189,7 +189,10 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     }
     if (pathname !== "/v1/messages" || request.method !== "POST") return json(response, 404, { error: { message: "Not found", type: "not_found" } });
     const proxied = await proxyRequest(config, request, response, token, {
-      defaultModel: () => config.model,
+      // Claude Code pins every tier to the configured model, but its haiku
+      // background lane may carry a faster sibling (see clientEnvironment);
+      // honor such requests instead of forcing the main model.
+      defaultModel: (input) => honorRequestedModel(input.model, config.model, config.provider),
       payload: (input, model) => {
         const provider = providerFor(model, config.provider);
         return provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model);

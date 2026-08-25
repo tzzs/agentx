@@ -6,6 +6,17 @@ import type { ProviderModel } from "./providers/types.js";
 export type ModelProvider = ProviderModel;
 export const providers = allModels;
 export function providerFor(model: string, provider?: string): ModelProvider { return resolveProvider(model, provider); }
+
+/**
+ * Honor a client-requested model only when the target provider actually
+ * serves it; unknown ids and "auto" fall back to the configured model.
+ * This keeps the /v1/messages pinning intact while letting tiered clients
+ * (e.g. Claude Code's haiku background lane) reach faster sibling models.
+ */
+export function honorRequestedModel(requested: unknown, fallback: string, providerId?: string): string {
+  if (typeof requested !== "string" || !requested || requested === fallback) return fallback;
+  try { const match = resolveProvider(requested, providerId); return match.model === requested ? requested : fallback; } catch { return fallback; }
+}
 /**
  * Resolve the effective model. A fixed configuration wins; "auto" routes by
  * request shape but only within the models of the target provider so a pinned

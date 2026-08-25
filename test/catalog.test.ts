@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fromChatResponse, fromChatResponseToResponses, providerFor, toChatCompletionsRequest, toChatRequest } from "../src/catalog.js";
+import { fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, toChatCompletionsRequest, toChatRequest } from "../src/catalog.js";
 import { toResponsesRequest } from "../src/providers.js";
 test("routes DeepSeek models through chat completions", () => {
   assert.equal(providerFor("deepseek-v4-flash").protocol, "chat-completions");
@@ -77,4 +77,18 @@ test("omits sampling parameters when not requested", () => {
 test("forwards temperature and top_p to Responses requests", () => {
   const result = toResponsesRequest({ messages: [{ role: "user", content: "Hi" }], temperature: 0.5, top_p: 0.8 } as any, "gpt-5.6-luna") as any;
   assert.equal(result.temperature, 0.5); assert.equal(result.top_p, 0.8);
+});
+test("honors client-requested models the provider serves", () => {
+  assert.equal(honorRequestedModel("deepseek-v4-flash", "gpt-5.6-luna", "opencode"), "deepseek-v4-flash");
+});
+test("falls back to the configured model for unknown or foreign requests", () => {
+  assert.equal(honorRequestedModel("claude-haiku-4-5", "gpt-5.6-luna", "opencode"), "gpt-5.6-luna");
+  // gpt-5.6-luna is not served by DeepSeek, so a pinned provider rejects it.
+  assert.equal(honorRequestedModel("gpt-5.6-luna", "deepseek-v4-pro", "deepseek"), "deepseek-v4-pro");
+  assert.equal(honorRequestedModel("auto", "gpt-5.6-luna", "opencode"), "gpt-5.6-luna");
+  assert.equal(honorRequestedModel(undefined, "gpt-5.6-luna"), "gpt-5.6-luna");
+  assert.equal(honorRequestedModel("gpt-5.6-luna", "gpt-5.6-luna", "opencode"), "gpt-5.6-luna");
+});
+test("keeps OpenRouter passthrough semantics for arbitrary ids", () => {
+  assert.equal(honorRequestedModel("zoo/any-model", "openai/gpt-4o-mini", "openrouter"), "zoo/any-model");
 });
