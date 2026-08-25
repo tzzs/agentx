@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildCodexCatalog, writeCodexCatalog, codexCatalogPath } from "../src/codex-catalog.js";
+import { buildCodexCatalog, writeCodexCatalog, codexCatalogPath, catalogModels } from "../src/codex-catalog.js";
+import type { ProviderModel } from "../src/providers/types.js";
 
 test("catalog covers every registry model with the verified field set", () => {
   const catalog = JSON.parse(buildCodexCatalog()) as { models: Array<Record<string, unknown>> };
@@ -58,4 +59,26 @@ test("catalog path follows the agentx config directory convention", () => {
   } finally {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous;
   }
+});
+
+test("catalogModels appends a custom OpenRouter id so Codex resolves its metadata", () => {
+  const base: ProviderModel[] = [
+    { provider: "openrouter", model: "openai/gpt-4o-mini", protocol: "chat-completions", endpoint: "https://x" },
+  ];
+  const models = catalogModels({ provider: "openrouter", model: "stealth/ox-alpha" }, base);
+  assert.ok(models.some((model) => model.model === "stealth/ox-alpha"));
+  const catalog = JSON.parse(buildCodexCatalog(models)) as { models: any[] };
+  const custom = catalog.models.find((entry) => entry.slug === "stealth/ox-alpha");
+  // Unknown id keeps conservative defaults instead of missing metadata.
+  assert.equal(custom.context_window, 131072);
+  assert.equal(custom.max_output_tokens, 16384);
+});
+
+test("catalogModels keeps the registry list for known, auto, and unknown providers", () => {
+  const base: ProviderModel[] = [
+    { provider: "deepseek", model: "deepseek-v4-pro", protocol: "chat-completions", endpoint: "https://x" },
+  ];
+  assert.equal(catalogModels({ provider: "deepseek", model: "deepseek-v4-pro" }, base), base);
+  assert.equal(catalogModels({ provider: "deepseek", model: "auto" }, base), base);
+  assert.equal(catalogModels({ provider: "nonexistent", model: "mystery" }, base), base);
 });

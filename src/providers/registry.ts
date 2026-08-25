@@ -82,6 +82,19 @@ function applyModelMetadata(model: ProviderModel, primary?: MetadataMap, seconda
   return { ...model, contextWindow, maxOutputTokens, modalities };
 }
 
+/** Last-fetched public catalogs, reused to enrich custom (non-registry) model ids. */
+let cachedOpenRouter: MetadataMap = new Map();
+let cachedSections: MetadataSections = new Map();
+
+/**
+ * Enrich a synthetic (custom id) entry from the last-fetched OpenRouter /
+ * models.dev catalogs. Unknown ids keep their unset fields, which the Codex
+ * catalog writer replaces with conservative defaults.
+ */
+export function withExternalMetadata(model: ProviderModel): ProviderModel {
+  return applyModelMetadata(model, cachedOpenRouter, cachedSections.get(model.provider));
+}
+
 /**
  * Fill missing limits on registry entries from their provider's section,
  * falling back further to OpenRouter's public catalog. Explicitly configured
@@ -135,6 +148,8 @@ export async function refreshOpenCodeModels(fetcher: typeof fetch = fetch): Prom
       fetcher(modelsDevUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) }).then((response) => (response.ok ? response.json() : null)).then(parseModelsDevMetadata).catch((): MetadataSections => new Map()),
       fetcher(openRouterModelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) }).then((response) => (response.ok ? response.json() : null)).then(parseOpenRouterMetadata).catch((): MetadataMap => new Map()),
     ]) as [any, MetadataSections, MetadataMap];
+    cachedOpenRouter = openRouter;
+    cachedSections = sections;
     if (sections.size || openRouter.size) applyMetadataToRegistry(sections, openRouter);
     if (!list) return false;
     const ids = ((list.data ?? []) as Array<{ id?: string }>).map((item) => item.id).filter((id): id is string => Boolean(id));

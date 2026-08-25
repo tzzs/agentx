@@ -13,7 +13,7 @@ import { queryProviderUsage, usageProvider } from "./quota.js";
 import { runUsageStats } from "./usage/cli.js";
 import { resolveRuntimeNonInteractive } from "./selection.js";
 import { saveLastModel } from "./runtime.js";
-import { writeCodexCatalog } from "./codex-catalog.js";
+import { catalogModels, writeCodexCatalog } from "./codex-catalog.js";
 import { confirm, isCancel } from "@clack/prompts";
 
 const HELP: Record<string, string> = {
@@ -295,7 +295,7 @@ async function main() {
   if (!executable) throw new Error("Usage: agentx exec [options] -- <command>");
 
   const client = command === "codex" || executable === "codex" || command === "pi" || executable === "pi" ? "openai" : "anthropic";
-  const codexCatalogFile = await writeCodexCatalog();
+  const codexCatalogFile = await writeCodexCatalog(catalogModels(config));
   const launchArgs = executable === "claude" && !commandArgs.includes("--bare") ? ["--bare", ...commandArgs]
     : executable === "codex" ? [...codexLaunchArgs(config, adapter, codexCatalogFile), ...commandArgs]
       : commandArgs;

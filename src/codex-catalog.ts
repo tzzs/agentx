@@ -1,8 +1,9 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { atomicWriteFile } from "./fsutil.js";
-import { allModels } from "./providers/registry.js";
+import { allModels, providerFor, withExternalMetadata } from "./providers/registry.js";
 import type { ProviderModel } from "./providers/types.js";
+import type { Config } from "./config.js";
 
 /** Location of the generated Codex model catalog (overridable for tests). */
 export function codexCatalogPath(): string {
@@ -76,6 +77,22 @@ export function buildCodexCatalog(models: ProviderModel[] = allModels): string {
   const unique = models.filter((model, index) => models.findIndex((other) => other.model === model.model) === index);
   const catalog = { models: unique.map(catalogEntry) };
   return `${JSON.stringify(catalog, null, 2)}\n`;
+}
+
+/**
+ * Catalog input: every registry model plus the selected runtime when it is a
+ * custom (non-registry) id — e.g. an arbitrary OpenRouter model. Without the
+ * extra entry Codex cannot resolve the id and falls back to its warning about
+ * degraded metadata. The "auto" marker and unknown providers keep the plain
+ * registry list.
+ */
+export function catalogModels(selected: Pick<Config, "provider" | "model">, base: ProviderModel[] = allModels): ProviderModel[] {
+  if (selected.model === "auto" || base.some((model) => model.model === selected.model)) return base;
+  try {
+    return [...base, withExternalMetadata(providerFor(selected.model, selected.provider))];
+  } catch {
+    return base;
+  }
 }
 
 /**
