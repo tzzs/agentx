@@ -5,6 +5,8 @@ const deepSeekBase = "https://api.deepseek.com/v1";
 const openRouterBase = "https://openrouter.ai/api/v1";
 /** OpenCode's public model registry; carries real context/output limits the Zen list omits. */
 const modelsDevUrl = "https://models.dev/api.json";
+/** OpenRouter's auth-free catalog; backfills the models models.dev does not list. */
+const openRouterModelsUrl = `${openRouterBase}/models`;
 
 /** Static fallback catalog used until the OpenCode model list can be fetched. */
 const fallbackOpenCodeIds = ["gpt-5.6-luna", "deepseek-v4-pro", "deepseek-v4-flash", "minimax-m3", "minimax-m2.7", "minimax-m2.5", "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "kimi-k2.5", "glm-5.2", "glm-5.3", "glm-5.1", "glm-5", "mimo-v2.5-pro", "mimo-v2.5", "hy3"];
@@ -35,44 +37,78 @@ function parseModelsDevMetadata(payload: any): MetadataSections {
   return sections;
 }
 
+/** Flatten OpenRouter's public model list into a single table keyed by its vendor-prefixed id. */
+function parseOpenRouterMetadata(payload: any): MetadataMap {
+  const table: MetadataMap = new Map();
+  for (const entry of ((payload?.data ?? []) as Array<any>)) {
+    if (!entry?.id) continue;
+    const input = (entry?.architecture?.input_modalities ?? []).filter((item: unknown) => item === "text" || item === "image");
+    const meta: ModelMetadata = {
+      ...(Number.isFinite(entry?.context_length) ? { contextWindow: Number(entry.context_length) } : {}),
+      ...(Number.isFinite(entry?.top_provider?.max_completion_tokens) ? { maxOutputTokens: Number(entry.top_provider.max_completion_tokens) } : {}),
+      ...(input.length ? { modalities: input } : {}),
+    };
+    if (Object.keys(meta).length) table.set(entry.id, meta);
+  }
+  return table;
+}
+
 /**
- * Fill missing limits on registry entries from their provider's section.
- * Explicitly configured values always win; unmatched ids keep safe defaults.
+ * Resolve a model's metadata: exact id first, then a unique trailing-segment
+ * match against vendor-prefixed ids ("vendor/model"); ambiguous suffixes
+ * resolve to nothing rather than risk misattribution.
+ */
+function lookupMetadata(table: MetadataMap | undefined, id: string): ModelMetadata | undefined {
+  if (!table) return undefined;
+  const exact = table.get(id);
+  if (exact) return exact;
+  let match: ModelMetadata | undefined;
+  for (const [key, value] of table) {
+    if (!key.includes("/") || key.slice(key.lastIndexOf("/") + 1) !== id) continue;
+    if (match) return undefined;
+    match = value;
+  }
+  return match;
+}
+
+/** Fill gaps only: explicit registry config wins, then models.dev, then OpenRouter. */
+function applyModelMetadata(model: ProviderModel, primary?: MetadataMap, secondary?: MetadataMap): ProviderModel {
+  const first = lookupMetadata(primary, model.model);
+  const second = lookupMetadata(secondary, model.model);
+  const contextWindow = model.contextWindow ?? first?.contextWindow ?? second?.contextWindow;
+  const maxOutputTokens = model.maxOutputTokens ?? first?.maxOutputTokens ?? second?.maxOutputTokens;
+  const modalities = model.modalities ?? first?.modalities ?? second?.modalities;
+  if (contextWindow === model.contextWindow && maxOutputTokens === model.maxOutputTokens && modalities === model.modalities) return model;
+  return { ...model, contextWindow, maxOutputTokens, modalities };
+}
+
+/**
+ * Fill missing limits on registry entries from their provider's section,
+ * falling back further to OpenRouter's public catalog. Explicitly configured
+ * values always win; unmatched ids keep safe defaults.
  *
  * Implicit contract: each registry provider id must equal the models.dev
  * top-level section key it should draw metadata from ("opencode",
  * "deepseek", "openrouter"). A renamed id silently loses metadata and falls
  * back to defaults — update one when renaming the other.
  */
-function applyMetadataToRegistry(sections: MetadataSections): void {
+function applyMetadataToRegistry(sections: MetadataSections, openRouter: MetadataMap): void {
   for (const provider of providerRegistry) {
-    const table = sections.get(provider.id);
-    if (!table) continue;
-    provider.models = provider.models.map((model) => {
-      const meta = table.get(model.model);
-      if (!meta) return model;
-      return {
-        ...model,
-        contextWindow: model.contextWindow ?? meta.contextWindow,
-        maxOutputTokens: model.maxOutputTokens ?? meta.maxOutputTokens,
-        modalities: model.modalities ?? meta.modalities,
-      };
-    });
+    provider.models = provider.models.map((model) => applyModelMetadata(model, sections.get(provider.id), openRouter));
   }
   allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
 }
 
 function models(provider: string, endpoint: string, ids: string[], protocol: "responses" | "chat-completions") { return ids.map((model) => ({ provider, model, protocol, endpoint })); }
 
-function openCodeModels(ids: string[], metadata: MetadataMap = new Map()): ProviderModel[] {
+function openCodeModels(ids: string[], devMetadata?: MetadataMap, routerMetadata?: MetadataMap): ProviderModel[] {
   const ordered = [...ids].sort((a, b) => Number(responsesModelIds.has(b)) - Number(responsesModelIds.has(a)));
-  return ordered.map((model) => ({
+  return ordered.map((model) => applyModelMetadata({
     provider: "opencode",
     model,
     protocol: responsesModelIds.has(model) ? "responses" : "chat-completions",
     endpoint: responsesModelIds.has(model) ? `${openCodeBase}/responses` : `${openCodeBase}/chat/completions`,
-    ...metadata.get(model),
-  })) as ProviderModel[];
+  }, devMetadata, routerMetadata));
 }
 
 export const providerRegistry: ProviderDefinition[] = [
@@ -85,25 +121,27 @@ export const allModels = providerRegistry.flatMap((provider) => provider.models)
 
 /**
  * Refresh the OpenCode model catalog from the upstream `/v1/models` endpoint,
- * enriching every provider's entries with real limits from OpenCode's public
- * registry (models.dev) in parallel. The two fetches tolerate failure
- * independently: without the list the static fallback stays, and metadata is
- * applied to all providers — including static ones — whenever it arrives.
+ * enriching every provider's entries with real limits fetched in parallel
+ * from models.dev and — filling whatever models.dev lacks — OpenRouter's
+ * public catalog. The three fetches tolerate failure independently: without
+ * the list the static fallback stays, and metadata is applied to all
+ * providers — including static ones — whenever it arrives.
  * Mutates the registry in place so existing references stay valid.
  */
 export async function refreshOpenCodeModels(fetcher: typeof fetch = fetch): Promise<boolean> {
   try {
-    const [list, sections] = await Promise.all([
+    const [list, sections, openRouter] = await Promise.all([
       fetcher(`${openCodeBase}/models`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5000) }).then((response) => (response.ok ? response.json() : null)).catch(() => null),
       fetcher(modelsDevUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) }).then((response) => (response.ok ? response.json() : null)).then(parseModelsDevMetadata).catch((): MetadataSections => new Map()),
-    ]) as [any, MetadataSections];
-    if (sections.size) applyMetadataToRegistry(sections);
+      fetcher(openRouterModelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) }).then((response) => (response.ok ? response.json() : null)).then(parseOpenRouterMetadata).catch((): MetadataMap => new Map()),
+    ]) as [any, MetadataSections, MetadataMap];
+    if (sections.size || openRouter.size) applyMetadataToRegistry(sections, openRouter);
     if (!list) return false;
     const ids = ((list.data ?? []) as Array<{ id?: string }>).map((item) => item.id).filter((id): id is string => Boolean(id));
     if (!ids.length) return false;
     const openCode = providerRegistry.find((provider) => provider.id === "opencode");
     if (!openCode) return false;
-    openCode.models = openCodeModels(ids, sections.get("opencode"));
+    openCode.models = openCodeModels(ids, sections.get("opencode"), openRouter);
     allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
     return true;
   } catch {

@@ -105,3 +105,106 @@ test("keeps the fallback catalog when the upstream refresh fails", async () => {
   assert.equal(await refreshOpenCodeModels(fetcher), false);
   assert.deepEqual(providerRegistry.find((provider) => provider.id === "opencode")!.models.map((item) => item.model), before);
 });
+
+function takeSnapshot() { return providerRegistry.map((provider) => ({ id: provider.id, models: provider.models })); }
+function restoreSnapshot(snapshot: ReturnType<typeof takeSnapshot>) {
+  for (const { id, models } of snapshot) providerRegistry.find((provider) => provider.id === id)!.models = models;
+  allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+}
+
+test("backfills models missing from models.dev from the OpenRouter catalog", async () => {
+  const snapshot = takeSnapshot();
+  const fetcher = (async (input: any) => {
+    const url = String(input);
+    if (/openrouter\.ai/.test(url)) {
+      return new Response(JSON.stringify({ data: [
+        { id: "zhipuai/glm-5.3", context_length: 205000, top_provider: { max_completion_tokens: 131072 }, architecture: { input_modalities: ["text", "image", "audio"] } },
+        { id: "moonshotai/kimi-k3", context_length: 262144, architecture: { input_modalities: [] } },
+        { id: "broken/big", context_length: "lots" },
+      ] }), { status: 200 });
+    }
+    if (/models\.dev/.test(url)) return new Response(JSON.stringify({}), { status: 200 });
+    return new Response(JSON.stringify({ data: [{ id: "glm-5.3" }, { id: "kimi-k3" }, { id: "big" }] }), { status: 200 });
+  }) as typeof fetch;
+  const refreshed = await refreshOpenCodeModels(fetcher);
+  try {
+    assert.equal(refreshed, true);
+    // Suffix match against "vendor/model" ids; non-text/image modalities drop; invalid numbers skip.
+    assert.equal(providerFor("glm-5.3").contextWindow, 205000);
+    assert.equal(providerFor("glm-5.3").maxOutputTokens, 131072);
+    assert.deepEqual(providerFor("glm-5.3").modalities, ["text", "image"]);
+    assert.equal(providerFor("kimi-k3").contextWindow, 262144);
+    assert.equal(providerFor("kimi-k3").modalities, undefined);
+    assert.equal(providerFor("big").contextWindow, undefined);
+  } finally {
+    restoreSnapshot(snapshot);
+  }
+});
+
+test("prefers models.dev metadata over OpenRouter field by field", async () => {
+  const snapshot = takeSnapshot();
+  const fetcher = (async (input: any) => {
+    const url = String(input);
+    if (/openrouter\.ai/.test(url)) {
+      return new Response(JSON.stringify({ data: [{ id: "vendor/nova-1", context_length: 222222, top_provider: { max_completion_tokens: 4096 }, architecture: { input_modalities: ["text"] } }] }), { status: 200 });
+    }
+    if (/models\.dev/.test(url)) {
+      return new Response(JSON.stringify({ opencode: { models: { "nova-1": { limit: { context: 111111 }, modalities: { input: ["text", "image"] } } } } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [{ id: "nova-1" }] }), { status: 200 });
+  }) as typeof fetch;
+  const refreshed = await refreshOpenCodeModels(fetcher);
+  try {
+    assert.equal(refreshed, true);
+    // models.dev wins where present; only its gaps fall through to OpenRouter.
+    assert.equal(providerFor("nova-1").contextWindow, 111111);
+    assert.equal(providerFor("nova-1").maxOutputTokens, 4096);
+    assert.deepEqual(providerFor("nova-1").modalities, ["text", "image"]);
+  } finally {
+    restoreSnapshot(snapshot);
+  }
+});
+
+test("keeps working when only the OpenRouter source is unreachable", async () => {
+  const snapshot = takeSnapshot();
+  const fetcher = (async (input: any) => {
+    const url = String(input);
+    if (/openrouter\.ai/.test(url)) throw new Error("offline");
+    if (/models\.dev/.test(url)) {
+      return new Response(JSON.stringify({ deepseek: { models: { "deepseek-v4-flash": { limit: { context: 256000 } } } } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [{ id: "solo-model" }] }), { status: 200 });
+  }) as typeof fetch;
+  const refreshed = await refreshOpenCodeModels(fetcher);
+  try {
+    assert.equal(refreshed, true);
+    assert.equal(providerFor("deepseek-v4-flash", "deepseek").contextWindow, 256000);
+    assert.equal(providerFor("solo-model").contextWindow, undefined);
+  } finally {
+    restoreSnapshot(snapshot);
+  }
+});
+
+test("skips OpenRouter backfill when a suffix match is ambiguous", async () => {
+  const snapshot = takeSnapshot();
+  const fetcher = (async (input: any) => {
+    const url = String(input);
+    if (/openrouter\.ai/.test(url)) {
+      return new Response(JSON.stringify({ data: [
+        { id: "alpha/twin", context_length: 1000 },
+        { id: "beta/twin", context_length: 2000 },
+        { id: "gamma/unique", context_length: 3000 },
+      ] }), { status: 200 });
+    }
+    if (/models\.dev/.test(url)) return new Response(JSON.stringify({}), { status: 200 });
+    return new Response(JSON.stringify({ data: [{ id: "twin" }, { id: "unique" }] }), { status: 200 });
+  }) as typeof fetch;
+  const refreshed = await refreshOpenCodeModels(fetcher);
+  try {
+    assert.equal(refreshed, true);
+    assert.equal(providerFor("twin").contextWindow, undefined);
+    assert.equal(providerFor("unique").contextWindow, 3000);
+  } finally {
+    restoreSnapshot(snapshot);
+  }
+});
