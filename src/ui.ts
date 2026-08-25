@@ -1,5 +1,5 @@
 import { stdin as input, stdout as output } from "node:process";
-import { cancel, intro, isCancel, outro, select, text } from "@clack/prompts";
+import { autocomplete, cancel, intro, isCancel, outro, select, text } from "@clack/prompts";
 import { providerRegistry } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
 import { promptCredential, storedCredential } from "./credentials.js";
@@ -167,9 +167,26 @@ async function selectModel(provider: string, current: string): Promise<string | 
   // A stale saved default may hold the removed "auto" marker; show a concrete
   // model instead so the initial value always matches an option.
   const initial = options.some((option) => option.value === current) ? current : defaultModelFor(provider);
-  const chosen = await select({ message: `Model (${providerLabel(provider)})`, options, initialValue: initial });
+  const chosen = await autocomplete({
+    message: `Model (${providerLabel(provider)})`,
+    options,
+    initialValue: initial,
+    placeholder: "Type to search…",
+    maxItems: 12,
+    // Keep the free-form entry visible while filtering so users can always
+    // reach it, even when their search matches no registered model.
+    filter: custom
+      ? (search, option) => option.value === CUSTOM_MODEL_OPTION || defaultModelFilter(search, option)
+      : undefined,
+    validate: (value) => (value ? undefined : "No matching model — clear the search to see all options."),
+  });
   if (chosen !== CUSTOM_MODEL_OPTION) return chosen;
   return promptCustomModelId(providerLabel(provider), initial);
+}
+
+/** Case-insensitive substring match on the option label (clack's default). */
+function defaultModelFilter(search: string, option: { label?: string; value: string }): boolean {
+  return (option.label ?? String(option.value)).toLowerCase().includes(search.toLowerCase());
 }
 
 /**

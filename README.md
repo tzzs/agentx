@@ -103,7 +103,7 @@ When `claude`, `codex`, or `pi` is started on an interactive terminal without `-
 └
 ```
 
-The current runtime is loaded from the saved default. Pick a provider, then a model, then choose to start now or to set the selection as the default. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Temporary switches never overwrite the saved default unless you choose "Set as default and start". Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
+The current runtime is loaded from the saved default. Pick a provider, then a model, then choose to start now or to set the selection as the default. The model picker is searchable: type to filter the list by model id, with ↑/↓ to select and Enter to confirm. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Temporary switches never overwrite the saved default unless you choose "Set as default and start". Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
 
 ## Codex
 
