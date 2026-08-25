@@ -16,6 +16,23 @@ test("catalog covers every registry model with the verified field set", () => {
   }
 });
 
+test("prefers real registry limits and falls back to safe defaults", () => {
+  const models = [
+    { provider: "opencode", model: "known-model", protocol: "chat-completions" as const, endpoint: "https://x", contextWindow: 1000000, maxOutputTokens: 384000, modalities: ["text", "image"] },
+    { provider: "opencode", model: "unknown-model", protocol: "chat-completions" as const, endpoint: "https://x" },
+  ];
+  const catalog = JSON.parse(buildCodexCatalog(models)) as { models: any[] };
+  const known = catalog.models.find((entry) => entry.slug === "known-model");
+  const unknown = catalog.models.find((entry) => entry.slug === "unknown-model");
+  assert.equal(known.context_window, 1000000);
+  assert.equal(known.max_context_window, 1000000);
+  assert.equal(known.max_output_tokens, 384000);
+  assert.deepEqual(known.input_modalities, ["text", "image"]);
+  assert.equal(unknown.context_window, 131072);
+  assert.equal(unknown.max_output_tokens, 16384);
+  assert.deepEqual(unknown.input_modalities, ["text"]);
+});
+
 test("writeCodexCatalog writes atomically and reports failures as undefined", async () => {
   const dir = mkdtempSync(join(tmpdir(), "agentx-catalog-"));
   process.env.AGENTX_CODEX_CATALOG_FILE = join(dir, "nested", "codex-models.json");

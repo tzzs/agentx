@@ -3,6 +3,8 @@ import type { ProviderDefinition, ProviderModel } from "./types.js";
 const openCodeBase = "https://opencode.ai/zen/go/v1";
 const deepSeekBase = "https://api.deepseek.com/v1";
 const openRouterBase = "https://openrouter.ai/api/v1";
+/** OpenCode's public model registry; carries real context/output limits the Zen list omits. */
+const modelsDevUrl = "https://models.dev/api.json";
 
 /** Static fallback catalog used until the OpenCode model list can be fetched. */
 const fallbackOpenCodeIds = ["gpt-5.6-luna", "deepseek-v4-pro", "deepseek-v4-flash", "minimax-m3", "minimax-m2.7", "minimax-m2.5", "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "kimi-k2.5", "glm-5.2", "glm-5.3", "glm-5.1", "glm-5", "mimo-v2.5-pro", "mimo-v2.5", "hy3"];
@@ -10,11 +12,35 @@ const fallbackOpenCodeIds = ["gpt-5.6-luna", "deepseek-v4-pro", "deepseek-v4-fla
 /** OpenCode models served through the Responses API rather than Chat Completions. */
 const responsesModelIds = new Set(["gpt-5.6-luna"]);
 
+interface ModelMetadata { contextWindow?: number; maxOutputTokens?: number; modalities?: string[] }
+
+type MetadataMap = Map<string, ModelMetadata>;
+
+function parseModelsDevMetadata(payload: any): MetadataMap {
+  const entries = (payload?.opencode?.models ?? {}) as Record<string, any>;
+  const metadata: MetadataMap = new Map();
+  for (const [id, entry] of Object.entries(entries)) {
+    const input = (entry?.modalities?.input ?? []).filter((item: unknown) => item === "text" || item === "image");
+    metadata.set(id, {
+      ...(Number.isFinite(entry?.limit?.context) ? { contextWindow: Number(entry.limit.context) } : {}),
+      ...(Number.isFinite(entry?.limit?.output) ? { maxOutputTokens: Number(entry.limit.output) } : {}),
+      ...(input.length ? { modalities: input } : {}),
+    });
+  }
+  return metadata;
+}
+
 function models(provider: string, endpoint: string, ids: string[], protocol: "responses" | "chat-completions") { return ids.map((model) => ({ provider, model, protocol, endpoint })); }
 
-function openCodeModels(ids: string[]): ProviderModel[] {
+function openCodeModels(ids: string[], metadata: MetadataMap = new Map()): ProviderModel[] {
   const ordered = [...ids].sort((a, b) => Number(responsesModelIds.has(b)) - Number(responsesModelIds.has(a)));
-  return ordered.map((model) => ({ provider: "opencode", model, protocol: responsesModelIds.has(model) ? "responses" : "chat-completions", endpoint: responsesModelIds.has(model) ? `${openCodeBase}/responses` : `${openCodeBase}/chat/completions` }));
+  return ordered.map((model) => ({
+    provider: "opencode",
+    model,
+    protocol: responsesModelIds.has(model) ? "responses" : "chat-completions",
+    endpoint: responsesModelIds.has(model) ? `${openCodeBase}/responses` : `${openCodeBase}/chat/completions`,
+    ...metadata.get(model),
+  })) as ProviderModel[];
 }
 
 export const providerRegistry: ProviderDefinition[] = [
@@ -26,20 +52,24 @@ export const providerRegistry: ProviderDefinition[] = [
 export const allModels = providerRegistry.flatMap((provider) => provider.models);
 
 /**
- * Refresh the OpenCode model catalog from the upstream `/v1/models` endpoint.
- * Falls back to the static catalog when the fetch fails or the payload has no
- * usable ids. Mutates the registry in place so existing references stay valid.
+ * Refresh the OpenCode model catalog from the upstream `/v1/models` endpoint,
+ * enriching entries with real limits from OpenCode's public registry in
+ * parallel. Both fetches tolerate failure independently: without the list the
+ * static fallback stays, without the metadata models simply keep safe
+ * defaults. Mutates the registry in place so existing references stay valid.
  */
 export async function refreshOpenCodeModels(fetcher: typeof fetch = fetch): Promise<boolean> {
   try {
-    const response = await fetcher(`${openCodeBase}/models`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5000) });
-    if (!response.ok) return false;
-    const payload = (await response.json()) as { data?: Array<{ id?: string }> };
-    const ids = (payload.data ?? []).map((item) => item.id).filter((id): id is string => Boolean(id));
+    const [list, metadata] = await Promise.all([
+      fetcher(`${openCodeBase}/models`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5000) }).then((response) => (response.ok ? response.json() : null)).catch(() => null),
+      fetcher(modelsDevUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) }).then((response) => (response.ok ? response.json() : null)).then(parseModelsDevMetadata).catch(() => new Map()),
+    ]) as [any, MetadataMap];
+    if (!list) return false;
+    const ids = ((list.data ?? []) as Array<{ id?: string }>).map((item) => item.id).filter((id): id is string => Boolean(id));
     if (!ids.length) return false;
     const openCode = providerRegistry.find((provider) => provider.id === "opencode");
     if (!openCode) return false;
-    openCode.models = openCodeModels(ids);
+    openCode.models = openCodeModels(ids, metadata);
     allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
     return true;
   } catch {

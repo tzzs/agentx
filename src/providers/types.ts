@@ -11,6 +11,11 @@ export interface ProviderModel {
   model: string;
   protocol: ProviderProtocol;
   endpoint: string;
+  /** Real limits from the upstream registry when known; consumers fall back to safe defaults. */
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  /** Input modalities the upstream accepts, restricted to what clients understand ("text", "image"). */
+  modalities?: string[];
 }
 
 export interface ProviderDefinition {

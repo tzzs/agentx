@@ -14,6 +14,30 @@ test("converts Responses requests for Chat Completions providers", () => {
   const result = toChatCompletionsRequest({ instructions: "Be brief", input: [{ role: "user", content: [{ type: "input_text", text: "Hi" }] }], max_output_tokens: 12, stream: true }, "deepseek-v4-pro") as any;
   assert.deepEqual(result.messages, [{ role: "system", content: "Be brief" }, { role: "user", content: "Hi" }]); assert.equal(result.max_tokens, 12); assert.equal(result.stream, true);
 });
+test("flattens namespace tools and drops server-side built-ins for Codex clients", () => {
+  // Codex v0.149 sends web_search built-ins and multi-agent namespace containers
+  // alongside plain function tools; nameless entries must never reach chat upstreams.
+  const result = toChatCompletionsRequest({
+    input: [{ role: "user", content: [{ type: "input_text", text: "Hi" }] }],
+    tools: [
+      { type: "function", name: "shell", description: "Runs a command", strict: false, parameters: { type: "object", properties: {} } },
+      { type: "web_search", external_web_access: false },
+      { type: "namespace", name: "multi_agent_v1", description: "Sub-agents.", tools: [
+        { type: "function", name: "close_agent", description: "Closes an agent", strict: false, parameters: { type: "object", properties: {} } },
+        { type: "web_search", external_web_access: false },
+      ] },
+      { type: "custom", name: "apply_patch", format: { type: "grammar" } },
+    ],
+  }, "ox-alpha-free") as any;
+  assert.deepEqual(result.tools, [
+    { type: "function", function: { name: "shell", description: "Runs a command", parameters: { type: "object", properties: {} } } },
+    { type: "function", function: { name: "close_agent", description: "Closes an agent", parameters: { type: "object", properties: {} } } },
+  ]);
+});
+test("omits the tools field when no tool converts for chat upstreams", () => {
+  const result = toChatCompletionsRequest({ input: "Hi", tools: [{ type: "web_search", external_web_access: false }] }, "deepseek-v4-flash") as any;
+  assert.equal("tools" in result, false);
+});
 test("converts Anthropic tool use and tool result to chat completions", () => {
   const result = toChatRequest({ messages: [
     { role: "assistant", content: [{ type: "text", text: "Running" }, { type: "tool_use", id: "call-1", name: "bash", input: { command: "pwd" } }] },

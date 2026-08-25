@@ -12,20 +12,21 @@ export function codexCatalogPath(): string {
 /**
  * Codex validates catalog files strictly (unknown or missing fields abort the
  * launch), so entries carry exactly the key set verified against codex-cli
- * 0.149.1. Context windows stay conservative — an underestimated window only
- * triggers earlier compaction, while an overestimated one fails mid-run.
+ * 0.149.1. Real limits come from the upstream registry when known; unknown
+ * models keep conservative defaults — an underestimated window only triggers
+ * earlier compaction, while an overestimated one fails mid-run.
  */
 function catalogEntry(model: ProviderModel, priority: number) {
   return {
     slug: model.model,
     display_name: model.model,
     description: `${model.model} served through the AgentX local adapter (${model.provider}).`,
-    context_window: 131072,
-    max_context_window: 131072,
+    context_window: model.contextWindow ?? 131072,
+    max_context_window: model.contextWindow ?? 131072,
     effective_context_window_percent: 95,
     auto_compact_token_limit: null,
-    max_output_tokens: 16384,
-    input_modalities: ["text"],
+    max_output_tokens: model.maxOutputTokens ?? 16384,
+    input_modalities: model.modalities?.length ? model.modalities : ["text"],
     supports_image_detail_original: false,
     supports_parallel_tool_calls: true,
     apply_patch_tool_type: "freeform",
