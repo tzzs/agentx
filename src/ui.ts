@@ -1,10 +1,10 @@
 import { stdin as input, stdout as output } from "node:process";
-import { cancel, intro, isCancel, outro, select } from "@clack/prompts";
+import { cancel, intro, isCancel, outro, select, text } from "@clack/prompts";
 import { providerRegistry } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
 import { promptCredential, storedCredential } from "./credentials.js";
 import {
-  clientDisplayName, defaultModelFor, modelAvailable, resolveModelForProvider, type RuntimeDecision,
+  clientDisplayName, defaultModelFor, modelAvailable, providerAcceptsCustomModels, resolveModelForProvider, type RuntimeDecision,
 } from "./selection.js";
 import {
   saveDefaultRuntime, type RuntimeSelection,
@@ -150,12 +150,41 @@ async function selectProvider(entries: ProviderEntry[], current: string): Promis
   return select({ message: "Provider", options: providerOptions(entries), initialValue: current });
 }
 
+/** Sentinel option value that switches the model picker into free-form entry. */
+const CUSTOM_MODEL_OPTION = "__custom__";
+
 async function selectModel(provider: string, current: string): Promise<string | symbol> {
-  const options = modelsFor(provider).map((entry) => ({ value: entry.model, label: entry.model }));
+  const options: Array<{ value: string; label: string; hint?: string }> = modelsFor(provider).map((entry) => ({ value: entry.model, label: entry.model }));
+  const custom = providerAcceptsCustomModels(provider);
+  // A saved custom id lives outside the registry; surface it as a pickable
+  // option so the initial value always matches an entry.
+  if (custom && !options.some((option) => option.value === current)) {
+    options.unshift({ value: current, label: `${current} · current` });
+  }
+  if (custom) {
+    options.push({ value: CUSTOM_MODEL_OPTION, label: "Enter a custom model id…", hint: "type any model id" });
+  }
   // A stale saved default may hold the removed "auto" marker; show a concrete
   // model instead so the initial value always matches an option.
   const initial = options.some((option) => option.value === current) ? current : defaultModelFor(provider);
-  return select({ message: `Model (${providerLabel(provider)})`, options, initialValue: initial });
+  const chosen = await select({ message: `Model (${providerLabel(provider)})`, options, initialValue: initial });
+  if (chosen !== CUSTOM_MODEL_OPTION) return chosen;
+  return promptCustomModelId(providerLabel(provider), initial);
+}
+
+/**
+ * Free-form model id entry for providers that accept arbitrary ids (e.g.
+ * OpenRouter). Empty input keeps the suggested id; cancelling propagates so
+ * the caller aborts the launch.
+ */
+async function promptCustomModelId(label: string, suggestion: string): Promise<string | symbol> {
+  const entered = await text({
+    message: `Custom model id (${label})`,
+    placeholder: "vendor/model-name",
+    defaultValue: suggestion,
+  });
+  if (isCancel(entered)) return entered;
+  return entered.trim() || suggestion;
 }
 
 async function selectAction(client: string, provider: string, model: string): Promise<string | symbol> {

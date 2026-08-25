@@ -251,7 +251,7 @@ agentx proxy --host 0.0.0.0
 
 接口返回的模型使用 Responses API（`gpt-5.6-luna`）或 Chat Completions API（其余模型）。`--model auto` 仍然在一小部分已知模型之间路由，本地 `/v1/models` 端点始终反映当前目录。
 
-OpenRouter Provider 接受任意模型 id（默认使用 `OPENROUTER_MODEL` 或 `openai/gpt-4o-mini`）。
+OpenRouter Provider 接受任意模型 id（默认使用 `OPENROUTER_MODEL` 或 `openai/gpt-4o-mini`）。交互式启动器的模型选择列表中包含 "Enter a custom model id…" 选项，可以直接输入任意 OpenRouter 模型 id（例如 `anthropic/claude-sonnet-4.5`）。
 
 显式选择模型：
 

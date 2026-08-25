@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaultModelFor, modelAvailable, resolveModelForProvider, resolveRuntimeNonInteractive } from "../src/selection.js";
+import { defaultModelFor, modelAvailable, providerAcceptsCustomModels, resolveModelForProvider, resolveRuntimeNonInteractive } from "../src/selection.js";
 import { runtimeFile, saveDefaultRuntime, saveLastModel } from "../src/runtime.js";
 
 let dir: string;
@@ -38,6 +38,12 @@ test("model availability respects the provider namespace", () => {
 test("auto is always available", () => {
   assert.equal(modelAvailable("deepseek", "auto"), true);
   assert.equal(modelAvailable("opencode", "auto"), true);
+});
+
+test("only openrouter accepts custom model ids", () => {
+  assert.equal(providerAcceptsCustomModels("openrouter"), true);
+  assert.equal(providerAcceptsCustomModels("deepseek"), false);
+  assert.equal(providerAcceptsCustomModels("opencode"), false);
 });
 
 test("default model is the provider's first model", () => {

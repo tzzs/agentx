@@ -29,11 +29,16 @@ export function defaultModelFor(providerId: string): string {
   return provider.models[0]?.model ?? "";
 }
 
+/** True when the provider accepts arbitrary model ids beyond its registry list. */
+export function providerAcceptsCustomModels(providerId: string): boolean {
+  // OpenRouter proxies every upstream model and is not enumerated exhaustively.
+  return providerId === "openrouter";
+}
+
 /** True when the model id is usable against the provider (or is the auto marker). */
 export function modelAvailable(providerId: string, model: string): boolean {
   if (model === "auto") return true;
-  // OpenRouter accepts arbitrary model ids and is not enumerated exhaustively.
-  if (providerId === "openrouter") return true;
+  if (providerAcceptsCustomModels(providerId)) return true;
   return allModels.some((item) => item.provider === providerId && item.model === model);
 }
 

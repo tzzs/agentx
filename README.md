@@ -274,7 +274,7 @@ The OpenCode model catalog is fetched from `https://opencode.ai/zen/go/v1/models
 
 Models returned by the API use the Responses API (`gpt-5.6-luna`) or the Chat Completions API (everything else). `--model auto` still routes between a small set of known models, and the local `/v1/models` endpoint always reflects the current catalog.
 
-The OpenRouter provider accepts any model id (defaulting to `OPENROUTER_MODEL` or `openai/gpt-4o-mini`).
+The OpenRouter provider accepts any model id (defaulting to `OPENROUTER_MODEL` or `openai/gpt-4o-mini`). In the interactive launcher its model picker includes an "Enter a custom model id…" option, so you can type any OpenRouter model id (e.g. `anthropic/claude-sonnet-4.5`) directly.
 
 Select a model explicitly:
 
