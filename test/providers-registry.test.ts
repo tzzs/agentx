@@ -29,9 +29,13 @@ test("uses provider-specific credentials with the agentx prefix taking precedenc
 
 test("refreshes the OpenCode model catalog and enriches limits from the public registry", async () => {
   const original = providerRegistry.find((provider) => provider.id === "opencode")!.models;
+  const originalDeepseek = providerRegistry.find((provider) => provider.id === "deepseek")!.models;
   const fetcher = (async (input: any) => {
     if (/models\.dev/.test(String(input))) {
-      return new Response(JSON.stringify({ opencode: { models: { "nova-1": { limit: { context: 262144, output: 32768 }, modalities: { input: ["text", "image"] } }, "gpt-5.6-luna": { limit: { context: 1050000 } } } } }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({
+        opencode: { models: { "nova-1": { limit: { context: 262144, output: 32768 }, modalities: { input: ["text", "image"] } }, "gpt-5.6-luna": { limit: { context: 1050000 } } } },
+        deepseek: { models: { "deepseek-v4-flash": { limit: { context: 1000000, output: 384000 } } } },
+      }), { status: 200, headers: { "content-type": "application/json" } });
     }
     assert.match(String(input), /opencode\.ai\/zen\/go\/v1\/models/);
     return new Response(JSON.stringify({ data: [{ id: "nova-1" }, { id: "gpt-5.6-luna" }, { id: "nova-2" }] }), { status: 200, headers: { "content-type": "application/json" } });
@@ -50,8 +54,13 @@ test("refreshes the OpenCode model catalog and enriches limits from the public r
     assert.deepEqual(providerFor("nova-1").modalities, ["text", "image"]);
     assert.equal(providerFor("gpt-5.6-luna").contextWindow, 1050000);
     assert.equal(providerFor("nova-2").contextWindow, undefined);
+    // Static providers are enriched through their own models.dev section.
+    assert.equal(providerFor("deepseek-v4-flash", "deepseek").contextWindow, 1000000);
+    assert.equal(providerFor("deepseek-v4-flash", "deepseek").maxOutputTokens, 384000);
+    assert.equal(providerFor("deepseek-v4-pro", "deepseek").contextWindow, undefined);
   } finally {
     providerRegistry.find((provider) => provider.id === "opencode")!.models = original;
+    providerRegistry.find((provider) => provider.id === "deepseek")!.models = originalDeepseek;
     allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
   }
 });
@@ -68,6 +77,24 @@ test("keeps working when only the metadata source is unreachable", async () => {
     assert.equal(providerFor("solo-model").contextWindow, undefined);
   } finally {
     providerRegistry.find((provider) => provider.id === "opencode")!.models = original;
+    allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+  }
+});
+
+test("applies metadata to static providers even when the list refresh fails", async () => {
+  const originalDeepseek = providerRegistry.find((provider) => provider.id === "deepseek")!.models;
+  const fetcher = (async (input: any) => {
+    if (/models\.dev/.test(String(input))) {
+      return new Response(JSON.stringify({ deepseek: { models: { "deepseek-v4-pro": { limit: { context: 986000 } } } } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ error: "down" }), { status: 500 });
+  }) as typeof fetch;
+  const refreshed = await refreshOpenCodeModels(fetcher);
+  try {
+    assert.equal(refreshed, false);
+    assert.equal(providerFor("deepseek-v4-pro", "deepseek").contextWindow, 986000);
+  } finally {
+    providerRegistry.find((provider) => provider.id === "deepseek")!.models = originalDeepseek;
     allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
   }
 });

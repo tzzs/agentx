@@ -171,3 +171,17 @@ test("translates chat reasoning into Responses reasoning events for Codex client
   assert.match(output.text, /event: response\.output_text\.delta/);
   assert.match(output.text, /"summary":\[\{"type":"summary_text","text":"step one"\}\]/);
 });
+test("finalizes the assistant message item for Codex turn collection", async () => {
+  // Codex builds the turn from response.output_item.done events; a message
+  // that is only announced via text deltas would be lost (or displaced by
+  // the reasoning item).
+  const upstream = scriptedUpstream([
+    'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+    'data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1}}\n\n'
+  ]);
+  const output = sink();
+  await pipeChatStreamToResponses(upstream, output as never, "ox-alpha-free", { provider: "opencode", model: "ox-alpha-free", protocol: "chat-completions" });
+  assert.match(output.text, /event: response\.output_item\.added\ndata: .*"item":\{"type":"message","id":"msg_/);
+  assert.match(output.text, /event: response\.output_item\.done\ndata: \{"type":"response\.output_item\.done","output_index":0,"item":\{"type":"message","id":"msg_.*?"status":"completed","content":\[\{"type":"output_text","text":"ok"\}\]\}/);
+  assert.match(output.text, /"usage":\{"input_tokens":2,"output_tokens":1,"total_tokens":3\}/);
+});
