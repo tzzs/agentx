@@ -6,6 +6,8 @@ export interface Config {
   port: number;
   model: string;
   provider?: string;
+  /** Optional override for Claude Code's background/haiku tier; unset = same as model. */
+  backgroundModel?: string;
   apiKey: string;
   logLevel: string;
 }
@@ -42,6 +44,7 @@ export function loadConfig(options: Record<string, string | undefined> = {}): Co
     port,
     model: options.model ?? process.env.AGENTX_MODEL ?? rememberedModel ?? defaultModel,
     provider,
+    backgroundModel: options["background-model"] ?? process.env.AGENTX_BACKGROUND_MODEL,
     apiKey,
     logLevel: options.verbose ? "debug" : process.env.AGENTX_LOG_LEVEL ?? "info"
   };

@@ -3,6 +3,8 @@ import type { ProviderDefinition, ProviderModel } from "./types.js";
 const openCodeBase = "https://opencode.ai/zen/go/v1";
 const deepSeekBase = "https://api.deepseek.com/v1";
 const openRouterBase = "https://openrouter.ai/api/v1";
+/** OpenCode's public model registry; carries real context/output limits the Zen list omits. */
+const modelsDevUrl = "https://models.dev/api.json";
 
 /** Static fallback catalog used until the OpenCode model list can be fetched. */
 const fallbackOpenCodeIds = ["gpt-5.6-luna", "deepseek-v4-pro", "deepseek-v4-flash", "minimax-m3", "minimax-m2.7", "minimax-m2.5", "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "kimi-k2.5", "glm-5.2", "glm-5.3", "glm-5.1", "glm-5", "mimo-v2.5-pro", "mimo-v2.5", "hy3"];
@@ -10,11 +12,67 @@ const fallbackOpenCodeIds = ["gpt-5.6-luna", "deepseek-v4-pro", "deepseek-v4-fla
 /** OpenCode models served through the Responses API rather than Chat Completions. */
 const responsesModelIds = new Set(["gpt-5.6-luna"]);
 
+interface ModelMetadata { contextWindow?: number; maxOutputTokens?: number; modalities?: string[] }
+
+/** Per-provider metadata tables keyed by models.dev section id then model id. */
+type MetadataSections = Map<string, MetadataMap>;
+type MetadataMap = Map<string, ModelMetadata>;
+
+function parseModelsDevMetadata(payload: any): MetadataSections {
+  const sections: MetadataSections = new Map();
+  for (const [sectionId, definition] of Object.entries((payload ?? {}) as Record<string, any>)) {
+    const table: MetadataMap = new Map();
+    for (const [id, entry] of Object.entries(definition?.models ?? {}) as Array<[string, any]>) {
+      const input = (entry?.modalities?.input ?? []).filter((item: unknown) => item === "text" || item === "image");
+      table.set(id, {
+        ...(Number.isFinite(entry?.limit?.context) ? { contextWindow: Number(entry.limit.context) } : {}),
+        ...(Number.isFinite(entry?.limit?.output) ? { maxOutputTokens: Number(entry.limit.output) } : {}),
+        ...(input.length ? { modalities: input } : {}),
+      });
+    }
+    if (table.size) sections.set(sectionId, table);
+  }
+  return sections;
+}
+
+/**
+ * Fill missing limits on registry entries from their provider's section.
+ * Explicitly configured values always win; unmatched ids keep safe defaults.
+ *
+ * Implicit contract: each registry provider id must equal the models.dev
+ * top-level section key it should draw metadata from ("opencode",
+ * "deepseek", "openrouter"). A renamed id silently loses metadata and falls
+ * back to defaults — update one when renaming the other.
+ */
+function applyMetadataToRegistry(sections: MetadataSections): void {
+  for (const provider of providerRegistry) {
+    const table = sections.get(provider.id);
+    if (!table) continue;
+    provider.models = provider.models.map((model) => {
+      const meta = table.get(model.model);
+      if (!meta) return model;
+      return {
+        ...model,
+        contextWindow: model.contextWindow ?? meta.contextWindow,
+        maxOutputTokens: model.maxOutputTokens ?? meta.maxOutputTokens,
+        modalities: model.modalities ?? meta.modalities,
+      };
+    });
+  }
+  allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+}
+
 function models(provider: string, endpoint: string, ids: string[], protocol: "responses" | "chat-completions") { return ids.map((model) => ({ provider, model, protocol, endpoint })); }
 
-function openCodeModels(ids: string[]): ProviderModel[] {
+function openCodeModels(ids: string[], metadata: MetadataMap = new Map()): ProviderModel[] {
   const ordered = [...ids].sort((a, b) => Number(responsesModelIds.has(b)) - Number(responsesModelIds.has(a)));
-  return ordered.map((model) => ({ provider: "opencode", model, protocol: responsesModelIds.has(model) ? "responses" : "chat-completions", endpoint: responsesModelIds.has(model) ? `${openCodeBase}/responses` : `${openCodeBase}/chat/completions` }));
+  return ordered.map((model) => ({
+    provider: "opencode",
+    model,
+    protocol: responsesModelIds.has(model) ? "responses" : "chat-completions",
+    endpoint: responsesModelIds.has(model) ? `${openCodeBase}/responses` : `${openCodeBase}/chat/completions`,
+    ...metadata.get(model),
+  })) as ProviderModel[];
 }
 
 export const providerRegistry: ProviderDefinition[] = [
@@ -26,20 +84,26 @@ export const providerRegistry: ProviderDefinition[] = [
 export const allModels = providerRegistry.flatMap((provider) => provider.models);
 
 /**
- * Refresh the OpenCode model catalog from the upstream `/v1/models` endpoint.
- * Falls back to the static catalog when the fetch fails or the payload has no
- * usable ids. Mutates the registry in place so existing references stay valid.
+ * Refresh the OpenCode model catalog from the upstream `/v1/models` endpoint,
+ * enriching every provider's entries with real limits from OpenCode's public
+ * registry (models.dev) in parallel. The two fetches tolerate failure
+ * independently: without the list the static fallback stays, and metadata is
+ * applied to all providers — including static ones — whenever it arrives.
+ * Mutates the registry in place so existing references stay valid.
  */
 export async function refreshOpenCodeModels(fetcher: typeof fetch = fetch): Promise<boolean> {
   try {
-    const response = await fetcher(`${openCodeBase}/models`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5000) });
-    if (!response.ok) return false;
-    const payload = (await response.json()) as { data?: Array<{ id?: string }> };
-    const ids = (payload.data ?? []).map((item) => item.id).filter((id): id is string => Boolean(id));
+    const [list, sections] = await Promise.all([
+      fetcher(`${openCodeBase}/models`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5000) }).then((response) => (response.ok ? response.json() : null)).catch(() => null),
+      fetcher(modelsDevUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) }).then((response) => (response.ok ? response.json() : null)).then(parseModelsDevMetadata).catch((): MetadataSections => new Map()),
+    ]) as [any, MetadataSections];
+    if (sections.size) applyMetadataToRegistry(sections);
+    if (!list) return false;
+    const ids = ((list.data ?? []) as Array<{ id?: string }>).map((item) => item.id).filter((id): id is string => Boolean(id));
     if (!ids.length) return false;
     const openCode = providerRegistry.find((provider) => provider.id === "opencode");
     if (!openCode) return false;
-    openCode.models = openCodeModels(ids);
+    openCode.models = openCodeModels(ids, sections.get("opencode"));
     allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
     return true;
   } catch {

@@ -1,6 +1,5 @@
 import { allModels, providerById, providerRegistry } from "./providers/registry.js";
 import { loadDefaultRuntime, loadLastModel } from "./runtime.js";
-import type { ProviderDefinition } from "./providers/types.js";
 
 export type RuntimeSource = "cli" | "env" | "default" | "interactive" | "builtin";
 
@@ -90,9 +89,4 @@ function providerIdExists(id: string): boolean {
 function providerForModel(model: string): string {
   const hit = allModels.find((item) => item.model === model);
   return hit?.provider ?? "opencode";
-}
-
-/** Registry order of provider definitions. */
-export function registryProviders(): ProviderDefinition[] {
-  return providerRegistry.slice();
 }

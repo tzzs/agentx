@@ -6,6 +6,19 @@ import type { ProviderModel } from "./providers/types.js";
 export type ModelProvider = ProviderModel;
 export const providers = allModels;
 export function providerFor(model: string, provider?: string): ModelProvider { return resolveProvider(model, provider); }
+
+/**
+ * Honor a client-requested model whenever the configured provider serves it;
+ * unknown ids and "auto" fall back to the configured model. This is what makes
+ * tiered clients work (e.g. Claude Code's haiku background lane reaching a
+ * faster sibling via --background-model); by design it lets any loopback
+ * client pick any model of the same provider — the local token is random and
+ * never leaves the machine, so this widens model choice, not access.
+ */
+export function honorRequestedModel(requested: unknown, fallback: string, providerId?: string): string {
+  if (typeof requested !== "string" || !requested || requested === fallback) return fallback;
+  try { const match = resolveProvider(requested, providerId); return match.model === requested ? requested : fallback; } catch { return fallback; }
+}
 /**
  * Resolve the effective model. A fixed configuration wins; "auto" routes by
  * request shape but only within the models of the target provider so a pinned
@@ -89,6 +102,26 @@ export function fromChatResponse(response: any, model: string): Record<string, u
   return { id: response.id ?? `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model, content, stop_reason: message.tool_calls?.length ? "tool_use" : response.choices?.[0]?.finish_reason === "length" ? "max_tokens" : "end_turn", stop_sequence: null, usage: { input_tokens: response.usage?.prompt_tokens ?? 0, output_tokens: response.usage?.completion_tokens ?? 0, cache_creation_input_tokens: 0, cache_read_input_tokens: response.usage?.prompt_tokens_details?.cached_tokens ?? 0 } };
 }
 
+/**
+ * Flatten Responses-API tool definitions into Chat Completions function
+ * tools. Namespace containers (e.g. Codex multi-agent) are unwrapped so their
+ * nested functions survive; server-side built-ins (`web_search`, `local_shell`,
+ * custom grammar tools…) have no chat-completions representation and must be
+ * dropped rather than forwarded as nameless function entries, which strict
+ * upstreams reject as invalid parameters.
+ */
+function toChatTools(tools: unknown): any[] {
+  return Array.isArray(tools) ? tools.flatMap((tool: any) => {
+    if (Array.isArray(tool?.tools)) return toChatTools(tool.tools);
+    // Server-side built-ins (typed, no nested function) have no chat
+    // representation; everything else must resolve to a named function.
+    if (tool?.type !== undefined && tool.type !== "function" && !tool.function) return [];
+    const source = tool?.function ?? tool;
+    if (!source || typeof source.name !== "string" || !source.name) return [];
+    return [{ type: "function", function: { name: source.name, ...(source.description === undefined ? {} : { description: source.description }), ...(source.parameters === undefined ? {} : { parameters: source.parameters }) } }];
+  }) : [];
+}
+
 export function toChatCompletionsRequest(input: any, model: string) {
   const messages: any[] = [];
   if (input.instructions) messages.push({ role: "system", content: input.instructions });
@@ -102,7 +135,8 @@ export function toChatCompletionsRequest(input: any, model: string) {
       messages.push({ role: item.role === "developer" ? "system" : item.role, content: responseContent(item.content) });
     }
   }
-  return { model, messages, ...(input.max_output_tokens === undefined ? {} : { max_tokens: input.max_output_tokens }), ...(input.stream ? { stream: true } : {}), ...samplingParams(input), ...(input.tools ? { tools: input.tools.map((tool: any) => ({ type: "function", function: { name: tool.name ?? tool.function?.name, description: tool.description ?? tool.function?.description, parameters: tool.parameters ?? tool.function?.parameters } })) } : {}) };
+  const tools = toChatTools(input.tools);
+  return { model, messages, ...(input.max_output_tokens === undefined ? {} : { max_tokens: input.max_output_tokens }), ...(input.stream ? { stream: true } : {}), ...samplingParams(input), ...(tools.length ? { tools } : {}) };
 }
 
 export function fromChatResponseToResponses(response: any, model: string): Record<string, unknown> {

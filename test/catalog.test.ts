@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fromChatResponse, fromChatResponseToResponses, providerFor, toChatCompletionsRequest, toChatRequest } from "../src/catalog.js";
+import { fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, toChatCompletionsRequest, toChatRequest } from "../src/catalog.js";
 import { toResponsesRequest } from "../src/providers.js";
 test("routes DeepSeek models through chat completions", () => {
   assert.equal(providerFor("deepseek-v4-flash").protocol, "chat-completions");
@@ -13,6 +13,30 @@ test("converts chat completion tool calls", () => {
 test("converts Responses requests for Chat Completions providers", () => {
   const result = toChatCompletionsRequest({ instructions: "Be brief", input: [{ role: "user", content: [{ type: "input_text", text: "Hi" }] }], max_output_tokens: 12, stream: true }, "deepseek-v4-pro") as any;
   assert.deepEqual(result.messages, [{ role: "system", content: "Be brief" }, { role: "user", content: "Hi" }]); assert.equal(result.max_tokens, 12); assert.equal(result.stream, true);
+});
+test("flattens namespace tools and drops server-side built-ins for Codex clients", () => {
+  // Codex v0.149 sends web_search built-ins and multi-agent namespace containers
+  // alongside plain function tools; nameless entries must never reach chat upstreams.
+  const result = toChatCompletionsRequest({
+    input: [{ role: "user", content: [{ type: "input_text", text: "Hi" }] }],
+    tools: [
+      { type: "function", name: "shell", description: "Runs a command", strict: false, parameters: { type: "object", properties: {} } },
+      { type: "web_search", external_web_access: false },
+      { type: "namespace", name: "multi_agent_v1", description: "Sub-agents.", tools: [
+        { type: "function", name: "close_agent", description: "Closes an agent", strict: false, parameters: { type: "object", properties: {} } },
+        { type: "web_search", external_web_access: false },
+      ] },
+      { type: "custom", name: "apply_patch", format: { type: "grammar" } },
+    ],
+  }, "ox-alpha-free") as any;
+  assert.deepEqual(result.tools, [
+    { type: "function", function: { name: "shell", description: "Runs a command", parameters: { type: "object", properties: {} } } },
+    { type: "function", function: { name: "close_agent", description: "Closes an agent", parameters: { type: "object", properties: {} } } },
+  ]);
+});
+test("omits the tools field when no tool converts for chat upstreams", () => {
+  const result = toChatCompletionsRequest({ input: "Hi", tools: [{ type: "web_search", external_web_access: false }] }, "deepseek-v4-flash") as any;
+  assert.equal("tools" in result, false);
 });
 test("converts Anthropic tool use and tool result to chat completions", () => {
   const result = toChatRequest({ messages: [
@@ -77,4 +101,18 @@ test("omits sampling parameters when not requested", () => {
 test("forwards temperature and top_p to Responses requests", () => {
   const result = toResponsesRequest({ messages: [{ role: "user", content: "Hi" }], temperature: 0.5, top_p: 0.8 } as any, "gpt-5.6-luna") as any;
   assert.equal(result.temperature, 0.5); assert.equal(result.top_p, 0.8);
+});
+test("honors client-requested models the provider serves", () => {
+  assert.equal(honorRequestedModel("deepseek-v4-flash", "gpt-5.6-luna", "opencode"), "deepseek-v4-flash");
+});
+test("falls back to the configured model for unknown or foreign requests", () => {
+  assert.equal(honorRequestedModel("claude-haiku-4-5", "gpt-5.6-luna", "opencode"), "gpt-5.6-luna");
+  // gpt-5.6-luna is not served by DeepSeek, so a pinned provider rejects it.
+  assert.equal(honorRequestedModel("gpt-5.6-luna", "deepseek-v4-pro", "deepseek"), "deepseek-v4-pro");
+  assert.equal(honorRequestedModel("auto", "gpt-5.6-luna", "opencode"), "gpt-5.6-luna");
+  assert.equal(honorRequestedModel(undefined, "gpt-5.6-luna"), "gpt-5.6-luna");
+  assert.equal(honorRequestedModel("gpt-5.6-luna", "gpt-5.6-luna", "opencode"), "gpt-5.6-luna");
+});
+test("keeps OpenRouter passthrough semantics for arbitrary ids", () => {
+  assert.equal(honorRequestedModel("zoo/any-model", "openai/gpt-4o-mini", "openrouter"), "zoo/any-model");
 });

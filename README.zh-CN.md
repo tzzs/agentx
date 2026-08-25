@@ -88,6 +88,8 @@ agentx codex --provider openrouter --model anthropic/claude-sonnet-4
 
 对于 Claude Code，本地 Token 会注入为 `ANTHROPIC_AUTH_TOKEN`，而不是 `ANTHROPIC_API_KEY`。这与 DeepSeek 等 Provider 的接入方式一致，可以避免 Claude Code 弹出自定义 API Key 确认页面；上游真实 Key 始终只保留在 Adapter 中。
 
+Claude Code 的所有模型档位（主模型、opus/sonnet/haiku 别名、子代理）都会固定为所选模型——用户的选择对所有流量生效，包括 Claude Code 通过 haiku 档位发起的小型后台请求（权限检查、主题检测、摘要等）。可选地，通过 `--background-model <id>`（或环境变量 `AGENTX_BACKGROUND_MODEL`）可以仅将这一后台通道路由到同一 Provider 下的其他模型——当主模型是重量级推理模型、其非流式辅助调用超过客户端超时时间时会很实用。凡是指定了目标 Provider 实际提供的模型的请求都会按原样转发；未知模型 id 则回退到配置的模型。
+
 如果在交互式终端启动 `claude`、`codex` 或 `pi` 时没有指定 `--provider`/`--model`，且没有设置 `AGENTX_PROVIDER`/`AGENTX_MODEL`，适配器会显示交互式运行时启动器：先选择 Provider，再选择模型，最后选择「立即启动」或「设为默认并启动」。切换 Provider 会自动为该 Provider 解析模型，并记住每个 Provider 最近使用的模型。临时切换不会覆盖已保存的默认运行时，除非选择「设为默认并启动」。非交互场景会自动使用目录中的默认模型。
 
 ## Codex 支持
@@ -99,7 +101,7 @@ npx agentx codex
 npx agentx codex --model gpt-5.6-luna
 ```
 
-启动器会注入 `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1`、包含临时本地 Token 的 `OPENAI_API_KEY`，以及 `OPENAI_MODEL`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
+启动器通过 `-c` 参数定义一个内联的 `agentx` 模型 Provider，指向 `http://127.0.0.1:<port>/v1`，其 Bearer Token 是以 `OPENAI_API_KEY` 注入的临时本地 Token。启动时还会生成一份模型目录（`~/.config/agentx/codex-models.json`，经 `model_catalog_json` 传入），让目录中的模型以真实元数据加载，而不是触发 Codex 的 fallback 元数据警告：上下文窗口与输出上限对所有 Provider 生效，在可用时取自公开注册表 models.dev，否则使用保守默认值。新版 Codex 已不再读取那些环境变量，该方式可以正常工作，并完全绕过 Codex 的登录页——无需 ChatGPT 登录或 `~/.codex/auth.json`，也不会修改你已有的 `~/.codex/config.toml`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
 
 ## 安装
 
@@ -130,7 +132,7 @@ agentx claude --port 9000 --host 127.0.0.1
 
 ### `codex`
 
-同时启动适配器和 Codex。Codex 会收到 OpenAI 兼容环境变量：
+同时启动适配器和 Codex。Codex 会通过 `-c` 参数收到一个指向本地适配器的内联模型 Provider：
 
 ```bash
 agentx codex
@@ -358,6 +360,10 @@ GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构�
 **找不到 Claude Code**
 
 安装 Claude Code，确保在同一个 shell 的 `PATH` 中可以执行 `claude`，然后运行 `agentx doctor`。
+
+**`Codex not found: the "codex" command is not installed or not on PATH`**
+
+当客户端可执行文件缺失时，AgentX 会说明问题并给出推荐的安装命令（例如 `npm install -g @openai/codex`）。在交互式终端中还会询问是否立即执行该命令，并在确认安装成功后自动重新启动客户端。也可以选择跳过、手动安装，之后再次运行相同的 `agentx <client>` 命令。
 
 **端口被占用**
 

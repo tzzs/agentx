@@ -88,6 +88,8 @@ These flags are the Advanced / Automation API: ordinary day-to-day provider swit
 
 For Claude Code, the local token is injected as `ANTHROPIC_AUTH_TOKEN` rather than `ANTHROPIC_API_KEY`, matching provider integrations such as DeepSeek and avoiding Claude Code's custom API-key confirmation screen. The upstream key remains private to the adapter.
 
+Every Claude Code model tier (main, opus/sonnet/haiku aliases, subagents) is pinned to the selected model — the user's choice is used for all traffic, including the small background requests Claude Code fires through its haiku tier (permission checks, topic detection, summarization). Optionally, `--background-model <id>` (or `AGENTX_BACKGROUND_MODEL`) routes just that background lane to another model the same provider serves — useful when the main model is a heavyweight reasoning model whose non-streaming auxiliary calls run past client timeouts. Requests naming a model the configured provider serves are honored as-is; unknown ids fall back to the configured model.
+
 ### Runtime configuration
 
 When `claude`, `codex`, or `pi` is started on an interactive terminal without `--provider`/`--model` and without `AGENTX_PROVIDER`/`AGENTX_MODEL`, AgentX shows an interactive runtime launcher instead of requiring you to pick anything:
@@ -112,7 +114,7 @@ npx agentx codex
 npx agentx codex --model gpt-5.6-luna
 ```
 
-The launcher injects `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1`, `OPENAI_API_KEY` with a temporary local token, and `OPENAI_MODEL`. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.
+The launcher passes `-c` overrides that define an inline `agentx` model provider pointing at `http://127.0.0.1:<port>/v1`, whose bearer token is the temporary local token injected as `OPENAI_API_KEY`. It also generates a model catalog (`~/.config/agentx/codex-models.json`, passed via `model_catalog_json`) so registry models resolve with real metadata instead of Codex's fallback-metadata warning: context windows and output limits for every provider come from the public models.dev registry when available, with conservative defaults otherwise. This works with current Codex releases (which no longer honor those environment variables) and skips Codex's sign-in screen entirely — no ChatGPT login or `~/.codex/auth.json` required, and your existing `~/.codex/config.toml` stays untouched. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.
 
 ## Installation
 
@@ -143,7 +145,7 @@ agentx claude --port 9000 --host 127.0.0.1
 
 ### `codex`
 
-Start the adapter and Codex together. Codex receives OpenAI-compatible environment variables:
+Start the adapter and Codex together. Codex is launched with `-c` overrides that point an inline model provider at the local adapter:
 
 ```bash
 agentx codex
@@ -386,6 +388,10 @@ Set `AGENTX_OPENCODE_API_KEY` (a previously set `OPENCODE_API_KEY` still works) 
 **`Claude Code was not found`**
 
 Install Claude Code and ensure `claude` is available in the same shell's `PATH`, then run `agentx doctor`.
+
+**`Codex not found: the "codex" command is not installed or not on PATH`**
+
+When a client executable is missing, AgentX explains the problem and prints the recommended install command (for example, `npm install -g @openai/codex`). In an interactive terminal it also offers to run that command for you and relaunches the client after a verified install. Decline to install manually; re-run the same `agentx <client>` command afterwards.
 
 **The port is busy**
 

@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createUsageStore, defaultUsageStore, defaultUsageLocation, periodStart, sqliteAvailable } from "../src/usage/storage.js";
 import { TokenUsageCollector, normalizeUsage } from "../src/usage/collector.js";
-import { loadStatsStore } from "../src/usage/cli.js";
 import type { TokenUsage } from "../src/usage/types.js";
 
 const now = Date.now();
@@ -87,7 +86,7 @@ test("the CLI statistics store uses the same location as the adapter server", as
     process.env.AGENTX_USAGE_DIR = dir;
     delete process.env.AGENTX_USAGE_BACKEND;
     const serverStore = await defaultUsageStore();
-    const cliStore = await loadStatsStore();
+    const cliStore = await defaultUsageStore();
     assert.equal(cliStore.constructor.name, serverStore.constructor.name);
     await serverStore.record(normalizeUsage({ provider: "p", model: "m", inputTokens: 10, outputTokens: 5 }));
     const totals = await cliStore.totals("all");

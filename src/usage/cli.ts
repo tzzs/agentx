@@ -3,10 +3,6 @@ import { calculateCost } from "./pricing/index.js";
 import { defaultUsageStore } from "./storage.js";
 import type { ModelUsageStat, UsagePeriod, UsageTotals } from "./types.js";
 
-export function loadStatsStore(): Promise<Awaited<ReturnType<typeof defaultUsageStore>>> {
-  return defaultUsageStore();
-}
-
 export function formatPeriod(period: UsagePeriod): string {
   return { today: "Today", week: "This week", month: "This month", all: "All time" }[period];
 }
@@ -40,7 +36,7 @@ export function renderUsageStats(stats: { models: ModelUsageStat[]; totals: Usag
 }
 
 export async function runUsageStats(period: UsagePeriod = "all"): Promise<string> {
-  const store = await loadStatsStore();
+  const store = await defaultUsageStore();
   try {
     const [models, totals] = await Promise.all([store.modelStats(period), store.totals(period)]);
     return renderUsageStats({ models, totals, period });
