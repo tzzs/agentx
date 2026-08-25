@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { backgroundModel, clientEnvironment, runCommand, ClientNotFoundError } from "../src/process.js";
+import { backgroundModel, clientEnvironment, codexLaunchArgs, runCommand, ClientNotFoundError } from "../src/process.js";
 
 test("injects OpenAI environment for Codex", async () => {
   const adapter = { port: 8788, token: "local-token" } as any;
@@ -13,6 +13,26 @@ test("injects OpenAI environment for Codex", async () => {
   assert.equal(env.OPENAI_BASE_URL, "http://127.0.0.1:8788/v1"); assert.equal(env.OPENAI_API_KEY, "local-token"); assert.equal(env.OPENAI_MODEL, "gpt-5.6-luna");
   const anthropicEnv = clientEnvironment(config, adapter, "anthropic");
   assert.equal(anthropicEnv.ANTHROPIC_MODEL, "gpt-5.6-luna"); assert.equal(anthropicEnv.ANTHROPIC_AUTH_TOKEN, "local-token"); assert.equal(anthropicEnv.ANTHROPIC_API_KEY, undefined);
+});
+
+test("points Codex at the local adapter via -c provider overrides", () => {
+  const adapter = { port: 8788, token: "local-token" } as any;
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "upstream", logLevel: "info" };
+  assert.deepEqual(codexLaunchArgs(config as any, adapter), [
+    "-c", "model_provider='agentx'",
+    "-c", "model_providers.agentx.name='AgentX'",
+    "-c", "model_providers.agentx.base_url='http://127.0.0.1:8788/v1'",
+    "-c", "model_providers.agentx.wire_api='responses'",
+    "-c", "model_providers.agentx.env_key='OPENAI_API_KEY'",
+    "-m", "gpt-5.6-luna",
+  ]);
+});
+
+test("omits -m for auto so the adapter routes the tier per request", () => {
+  const config = { host: "localhost", port: 8787, model: "auto", apiKey: "k", logLevel: "info" };
+  const args = codexLaunchArgs(config as any, { port: 9000 } as any);
+  assert.ok(!args.includes("-m"));
+  assert.ok(args.some((arg) => arg.includes("base_url='http://localhost:9000/v1'")));
 });
 
 test("keeps every Claude Code tier on the selected model by default", async () => {

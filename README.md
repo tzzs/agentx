@@ -114,7 +114,7 @@ npx agentx codex
 npx agentx codex --model gpt-5.6-luna
 ```
 
-The launcher injects `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1`, `OPENAI_API_KEY` with a temporary local token, and `OPENAI_MODEL`. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.
+The launcher passes `-c` overrides that define an inline `agentx` model provider pointing at `http://127.0.0.1:<port>/v1`, whose bearer token is the temporary local token injected as `OPENAI_API_KEY`. This works with current Codex releases (which no longer honor those environment variables) and skips Codex's sign-in screen entirely — no ChatGPT login or `~/.codex/auth.json` required, and your existing `~/.codex/config.toml` stays untouched. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.
 
 ## Installation
 
@@ -145,7 +145,7 @@ agentx claude --port 9000 --host 127.0.0.1
 
 ### `codex`
 
-Start the adapter and Codex together. Codex receives OpenAI-compatible environment variables:
+Start the adapter and Codex together. Codex is launched with `-c` overrides that point an inline model provider at the local adapter:
 
 ```bash
 agentx codex

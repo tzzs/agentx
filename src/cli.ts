@@ -2,7 +2,7 @@
 import { loadConfig, parseCliOptions as options } from "./config.js";
 import type { Config } from "./config.js";
 import { startAdapter, type Adapter } from "./server.js";
-import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS } from "./process.js";
+import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, codexLaunchArgs } from "./process.js";
 import { runInteractiveLauncher, LaunchCancelledError } from "./ui.js";
 import { credentialEnvName, providerById, refreshOpenCodeModels } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
@@ -294,7 +294,9 @@ async function main() {
   if (!executable) throw new Error("Usage: agentx exec [options] -- <command>");
 
   const client = command === "codex" || executable === "codex" || command === "pi" || executable === "pi" ? "openai" : "anthropic";
-  const launchArgs = executable === "claude" && !commandArgs.includes("--bare") ? ["--bare", ...commandArgs] : commandArgs;
+  const launchArgs = executable === "claude" && !commandArgs.includes("--bare") ? ["--bare", ...commandArgs]
+    : executable === "codex" ? [...codexLaunchArgs(config, adapter), ...commandArgs]
+      : commandArgs;
 
   try {
     process.exitCode = await launchClient(executable, launchArgs, config, adapter, client);

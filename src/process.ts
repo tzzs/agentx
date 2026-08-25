@@ -30,6 +30,26 @@ export function clientEnvironment(config: Config, adapter: Adapter, client: "ant
     : { ...inherited, AGENTX_MODEL: config.model, ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: adapter.token, ANTHROPIC_MODEL: config.model, ANTHROPIC_DEFAULT_OPUS_MODEL: config.model, ANTHROPIC_DEFAULT_SONNET_MODEL: config.model, ANTHROPIC_DEFAULT_HAIKU_MODEL: auxModel, ANTHROPIC_SMALL_FAST_MODEL: auxModel, CLAUDE_CODE_SUBAGENT_MODEL: config.model };
 }
 
+/**
+ * Codex stopped honoring `OPENAI_BASE_URL`/`OPENAI_API_KEY` environment
+ * variables and gates startup on a stored login (`~/.codex/auth.json`), which
+ * surfaced its sign-in screen on every launch. These `-c` overrides define an
+ * inline custom provider instead: requests go to the local adapter and the
+ * bearer token is read from the injected `OPENAI_API_KEY`, so no OpenAI login
+ * state is ever consulted. Values use TOML literal strings (single quotes) so
+ * they survive Windows shell re-parsing.
+ */
+export function codexLaunchArgs(config: Config, adapter: Adapter): string[] {
+  return [
+    "-c", "model_provider='agentx'",
+    "-c", "model_providers.agentx.name='AgentX'",
+    "-c", `model_providers.agentx.base_url='http://${config.host}:${adapter.port}/v1'`,
+    "-c", "model_providers.agentx.wire_api='responses'",
+    "-c", "model_providers.agentx.env_key='OPENAI_API_KEY'",
+    ...(config.model === "auto" ? [] : ["-m", config.model]),
+  ];
+}
+
 /** Shell-conventional exit codes for signal terminations (128 + signal number). */
 const SIGNAL_NUMBERS: Record<string, number> = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGKILL: 9, SIGTERM: 15 };
 
