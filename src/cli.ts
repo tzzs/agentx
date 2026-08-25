@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 import { loadConfig, parseCliOptions as options } from "./config.js";
-import { startAdapter } from "./server.js";
-import { runCommand } from "./process.js";
+import type { Config } from "./config.js";
+import { startAdapter, type Adapter } from "./server.js";
+import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS } from "./process.js";
 import { runInteractiveLauncher, LaunchCancelledError } from "./ui.js";
 import { credentialEnvName, providerById, refreshOpenCodeModels } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
-import { runDoctor, renderDoctor } from "./doctor.js";
+import { runDoctor, renderDoctor, executableExists } from "./doctor.js";
 import { credentialInstructions, credentialSource, promptCredential, resolveCredential, storedCredential } from "./credentials.js";
 import { saveProfile } from "./profiles.js";
 import { queryProviderUsage, usageProvider } from "./quota.js";
 import { runUsageStats } from "./usage/cli.js";
 import { resolveRuntimeNonInteractive } from "./selection.js";
 import { saveLastModel } from "./runtime.js";
+import { confirm, isCancel } from "@clack/prompts";
 
 const HELP: Record<string, string> = {
   claude: "Start the local adapter and Claude Code together",
@@ -47,6 +49,7 @@ function helpText(command?: string): string {
     lines.push("Options:");
     lines.push("  --provider <id>     Upstream provider (opencode, deepseek, openrouter)");
     lines.push("  --model <model>     Model or auto");
+    lines.push("  --background-model <id>  Model for Claude Code's haiku/background tier (default: same as --model)");
     lines.push("  --port <port>       Preferred local port (default 8787)");
     lines.push("  --host <host>       Local bind address (default 127.0.0.1)");
     lines.push("  --api-key <key>     Upstream API key");
@@ -65,6 +68,7 @@ function helpText(command?: string): string {
   lines.push("Global options:");
   lines.push("  --provider <id>     Upstream provider (opencode, deepseek, openrouter)");
   lines.push("  --model <model>     Model or auto");
+  lines.push("  --background-model <id>  Model for Claude Code's haiku/background tier (default: same as --model)");
   lines.push("  --port <port>       Preferred local port (default 8787)");
   lines.push("  --host <host>       Local bind address (default 127.0.0.1)");
   lines.push("  --api-key <key>     Upstream API key");
@@ -81,7 +85,7 @@ function isInteractive(): boolean {
 }
 
 /** Flags the adapter consumes itself; never forwarded to the launched client. */
-const ADAPTER_FLAGS = new Set(["--model", "--provider", "--port", "--host", "--api-key", "--verbose"]);
+const ADAPTER_FLAGS = new Set(["--model", "--background-model", "--provider", "--port", "--host", "--api-key", "--verbose"]);
 
 /**
  * Strip adapter flags from `agentx claude ...` arguments so the client only
@@ -136,6 +140,53 @@ async function resolveClientRuntime(command: string, opts: Record<string, string
     interactive: true,
     apiKey: outcome.apiKey,
   };
+}
+
+const CLIENT_LABELS: Record<string, string> = { claude: "Claude Code", codex: "Codex", pi: "Pi" };
+
+/** Print a clear explanation for a client executable that could not be spawned. */
+function reportMissingClient(executable: string): void {
+  const label = CLIENT_LABELS[executable] ?? `"${executable}"`;
+  console.error(`\n✗ ${label} not found: the "${executable}" command is not installed or not on PATH.`);
+  const installCommand = CLIENT_INSTALL_COMMANDS[executable];
+  if (installCommand) {
+    console.error(`\nRecommended fix:\n  ${installCommand}\n\nAfter installing, re-run: agentx ${executable}`);
+  } else {
+    console.error("\nFix: install it and make sure it is available on PATH.");
+  }
+}
+
+/**
+ * Launch a client, with a recovery path for a missing executable: explain the
+ * problem, and — interactively only — offer to run the known install command.
+ * After a confirmed, successful install (verified by spawning the binary),
+ * retry the launch; otherwise exit with a clear message. The adapter stays up
+ * throughout so a successful install flows straight into the client session.
+ */
+async function launchClient(executable: string, args: string[], config: Config, adapter: Adapter, client: "anthropic" | "openai"): Promise<number> {
+  try {
+    return await runCommand(executable, args, config, adapter, client);
+  } catch (error) {
+    if (!(error instanceof ClientNotFoundError)) throw error;
+    reportMissingClient(executable);
+    const installCommand = CLIENT_INSTALL_COMMANDS[executable];
+    if (!isInteractive() || !installCommand) { process.exitCode = 1; return 1; }
+    const proceed = await confirm({ message: `Run \`${installCommand}\` now?`, initialValue: false });
+    if (isCancel(proceed) || !proceed) {
+      console.error(`Skipped installation. Re-run agentx ${executable} once installed.`);
+      process.exitCode = 1;
+      return 1;
+    }
+    console.error(`Running: ${installCommand}`);
+    const code = await runShellCommand(installCommand);
+    if (code !== 0 || !(await executableExists(executable))) {
+      console.error("✗ Installation did not complete or the executable is still missing.\n  Install it manually, then re-run this command.");
+      process.exitCode = 1;
+      return 1;
+    }
+    console.error(`✓ ${CLIENT_LABELS[executable] ?? executable} installed`);
+    return runCommand(executable, args, config, adapter, client);
+  }
 }
 
 async function main() {
@@ -246,7 +297,7 @@ async function main() {
   const launchArgs = executable === "claude" && !commandArgs.includes("--bare") ? ["--bare", ...commandArgs] : commandArgs;
 
   try {
-    process.exitCode = await runCommand(executable, launchArgs, config, adapter, client);
+    process.exitCode = await launchClient(executable, launchArgs, config, adapter, client);
   } finally {
     await adapter.close();
   }

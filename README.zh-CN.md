@@ -88,6 +88,8 @@ agentx codex --provider openrouter --model anthropic/claude-sonnet-4
 
 对于 Claude Code，本地 Token 会注入为 `ANTHROPIC_AUTH_TOKEN`，而不是 `ANTHROPIC_API_KEY`。这与 DeepSeek 等 Provider 的接入方式一致，可以避免 Claude Code 弹出自定义 API Key 确认页面；上游真实 Key 始终只保留在 Adapter 中。
 
+Claude Code 的所有模型档位（主模型、opus/sonnet/haiku 别名、子代理）都会固定为所选模型——用户的选择对所有流量生效，包括 Claude Code 通过 haiku 档位发起的小型后台请求（权限检查、主题检测、摘要等）。可选地，通过 `--background-model <id>`（或环境变量 `AGENTX_BACKGROUND_MODEL`）可以仅将这一后台通道路由到同一 Provider 下的其他模型——当主模型是重量级推理模型、其非流式辅助调用超过客户端超时时间时会很实用。凡是指定了目标 Provider 实际提供的模型的请求都会按原样转发；未知模型 id 则回退到配置的模型。
+
 如果在交互式终端启动 `claude`、`codex` 或 `pi` 时没有指定 `--provider`/`--model`，且没有设置 `AGENTX_PROVIDER`/`AGENTX_MODEL`，适配器会显示交互式运行时启动器：先选择 Provider，再选择模型，最后选择「立即启动」或「设为默认并启动」。切换 Provider 会自动为该 Provider 解析模型，并记住每个 Provider 最近使用的模型。临时切换不会覆盖已保存的默认运行时，除非选择「设为默认并启动」。非交互场景会自动使用目录中的默认模型。
 
 ## Codex 支持
@@ -358,6 +360,10 @@ GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构�
 **找不到 Claude Code**
 
 安装 Claude Code，确保在同一个 shell 的 `PATH` 中可以执行 `claude`，然后运行 `agentx doctor`。
+
+**`Codex not found: the "codex" command is not installed or not on PATH`**
+
+当客户端可执行文件缺失时，AgentX 会说明问题并给出推荐的安装命令（例如 `npm install -g @openai/codex`）。在交互式终端中还会询问是否立即执行该命令，并在确认安装成功后自动重新启动客户端。也可以选择跳过、手动安装，之后再次运行相同的 `agentx <client>` 命令。
 
 **端口被占用**
 
