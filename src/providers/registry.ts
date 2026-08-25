@@ -38,6 +38,11 @@ function parseModelsDevMetadata(payload: any): MetadataSections {
 /**
  * Fill missing limits on registry entries from their provider's section.
  * Explicitly configured values always win; unmatched ids keep safe defaults.
+ *
+ * Implicit contract: each registry provider id must equal the models.dev
+ * top-level section key it should draw metadata from ("opencode",
+ * "deepseek", "openrouter"). A renamed id silently loses metadata and falls
+ * back to defaults — update one when renaming the other.
  */
 function applyMetadataToRegistry(sections: MetadataSections): void {
   for (const provider of providerRegistry) {
@@ -68,7 +73,9 @@ function openCodeModels(ids: string[], metadata: MetadataMap = new Map()): Provi
     endpoint: responsesModelIds.has(model) ? `${openCodeBase}/responses` : `${openCodeBase}/chat/completions`,
     ...metadata.get(model),
   })) as ProviderModel[];
-}export const providerRegistry: ProviderDefinition[] = [
+}
+
+export const providerRegistry: ProviderDefinition[] = [
   { id: "opencode", name: "OpenCode", apiKeyEnv: "OPENCODE_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: true }, models: openCodeModels(fallbackOpenCodeIds) },
   { id: "deepseek", name: "DeepSeek", apiKeyEnv: "DEEPSEEK_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: true }, models: models("deepseek", `${deepSeekBase}/chat/completions`, ["deepseek-v4-pro", "deepseek-v4-flash"], "chat-completions") },
   { id: "openrouter", name: "OpenRouter", apiKeyEnv: "OPENROUTER_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: false }, models: models("openrouter", `${openRouterBase}/chat/completions`, [process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini"], "chat-completions") }

@@ -73,11 +73,13 @@ export const CLIENT_INSTALL_COMMANDS: Record<string, string> = {
   pi: "npm install -g @mariozechner/pi",
 };
 
-/** Run a command through the user's shell with inherited stdio; resolves with the exit code. */
+/** Run a command through the user's shell with inherited stdio; resolves with the exit code.
+ * Spawn failures (e.g. no shell) resolve to 1 instead of rejecting, so the caller's
+ * install-recovery branch stays in charge of reporting. */
 export function runShellCommand(command: string): Promise<number> {
   const child = spawn(command, { stdio: "inherit", shell: true });
-  return new Promise((resolve, reject) => {
-    child.once("error", reject);
+  return new Promise((resolve) => {
+    child.once("error", () => resolve(1));
     child.once("exit", (code) => resolve(code ?? 1));
   });
 }

@@ -8,10 +8,12 @@ export const providers = allModels;
 export function providerFor(model: string, provider?: string): ModelProvider { return resolveProvider(model, provider); }
 
 /**
- * Honor a client-requested model only when the target provider actually
- * serves it; unknown ids and "auto" fall back to the configured model.
- * This keeps the /v1/messages pinning intact while letting tiered clients
- * (e.g. Claude Code's haiku background lane) reach faster sibling models.
+ * Honor a client-requested model whenever the configured provider serves it;
+ * unknown ids and "auto" fall back to the configured model. This is what makes
+ * tiered clients work (e.g. Claude Code's haiku background lane reaching a
+ * faster sibling via --background-model); by design it lets any loopback
+ * client pick any model of the same provider — the local token is random and
+ * never leaves the machine, so this widens model choice, not access.
  */
 export function honorRequestedModel(requested: unknown, fallback: string, providerId?: string): string {
   if (typeof requested !== "string" || !requested || requested === fallback) return fallback;
@@ -111,9 +113,11 @@ export function fromChatResponse(response: any, model: string): Record<string, u
 function toChatTools(tools: unknown): any[] {
   return Array.isArray(tools) ? tools.flatMap((tool: any) => {
     if (Array.isArray(tool?.tools)) return toChatTools(tool.tools);
+    // Server-side built-ins (typed, no nested function) have no chat
+    // representation; everything else must resolve to a named function.
+    if (tool?.type !== undefined && tool.type !== "function" && !tool.function) return [];
     const source = tool?.function ?? tool;
     if (!source || typeof source.name !== "string" || !source.name) return [];
-    if (tool.type !== undefined && tool.type !== "function" && tool.function === undefined) return [];
     return [{ type: "function", function: { name: source.name, ...(source.description === undefined ? {} : { description: source.description }), ...(source.parameters === undefined ? {} : { parameters: source.parameters }) } }];
   }) : [];
 }

@@ -28,6 +28,17 @@ const HELP: Record<string, string> = {
   version: "Print the CLI version",
 };
 
+/** Option reference shared by per-command and global help output. */
+const OPTION_LINES = [
+  "  --provider <id>     Upstream provider (opencode, deepseek, openrouter)",
+  "  --model <model>     Model or auto",
+  "  --background-model <id>  Model for Claude Code's haiku/background tier (default: same as --model)",
+  "  --port <port>       Preferred local port (default 8787)",
+  "  --host <host>       Local bind address (default 127.0.0.1)",
+  "  --api-key <key>     Upstream API key",
+  "  --verbose           Verbose logging",
+];
+
 function helpText(command?: string): string {
   const lines: string[] = [];
   if (command && HELP[command]) {
@@ -41,6 +52,7 @@ function helpText(command?: string): string {
       lines.push("Options:");
       lines.push("  --period <range>    Time range for token statistics (default all)");
       lines.push("  --provider <id>     Query provider quota instead of token statistics");
+      return lines.join("\n");
     } else if (command === "exec") {
       lines.push("Usage: agentx exec [options] -- <command> [args...]");
     } else {
@@ -48,13 +60,7 @@ function helpText(command?: string): string {
     }
     lines.push("");
     lines.push("Options:");
-    lines.push("  --provider <id>     Upstream provider (opencode, deepseek, openrouter)");
-    lines.push("  --model <model>     Model or auto");
-    lines.push("  --background-model <id>  Model for Claude Code's haiku/background tier (default: same as --model)");
-    lines.push("  --port <port>       Preferred local port (default 8787)");
-    lines.push("  --host <host>       Local bind address (default 127.0.0.1)");
-    lines.push("  --api-key <key>     Upstream API key");
-    lines.push("  --verbose           Verbose logging");
+    lines.push(...OPTION_LINES);
     return lines.join("\n");
   }
   lines.push("agentx - Local Anthropic/OpenAI-compatible adapter for OpenCode");
@@ -67,13 +73,7 @@ function helpText(command?: string): string {
   }
   lines.push("");
   lines.push("Global options:");
-  lines.push("  --provider <id>     Upstream provider (opencode, deepseek, openrouter)");
-  lines.push("  --model <model>     Model or auto");
-  lines.push("  --background-model <id>  Model for Claude Code's haiku/background tier (default: same as --model)");
-  lines.push("  --port <port>       Preferred local port (default 8787)");
-  lines.push("  --host <host>       Local bind address (default 127.0.0.1)");
-  lines.push("  --api-key <key>     Upstream API key");
-  lines.push("  --verbose           Verbose logging");
+  lines.push(...OPTION_LINES);
   lines.push("");
   lines.push("Run 'agentx help <command>' for details on a command.");
   return lines.join("\n");
