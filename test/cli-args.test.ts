@@ -15,3 +15,9 @@ test("strips inline --flag=value forms", () => {
 test("keeps client flags that merely look similar", () => {
   assert.deepEqual(clientArguments(["--model-settings", "{}"]), ["--model-settings", "{}"]);
 });
+
+test("codex and pi arguments are forwarded (not dropped)", () => {
+  assert.deepEqual(clientArguments(["--approve-for-me", "resume", "abc"]), ["--approve-for-me", "resume", "abc"]);
+  assert.deepEqual(clientArguments(["--quiet"]), ["--quiet"]);
+  assert.deepEqual(clientArguments(["--model", "gpt-4", "--resume", "abc"]), ["--resume", "abc"]);
+});

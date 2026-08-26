@@ -282,7 +282,7 @@ async function main() {
   const separator = args.indexOf("--");
   const commandArgs = separator >= 0
     ? args.slice(separator + 1)
-    : command === "claude"
+    : CLIENT_COMMANDS.has(command)
       ? clientArguments(args)
       : [];
 
