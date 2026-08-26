@@ -61,9 +61,9 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## Credentials and Profiles
 
-Credentials come exclusively from environment variables: AgentX-specific variables are namespaced with the `AGENTX_` prefix (e.g. `AGENTX_OPENCODE_API_KEY`) so they never clash with same-named variables set for other tools; at runtime the value is injected into upstream requests as the plain key — the prefix exists only in the variable name. A legacy unprefixed variable (such as `OPENCODE_API_KEY`) is still picked up directly if it is already set. Resolution order: `--api-key`, `AGENTX_<PROVIDER>_API_KEY`, legacy `<PROVIDER>_API_KEY`, then an interactive prompt. When you type a key interactively, AgentX asks (default: yes) whether to save it as `AGENTX_<PROVIDER>_API_KEY` in your shell profile; declining keeps it valid for the current session only and prints instructions on how to persist it manually.
+Credentials come exclusively from environment variables: AgentX-specific variables are namespaced with the `AGENTX_` prefix (e.g. `AGENTX_OPENCODE_API_KEY`) so they never clash with same-named variables set for other tools; at runtime the value is injected into upstream requests as the plain key — the prefix exists only in the variable name. A legacy unprefixed variable (such as `OPENCODE_API_KEY`) is still picked up directly if it is already set. Resolution order: `--api-key`, `AGENTX_<PROVIDER>_API_KEY`, legacy `<PROVIDER>_API_KEY`, then an interactive prompt. When you type a key interactively, AgentX keeps it for the current session only and prints the manual `export …` line you can add to your shell profile; AgentX never writes to your shell profile itself.
 
-Non-secret runtime selection is stored in a single `~/.config/agentx/runtime.json` file: per-client defaults, the last model per provider, and the most recent selection. API keys are never written to this file or to any AgentX-managed storage; with explicit consent they are appended to your shell profile.
+Non-secret runtime selection is stored in a single `~/.config/agentx/runtime.json` file: per-client defaults, the last model per provider, and the most recent selection. API keys are never written to this file or to any AgentX-managed storage, and AgentX does not modify your shell profile.
 
 ## Providers
 
@@ -257,6 +257,8 @@ If the preferred port is already in use, the adapter tries subsequent ports. A n
 ```bash
 agentx proxy --host 0.0.0.0
 ```
+
+`agentx doctor` accepts `--client <claude|codex|all>` (default `all`) to limit checks to one client, and `--offline` to skip network-dependent checks. Skipped checks are noted in the report.
 
 ## Models and Routing
 

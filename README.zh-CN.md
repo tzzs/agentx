@@ -61,9 +61,9 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## 凭据与 Provider Profile
 
-凭据完全通过环境变量提供：AgentX 专用的变量统一带 `AGENTX_` 前缀（如 `AGENTX_OPENCODE_API_KEY`），避免与用户为其他工具设置的同名变量冲突；运行时解析后按原始 Key 注入上游请求，前缀只存在于变量命名空间中。如果已经设置了不带前缀的旧变量（如 `OPENCODE_API_KEY`），也会被直接使用。凭据查找优先级为：`--api-key`、`AGENTX_<PROVIDER>_API_KEY`、旧的 `<PROVIDER>_API_KEY`、交互式输入。交互式输入 Key 后，AgentX 会询问（默认是）是否将 `AGENTX_<PROVIDER>_API_KEY` 保存到你的 shell profile；选择否则该 Key 仅当前会话有效，并打印手动持久化的指引。
+凭据完全通过环境变量提供：AgentX 专用的变量统一带 `AGENTX_` 前缀（如 `AGENTX_OPENCODE_API_KEY`），避免与用户为其他工具设置的同名变量冲突；运行时解析后按原始 Key 注入上游请求，前缀只存在于变量命名空间中。如果已经设置了不带前缀的旧变量（如 `OPENCODE_API_KEY`），也会被直接使用。凭据查找优先级为：`--api-key`、`AGENTX_<PROVIDER>_API_KEY`、旧的 `<PROVIDER>_API_KEY`、交互式输入。交互式输入的 Key 仅当前会话有效，AgentX 会打印可粘贴到 shell profile 的 `export …` 行；AgentX 不会自行修改你的 shell profile。
 
-非敏感运行时状态统一保存在 `~/.config/agentx/runtime.json`：包含每个客户端的默认模型、每个 Provider 最近使用的模型和最近一次选择。API Key 不会写入该文件或任何由 AgentX 管理的存储；仅在用户明确同意后追加到 shell profile。
+非敏感运行时状态统一保存在 `~/.config/agentx/runtime.json`：包含每个客户端的默认模型、每个 Provider 最近使用的模型和最近一次选择。API Key 不会写入该文件或任何由 AgentX 管理的存储；AgentX 也不会修改你的 shell profile。
 
 ## Provider 架构
 
@@ -234,6 +234,8 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 ```bash
 agentx proxy --host 0.0.0.0
 ```
+
+`agentx doctor` 支持 `--client <claude|codex|all>`（默认 `all`）只检查指定客户端，并支持 `--offline` 跳过依赖网络的检查；跳过的项会在报告中标出。
 
 ## 模型和路由
 
