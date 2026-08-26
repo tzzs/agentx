@@ -103,8 +103,10 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
     const shortcut = await selectDefaultAction(provider, model);
     if (isCancel(shortcut) || shortcut === "cancel") { cancel(`${clientDisplayName(client)} launch cancelled`); throw new LaunchCancelledError(0); }
     // "start" → launch immediately with the saved default
-    outro("Ready");
-    return { provider, model, madeDefault: false, defaultApplied: true, changed: false, apiKey: sessionKeys.get(provider) };
+    if (shortcut === "start") {
+      outro("Ready");
+      return { provider, model, madeDefault: false, defaultApplied: true, changed: false, apiKey: sessionKeys.get(provider) };
+    }
     // "change" → fall through to the full picker flow below
   }
 
