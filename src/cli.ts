@@ -4,15 +4,14 @@ import type { Config } from "./config.js";
 import { startAdapter, type Adapter } from "./server.js";
 import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, codexLaunchArgs } from "./process.js";
 import { runInteractiveLauncher, LaunchCancelledError } from "./ui.js";
-import { credentialEnvName, providerById, refreshOpenCodeModels } from "./providers/registry.js";
+import { credentialEnvName, providerById, refreshProviderCatalog } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
 import { runDoctor, renderDoctor, executableExists } from "./doctor.js";
 import { credentialInstructions, credentialSource, promptCredential, resolveCredential, storedCredential } from "./credentials.js";
-import { saveProfile } from "./profiles.js";
 import { queryProviderUsage, usageProvider } from "./quota.js";
 import { runUsageStats } from "./usage/cli.js";
 import { resolveRuntimeNonInteractive } from "./selection.js";
-import { saveLastModel } from "./runtime.js";
+import { loadLastSelection, saveLastModel } from "./runtime.js";
 import { catalogModels, writeCodexCatalog } from "./codex-catalog.js";
 import { confirm, isCancel } from "@clack/prompts";
 
@@ -216,8 +215,9 @@ async function main() {
   }
 
   if (command === "doctor") {
-    await refreshOpenCodeModels();
-    const result = await runDoctor(options(args));
+    const doctorOptions = options(args);
+    await refreshProviderCatalog({ provider: doctorOptions.provider ?? process.env.AGENTX_PROVIDER });
+    const result = await runDoctor(doctorOptions);
     console.log(renderDoctor(result));
     if (result.issues.length) process.exitCode = 1;
     return;
@@ -227,19 +227,26 @@ async function main() {
   let usedDefault = false;
   let interactiveRuntime = false;
   if (CLIENT_COMMANDS.has(command)) {
-    await refreshOpenCodeModels();
+    // The launcher needs the OpenCode catalog when the provider is not yet known.
+    await refreshProviderCatalog({ provider: opts.provider ?? process.env.AGENTX_PROVIDER });
     const runtime = await resolveClientRuntime(command, opts);
     opts.provider = runtime.provider;
     opts.model = runtime.model;
     if (runtime.apiKey) opts.apiKey = runtime.apiKey;
     usedDefault = runtime.defaultApplied;
     interactiveRuntime = runtime.interactive;
-    if (runtime.model !== "auto") await saveLastModel(runtime.provider, runtime.model);
+    await saveLastModel(runtime.provider, runtime.model);
   } else if (command === "proxy" || command === "exec") {
-    await refreshOpenCodeModels();
+    const lastSelection = await loadLastSelection();
+    await refreshProviderCatalog({ provider: opts.provider ?? process.env.AGENTX_PROVIDER ?? lastSelection?.provider });
   }
 
-  const config = loadConfig(opts);
+  const lastSelection = CLIENT_COMMANDS.has(command)
+    ? undefined
+    : command === "proxy" || command === "exec"
+      ? await loadLastSelection()
+      : undefined;
+  const config = loadConfig(opts, lastSelection);
   const selectedProvider = providerById(config.provider ?? "opencode");
   try {
     config.apiKey = await resolveCredential(selectedProvider, config.apiKey);
@@ -256,14 +263,6 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  await saveProfile({
-    id: `${selectedProvider.id}/${config.model}`,
-    provider: selectedProvider.id,
-    model: config.model,
-    displayName: `${selectedProvider.name} / ${config.model}`,
-    clientModels: { claude: config.model, codex: config.model },
-  });
-
   const adapter = await startAdapter(config);
   const clientLabel = command === "codex" ? "Codex" : command === "claude" ? "Claude Code" : command === "pi" ? "Pi" : "command";
   const runtimeNote = usedDefault || !interactiveRuntime ? "" : "\nRuntime: temporary selection (saves only with \"Set as default\")";
@@ -295,7 +294,13 @@ async function main() {
   if (!executable) throw new Error("Usage: agentx exec [options] -- <command>");
 
   const client = command === "codex" || executable === "codex" || command === "pi" || executable === "pi" ? "openai" : "anthropic";
-  const codexCatalogFile = await writeCodexCatalog(catalogModels(config));
+  let codexCatalogFile: string | undefined;
+  if (executable === "codex") {
+    // Codex needs external context/output limits only now; other launch paths
+    // skip both metadata requests and catalog writing entirely.
+    await refreshProviderCatalog({ provider: config.provider, metadata: true });
+    codexCatalogFile = await writeCodexCatalog(catalogModels(config));
+  }
   const launchArgs = executable === "claude" && !commandArgs.includes("--bare") ? ["--bare", ...commandArgs]
     : executable === "codex" ? [...codexLaunchArgs(config, adapter, codexCatalogFile), ...commandArgs]
       : commandArgs;

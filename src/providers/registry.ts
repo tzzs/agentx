@@ -133,36 +133,61 @@ export const providerRegistry: ProviderDefinition[] = [
 export const allModels = providerRegistry.flatMap((provider) => provider.models);
 
 /**
- * Refresh the OpenCode model catalog from the upstream `/v1/models` endpoint,
- * enriching every provider's entries with real limits fetched in parallel
- * from models.dev and — filling whatever models.dev lacks — OpenRouter's
- * public catalog. The three fetches tolerate failure independently: without
- * the list the static fallback stays, and metadata is applied to all
- * providers — including static ones — whenever it arrives.
- * Mutates the registry in place so existing references stay valid.
+ * Refresh provider model catalogs. OpenCode's list is fetched only when the
+ * runtime is unbound or pinned to OpenCode. Metadata is fetched only when a
+ * Codex catalog will be generated; it is applied globally because Codex can
+ * enumerate multiple providers through the local proxy. Each source tolerates
+ * independent failure and mutations stay in place for existing references.
  */
-export async function refreshOpenCodeModels(fetcher: typeof fetch = fetch): Promise<boolean> {
-  try {
-    const [list, sections, openRouter] = await Promise.all([
-      fetcher(`${openCodeBase}/models`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5000) }).then((response) => (response.ok ? response.json() : null)).catch(() => null),
-      fetcher(modelsDevUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) }).then((response) => (response.ok ? response.json() : null)).then(parseModelsDevMetadata).catch((): MetadataSections => new Map()),
-      fetcher(openRouterModelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) }).then((response) => (response.ok ? response.json() : null)).then(parseOpenRouterMetadata).catch((): MetadataMap => new Map()),
-    ]) as [any, MetadataSections, MetadataMap];
+export async function refreshProviderCatalog(
+  options: { provider?: string; metadata?: boolean } = {},
+  fetcher: typeof fetch = fetch,
+): Promise<{ list: boolean; metadata: boolean }> {
+  const needList = !options.provider || options.provider === "opencode";
+  const needMetadata = Boolean(options.metadata);
+  if (!needList && !needMetadata) return { list: false, metadata: false };
+
+  const [list, sections, openRouter] = await Promise.all([
+    needList
+      ? fetcher(`${openCodeBase}/models`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5000) })
+          .then((response) => (response.ok ? response.json() : null)).catch(() => null)
+      : Promise.resolve(null),
+    needMetadata
+      ? fetcher(modelsDevUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) })
+          .then((response) => (response.ok ? response.json() : null)).then(parseModelsDevMetadata)
+          .catch((): MetadataSections => new Map())
+      : Promise.resolve(new Map()),
+    needMetadata
+      ? fetcher(openRouterModelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) })
+          .then((response) => (response.ok ? response.json() : null)).then(parseOpenRouterMetadata)
+          .catch((): MetadataMap => new Map())
+      : Promise.resolve(new Map()),
+  ]) as [any, MetadataSections, MetadataMap];
+
+  let refreshedMetadata = false;
+  if (needMetadata) {
     cachedOpenRouter = openRouter;
     cachedSections = sections;
-    if (sections.size || openRouter.size) applyMetadataToRegistry(sections, openRouter);
-    if (!list) return false;
-    const ids = ((list.data ?? []) as Array<{ id?: string }>).map((item) => item.id).filter((id): id is string => Boolean(id));
-    if (!ids.length) return false;
-    const openCode = providerRegistry.find((provider) => provider.id === "opencode");
-    if (!openCode) return false;
-    openCode.models = openCodeModels(ids, sections.get("opencode"), openRouter);
-    allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
-    return true;
-  } catch {
-    return false;
+    if (sections.size || openRouter.size) {
+      applyMetadataToRegistry(sections, openRouter);
+      refreshedMetadata = true;
+    }
   }
+
+  let refreshedList = false;
+  if (!list) return { list: false, metadata: refreshedMetadata };
+  const ids = ((list.data ?? []) as Array<{ id?: string }>).map((item) => item.id).filter((id): id is string => Boolean(id));
+  if (ids.length) {
+    const openCode = providerRegistry.find((provider) => provider.id === "opencode");
+    if (openCode) {
+      openCode.models = openCodeModels(ids, sections.get("opencode"), openRouter);
+      allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+      refreshedList = true;
+    }
+  }
+  return { list: refreshedList, metadata: refreshedMetadata };
 }
+
 
 export function providerFor(model: string, providerId?: string): ProviderModel {
   const candidates = providerId ? allModels.filter((item) => item.provider === providerId) : allModels;
