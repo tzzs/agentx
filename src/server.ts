@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
 import { fromResponsesResponse, toResponsesRequest } from "./providers.js";
-import { pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream, type StreamUsageOptions } from "./streaming.js";
+import { pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream, type StreamUsageOptions } from "./streaming/index.js";
 import type { ProviderModel } from "./providers/types.js";
 import type { TokenUsage } from "./usage/types.js";
 import { fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, providers, toChatCompletionsRequest, toChatRequest } from "./catalog.js";

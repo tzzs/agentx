@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream } from "../src/streaming.js";
+import { pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream } from "../src/streaming/index.js";
 
 function sink() {
   let text = "";

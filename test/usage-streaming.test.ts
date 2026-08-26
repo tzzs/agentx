@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pipeResponsesStream, pipeChatStreamToResponses, pipeResponsesPassthrough } from "../src/streaming.js";
+import { pipeResponsesStream, pipeChatStreamToResponses, pipeResponsesPassthrough } from "../src/streaming/index.js";
 import type { TokenUsage } from "../src/usage/types.js";
 import { renderUsageStats } from "../src/usage/cli.js";
 import { openAIPricing, anthropicPricing, googlePricing, calculateCost } from "../src/usage/pricing/index.js";
