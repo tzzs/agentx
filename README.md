@@ -103,7 +103,7 @@ When `claude`, `codex`, or `pi` is started on an interactive terminal without `-
 └
 ```
 
-The current runtime is loaded from the saved default. Pick a provider, then a model, then choose to start now or to set the selection as the default. The model picker is searchable: type to filter the list by model id, with ↑/↓ to select and Enter to confirm. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Temporary switches never overwrite the saved default unless you choose "Set as default and start". Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
+The current runtime is loaded from the saved default: a quick-start menu lets you launch immediately or reopen the pickers to change provider / model. The model picker is searchable: type to filter the list by model id, with ↑/↓ to select and Enter to confirm. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Completing the pickers always saves the selection as the client's default, so the next launch starts from it. Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
 
 ## Codex
 
@@ -237,10 +237,10 @@ Runtime resolution for agent clients follows this order:
 1. Explicit CLI options (`--provider`, `--model`, `--api-key`, …)
 2. Saved default runtime for the client (from `runtime.json`)
 3. Environment variables (`AGENTX_PROVIDER`, `AGENTX_MODEL`)
-4. Interactive temporary selection (when no CLI/env/model override is present)
+4. Interactive selection in the launcher (when no CLI/env/model override is present)
 5. The most recent selection, then built-in defaults (`opencode` / `gpt-5.6-luna`)
 
-Only choosing "Set as default and start" in the interactive launcher persists a runtime change; a temporary switch affects the current invocation only.
+Every selection made in the interactive launcher is persisted as the client's default, so the next launch starts from it.
 
 | CLI option | Environment variable | Default | Description |
 | --- | --- | --- | --- |

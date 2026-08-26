@@ -52,9 +52,10 @@ export async function providerEntries(): Promise<ProviderEntry[]> {
  * Interactive runtime launcher.
  *
  * Uses the clack prompt library to present the provider and model pickers in
- * sequence. The user can start with the current runtime, or save it as the
- * default for the client. Temporary switches never overwrite the saved default
- * unless the user picks "Set as default".
+ * sequence. A saved default short-circuits to a quick-start menu; choosing
+ * "Change provider / model" reopens the pickers. Completing the pickers always
+ * persists the selection as the client's default, so the next launch starts
+ * from it.
  */
 export async function runInteractiveLauncher(client: string, initial: RuntimeDecision): Promise<LauncherOutcome> {
   if (!input.isTTY || !output.isTTY) {
@@ -129,13 +130,10 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
   if (isCancel(nextModel)) { cancel("Model selection cancelled"); throw new LaunchCancelledError(0); }
   if (nextModel !== model) { model = nextModel; changed = true; }
 
-  const action = await selectAction(client, provider, model);
-  if (isCancel(action) || action === "cancel") { cancel(`${clientDisplayName(client)} launch cancelled`); throw new LaunchCancelledError(0); }
-  if (action === "default") {
-    madeDefault = true;
-    changed = true;
-    await saveDefaultRuntime(client, { provider, model });
-  }
+  // Reaching the picker flow means the selection is the intended runtime;
+  // persist it as the client's default so the next launch starts from it.
+  madeDefault = true;
+  await saveDefaultRuntime(client, { provider, model });
 
   outro(changed ? `${providerLabel(provider)} / ${model}` : "Ready");
 
@@ -231,19 +229,6 @@ async function selectDefaultAction(provider: string, model: string): Promise<str
     options: [
       { value: "start", label: "Start", hint: runtime },
       { value: "change", label: "Change provider / model" },
-      { value: "cancel", label: "Cancel" },
-    ],
-    initialValue: "start",
-  });
-}
-
-async function selectAction(client: string, provider: string, model: string): Promise<string | symbol> {
-  const runtime = `${providerLabel(provider)} / ${model}`;
-  return select({
-    message: "Start?",
-    options: [
-      { value: "start", label: "Start now", hint: runtime },
-      { value: "default", label: "Set as default and start", hint: `remember ${runtime}` },
       { value: "cancel", label: "Cancel" },
     ],
     initialValue: "start",

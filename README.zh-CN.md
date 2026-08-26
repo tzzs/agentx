@@ -90,7 +90,7 @@ agentx codex --provider openrouter --model anthropic/claude-sonnet-4
 
 Claude Code 的所有模型档位（主模型、opus/sonnet/haiku 别名、子代理）都会固定为所选模型——用户的选择对所有流量生效，包括 Claude Code 通过 haiku 档位发起的小型后台请求（权限检查、主题检测、摘要等）。可选地，通过 `--background-model <id>`（或环境变量 `AGENTX_BACKGROUND_MODEL`）可以仅将这一后台通道路由到同一 Provider 下的其他模型——当主模型是重量级推理模型、其非流式辅助调用超过客户端超时时间时会很实用。凡是指定了目标 Provider 实际提供的模型的请求都会按原样转发；未知模型 id 则回退到配置的模型。
 
-如果在交互式终端启动 `claude`、`codex` 或 `pi` 时没有指定 `--provider`/`--model`，且没有设置 `AGENTX_PROVIDER`/`AGENTX_MODEL`，适配器会显示交互式运行时启动器：先选择 Provider，再选择模型，最后选择「立即启动」或「设为默认并启动」。模型选择支持搜索：输入文字即可按模型 id 过滤列表，↑/↓ 选择、Enter 确认。切换 Provider 会自动为该 Provider 解析模型，并记住每个 Provider 最近使用的模型。临时切换不会覆盖已保存的默认运行时，除非选择「设为默认并启动」。非交互场景会自动使用目录中的默认模型。
+如果在交互式终端启动 `claude`、`codex` 或 `pi` 时没有指定 `--provider`/`--model`，且没有设置 `AGENTX_PROVIDER`/`AGENTX_MODEL`，适配器会显示交互式运行时启动器：存在已保存默认时先显示快捷菜单，可直接启动，或进入「Change provider / model」重新选择。模型选择支持搜索：输入文字即可按模型 id 过滤列表，↑/↓ 选择、Enter 确认。切换 Provider 会自动为该 Provider 解析模型，并记住每个 Provider 最近使用的模型。完成选择后会自动保存为该客户端的默认运行时，下次启动直接从该默认值开始。非交互场景会自动使用目录中的默认模型。
 
 ## Codex 支持
 
@@ -217,7 +217,7 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## 配置
 
-客户端运行时按以下顺序解析：显式 CLI 参数 → 客户端已保存默认值（`runtime.json`）→ `AGENTX_PROVIDER` / `AGENTX_MODEL` → 交互式临时选择 → 最近一次选择，最后回退到内置值（`opencode` / `gpt-5.6-luna`）。
+客户端运行时按以下顺序解析：显式 CLI 参数 → 客户端已保存默认值（`runtime.json`）→ `AGENTX_PROVIDER` / `AGENTX_MODEL` → 交互式启动器选择（自动保存为默认值）→ 最近一次选择，最后回退到内置值（`opencode` / `gpt-5.6-luna`）。
 
 | CLI 参数 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |

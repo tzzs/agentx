@@ -49,19 +49,14 @@ agentx claude
 
 ### 默认配置如何保存
 
-- 在启动界面按 `s`（Set as default）将当前 runtime 保存为该 client 的默认配置。
+- 在启动器中完成 Provider / Model 选择后，选择会自动保存为该 client 的默认配置。
 - 每个 Provider 的最后一次使用的 model 会自动持久化（切换回来时恢复）。
 - 持久化文件：`~/.config/agentx/runtime.json`（不含任何 API key）。
 
-### 临时切换如何工作
+### 快捷启动如何工作
 
-- 用户在启动界面切换 Provider / Model 后直接 Enter 启动，**不会**覆盖默认配置。
-- 启动横幅会提示 `Runtime: temporary selection (saves only with "Set as default")`。
-
-### 永久切换如何工作
-
-- 用户切换 Provider / Model 后按 `s`，可保存为默认配置。
-- 之后 `agentx claude` 直接使用新默认配置启动。
+- 存在已保存默认配置时，启动器先显示快捷菜单：可直接「Start」按默认启动，或「Change provider / model」重新进入选择流程。
+- 进入选择流程后完成的任何选择都会覆盖保存为该 client 的新默认配置，下次启动直接使用新默认值。
 
 ## 2. Architecture Changes
 

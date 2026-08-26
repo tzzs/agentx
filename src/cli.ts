@@ -235,8 +235,6 @@ async function main() {
   }
 
   const opts = options(args);
-  let usedDefault = false;
-  let interactiveRuntime = false;
   if (CLIENT_COMMANDS.has(command)) {
     // The launcher needs the OpenCode catalog when the provider is not yet known.
     await refreshProviderCatalog({ provider: opts.provider ?? process.env.AGENTX_PROVIDER });
@@ -244,8 +242,6 @@ async function main() {
     opts.provider = runtime.provider;
     opts.model = runtime.model;
     if (runtime.apiKey) opts.apiKey = runtime.apiKey;
-    usedDefault = runtime.defaultApplied;
-    interactiveRuntime = runtime.interactive;
     await saveLastModel(runtime.provider, runtime.model);
   } else if (command === "proxy" || command === "exec") {
     const lastSelection = await loadLastSelection();
@@ -276,8 +272,7 @@ async function main() {
   }
   const adapter = await startAdapter(config);
   const clientLabel = command === "codex" ? "Codex" : command === "claude" ? "Claude Code" : command === "pi" ? "Pi" : "command";
-  const runtimeNote = usedDefault || !interactiveRuntime ? "" : "\nRuntime: temporary selection (saves only with \"Set as default\")";
-  console.error(`AgentX\n✓ Client: ${clientLabel}\n✓ Provider: ${config.provider ?? "opencode"}\n✓ Adapter started on ${config.host}:${adapter.port}\n✓ Model: ${config.model}${runtimeNote}`);
+  console.error(`AgentX\n✓ Client: ${clientLabel}\n✓ Provider: ${config.provider ?? "opencode"}\n✓ Adapter started on ${config.host}:${adapter.port}\n✓ Model: ${config.model}`);
   if (config.host !== "127.0.0.1" && config.host !== "localhost") console.error("Warning: Adapter will be accessible from the network.");
 
   if (command === "proxy") {
