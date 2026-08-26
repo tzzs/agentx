@@ -73,6 +73,7 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
   const sessionKeys = new Map<string, string>();
 
   // No saved default for this client: help the user pick a first runtime.
+  let providerChosenViaFirstUse = false;
   if (!initial.defaultApplied && initial.source === "builtin") {
     const configured = providers.filter((entry) => entry.configured);
     // A single configured provider: deduce it automatically instead of asking.
@@ -83,6 +84,7 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
     } else if (configured.length > 1) {
       const chosen = await chooseRuntime(providers, `${clientDisplayName(client)} — AgentX`);
       if (chosen) {
+        providerChosenViaFirstUse = true;
         provider = chosen.provider;
         model = await resolveModelForProvider(provider);
         if (chosen.apiKey) sessionKeys.set(provider, chosen.apiKey);
@@ -94,7 +96,7 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
   const title = `${clientDisplayName(client)} — AgentX`;
   intro(title);
 
-  const nextProvider = await selectProvider(providers, provider);
+  const nextProvider = providerChosenViaFirstUse ? provider : await selectProvider(providers, provider);
   if (isCancel(nextProvider)) { cancel("Provider selection cancelled"); throw new LaunchCancelledError(0); }
   if (nextProvider !== provider) {
     provider = nextProvider;
