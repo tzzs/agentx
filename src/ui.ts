@@ -1,5 +1,5 @@
 import { stdin as input, stdout as output } from "node:process";
-import { autocomplete, cancel, intro, isCancel, outro, select, text } from "@clack/prompts";
+import { autocomplete, cancel, intro, isCancel, log, outro, select, text } from "@clack/prompts";
 import { providerRegistry } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
 import { promptCredential, storedCredential } from "./credentials.js";
@@ -95,6 +95,18 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
 
   const title = `${clientDisplayName(client)} — AgentX`;
   intro(title);
+
+  // When a saved default exists, show a quick-start menu instead of jumping
+  // straight into the full provider / model picker.
+  if (startWithDefault) {
+    log.message(`Using: ${providerLabel(provider)} / ${model}`);
+    const shortcut = await selectDefaultAction(provider, model);
+    if (isCancel(shortcut) || shortcut === "cancel") { cancel(`${clientDisplayName(client)} launch cancelled`); throw new LaunchCancelledError(0); }
+    // "start" → launch immediately with the saved default
+    outro("Ready");
+    return { provider, model, madeDefault: false, defaultApplied: true, changed: false, apiKey: sessionKeys.get(provider) };
+    // "change" → fall through to the full picker flow below
+  }
 
   const nextProvider = providerChosenViaFirstUse ? provider : await selectProvider(providers, provider);
   if (isCancel(nextProvider)) { cancel("Provider selection cancelled"); throw new LaunchCancelledError(0); }
@@ -204,6 +216,23 @@ async function promptCustomModelId(label: string, suggestion: string): Promise<s
   });
   if (isCancel(entered)) return entered;
   return entered.trim() || suggestion;
+}
+
+/**
+ * Quick-start menu shown when a saved default exists. The user can launch
+ * immediately or enter the full reconfiguration flow.
+ */
+async function selectDefaultAction(provider: string, model: string): Promise<string | symbol> {
+  const runtime = `${providerLabel(provider)} / ${model}`;
+  return select({
+    message: "",
+    options: [
+      { value: "start", label: "Start", hint: runtime },
+      { value: "change", label: "Change provider / model" },
+      { value: "cancel", label: "Cancel" },
+    ],
+    initialValue: "start",
+  });
 }
 
 async function selectAction(client: string, provider: string, model: string): Promise<string | symbol> {
