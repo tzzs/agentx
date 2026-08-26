@@ -63,7 +63,7 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 Credentials come exclusively from environment variables: AgentX-specific variables are namespaced with the `AGENTX_` prefix (e.g. `AGENTX_OPENCODE_API_KEY`) so they never clash with same-named variables set for other tools; at runtime the value is injected into upstream requests as the plain key — the prefix exists only in the variable name. A legacy unprefixed variable (such as `OPENCODE_API_KEY`) is still picked up directly if it is already set. Resolution order: `--api-key`, `AGENTX_<PROVIDER>_API_KEY`, legacy `<PROVIDER>_API_KEY`, then an interactive prompt. When you type a key interactively, AgentX asks (default: yes) whether to save it as `AGENTX_<PROVIDER>_API_KEY` in your shell profile; declining keeps it valid for the current session only and prints instructions on how to persist it manually.
 
-Non-secret provider profiles and model mappings are stored in `~/.config/agentx/profiles.json`; the default runtime per client and the last model per provider are stored in `~/.config/agentx/runtime.json`. API keys are never written to either file or to any AgentX-managed storage; with explicit consent they are appended to your shell profile.
+Non-secret runtime selection is stored in a single `~/.config/agentx/runtime.json` file: per-client defaults, the last model per provider, and the most recent selection. API keys are never written to this file or to any AgentX-managed storage; with explicit consent they are appended to your shell profile.
 
 ## Providers
 
@@ -232,13 +232,13 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## Configuration
 
-Config is resolved in this order:
+Runtime resolution for agent clients follows this order:
 
 1. Explicit CLI options (`--provider`, `--model`, `--api-key`, …)
-2. Interactive temporary selection (only when no CLI/env override is present)
-3. Saved default runtime for the client (from `runtime.json`)
-4. Environment variables (`AGENTX_PROVIDER`, `AGENTX_MODEL`)
-5. Built-in defaults (`opencode` / `gpt-5.6-luna`)
+2. Saved default runtime for the client (from `runtime.json`)
+3. Environment variables (`AGENTX_PROVIDER`, `AGENTX_MODEL`)
+4. Interactive temporary selection (when no CLI/env/model override is present)
+5. The most recent selection, then built-in defaults (`opencode` / `gpt-5.6-luna`)
 
 Only choosing "Set as default and start" in the interactive launcher persists a runtime change; a temporary switch affects the current invocation only.
 
@@ -247,7 +247,7 @@ Only choosing "Set as default and start" in the interactive launcher persists a 
 | `--api-key <key>` | `AGENTX_OPENCODE_API_KEY` (legacy `OPENCODE_API_KEY` also accepted) | none | OpenCode credential |
 | `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | Local bind address |
 | `--port <port>` | `AGENTX_PORT` | `8787` | Preferred local port |
-| `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Model or `auto` |
+| `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Concrete upstream model id |
 | `--provider <id>` | `AGENTX_PROVIDER` | none | Upstream provider (`opencode`, `deepseek`, `openrouter`) |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | Reserved for verbose logging |
 | | `AGENTX_USAGE_DIR` | `~/.config/agentx` | Directory for token usage statistics |
@@ -260,7 +260,7 @@ agentx proxy --host 0.0.0.0
 
 ## Models and Routing
 
-The OpenCode model catalog is fetched from `https://opencode.ai/zen/go/v1/models` on startup. When the endpoint cannot be reached, the built-in fallback catalog is used:
+The OpenCode model catalog is fetched only when no provider is selected or the selected provider is `opencode`. When the endpoint cannot be reached, the built-in fallback catalog is used:
 
 | Model | Upstream protocol |
 | --- | --- |
@@ -272,17 +272,17 @@ The OpenCode model catalog is fetched from `https://opencode.ai/zen/go/v1/models
 | `glm-5.3`, `glm-5.2`, `glm-5.1`, `glm-5` | Chat Completions API |
 | `mimo-v2.5-pro`, `mimo-v2.5`, `hy3` | Chat Completions API |
 
-Models returned by the API use the Responses API (`gpt-5.6-luna`) or the Chat Completions API (everything else). `--model auto` still routes between a small set of known models, and the local `/v1/models` endpoint always reflects the current catalog.
+Models returned by the API use the Responses API (`gpt-5.6-luna`) or the Chat Completions API (everything else). The local `/v1/models` endpoint always reflects the current catalog; requests must resolve to a concrete configured model.
 
 The OpenRouter provider accepts any model id (defaulting to `OPENROUTER_MODEL` or `openai/gpt-4o-mini`). In the interactive launcher its model picker includes an "Enter a custom model id…" option, so you can type any OpenRouter model id (e.g. `anthropic/claude-sonnet-4.5`) directly.
 
-Select a model explicitly:
+Select a concrete model explicitly:
 
 ```bash
 agentx claude --model gpt-5.6-luna
 ```
 
-With `--model auto`, short requests use `deepseek-v4-flash`, larger requests use `deepseek-v4-pro`, and requests containing tools or a large context use `gpt-5.6-luna`. This is a deliberately simple first-pass router, not a benchmark-based recommendation system.
+Implicit request-shape routing has been removed. Use an explicit background model when Claude Code's background lane should use another model from the same provider.
 
 ## API Translation
 
@@ -369,7 +369,7 @@ npm run build
 
 The project uses TypeScript, native Node.js `fetch`, Node.js ESM, and the built-in `node:test` runner. Tests are compiled into `dist/test` before execution.
 
-The test suite covers request/response conversion, system instructions, streaming events, tool calls, model routing, chat-completion conversion, token usage adapters, storage, pricing, and the usage query API. Tests do not require an API key or network access.
+The test suite covers request/response conversion, system instructions, streaming events, tool calls, provider routing, chat-completion conversion, token usage adapters, storage, pricing, and the usage query API. Tests do not require an API key or network access.
 
 ## CI and Publishing
 

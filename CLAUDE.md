@@ -43,9 +43,9 @@ npm test          # 先构建，再执行 node --test dist/test/*.test.js
 
 ### 模型路由与提供商注册表
 
-`src/providers/registry.ts` 是提供商和模型的唯一数据来源。每个 `ProviderDefinition` 列出模型、API key 环境变量名和协议。`refreshOpenCodeModels()` 在 CLI 启动时从 `https://opencode.ai/zen/go/v1/models` 拉取 OpenCode 模型目录（失败时回退到静态目录）；`src/catalog.ts` 重新导出扁平化的模型列表以及 `providerFor(model, providerId)` 解析器，该解析器会匹配模型定义，未知则抛出异常。OpenRouter 接受任意模型 id（注册表条目相当于透传）。
+`src/providers/registry.ts` 是提供商和模型的唯一数据来源。每个 `ProviderDefinition` 列出模型、API key 环境变量名和协议。`refreshProviderCatalog()` 按需刷新目录：仅在未绑定 Provider 或绑定 `opencode` 时拉取 OpenCode 模型列表；只有生成 Codex catalog 时才拉取 models.dev / OpenRouter 元数据。`src/catalog.ts` 重新导出扁平化的模型列表以及 `providerFor(model, providerId)` 解析器，该解析器会匹配模型定义，未知则抛出异常。OpenRouter 接受任意模型 id（注册表条目相当于透传）。
 
-`--model auto` 使用 `selectModel`（src/catalog.ts）中的简单基于大小的路由：有工具或上下文较大 → `gpt-5.6-luna`，否则依据消息大小 → `deepseek-v4-pro` / `deepseek-v4-flash`。
+没有隐式 `auto` 路由；运行时必须解析为具体模型。Claude 的后台通道只能通过显式 `backgroundModel` 配置切换。
 
 ### Token 用量统计
 
@@ -57,7 +57,7 @@ npm test          # 先构建，再执行 node --test dist/test/*.test.js
 
 入口 `src/cli.ts` 解析选项（CLI 参数优先于 `AGENTX_*` 环境变量，通过 `loadConfig`），解析 API key，保存非机密 profile，启动适配器（`src/server.ts`），然后用指向本地端点的 `ANTHROPIC_*`（Claude）或 `OPENAI_*`（Codex/Pi）环境变量启动客户端（`src/process.ts`）。`src/server.ts` 是无状态的——每个请求都携带完整对话，服务端不持久化任何内容。
 
-凭据完全来自环境变量（在 `src/credentials.ts` 中解析）：`--api-key` → `AGENTX_<PROVIDER>_API_KEY`（带前缀的规范变量）→ 旧的无前缀变量（如 `OPENCODE_API_KEY`，直接兼容使用）→ 交互式提示（仅当前会话有效）。AgentX 自身不持久化任何密钥；带前缀的命名可避免与用户为其他工具设置的同名变量冲突。API key 绝不会写入 profiles 文件。
+凭据完全来自环境变量（在 `src/credentials.ts` 中解析）：`--api-key` → `AGENTX_<PROVIDER>_API_KEY`（带前缀的规范变量）→ 旧的无前缀变量（如 `OPENCODE_API_KEY`，直接兼容使用）→ 交互式提示（仅当前会话有效）。AgentX 自身不持久化任何密钥；带前缀的命名可避免与用户为其他工具设置的同名变量冲突。非敏感运行时状态只保存在 `runtime.json`；API key 绝不会写入任何 AgentX 状态文件。
 
 ## 关键约束
 
