@@ -91,7 +91,7 @@ test("usage endpoints require no auth and return empty aggregates for no records
   } finally { await adapter.close(); }
 });
 
-test("resolves model auto on /v1/responses against the pinned provider", async () => {
+test("honors only provider-compatible requested models", async () => {
   const store = await createUsageStore({ backend: "memory" });
   const originalFetch = globalThis.fetch;
   let upstreamModel: string | undefined;
@@ -99,16 +99,12 @@ test("resolves model auto on /v1/responses against the pinned provider", async (
     const path = typeof input === "string" ? input : input.url;
     if (path.includes("127.0.0.1") || !path.includes("/responses")) return originalFetch(input, init);
     upstreamModel = JSON.parse(init.body).model;
-    return new Response(JSON.stringify({ id: "r1", output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ id: "r1", output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }), { status: 200 });
   }) as typeof fetch;
-  const autoConfig = { ...config, model: "auto" };
-  const adapter = await startAdapter(autoConfig, { store });
+  const adapter = await startAdapter(config, { store });
   try {
-    // tools present routes auto to ranked[0]; a small tool-less body would
-    // legitimately pick deepseek-v4-flash instead.
-    const result = await call(adapter, "/v1/responses", "POST", { model: "auto", input: "Hi", tools: [{ type: "function", name: "ping", description: "reply", parameters: { type: "object", properties: {} } }] }, { authorization: `Bearer ${adapter.token}` });
+    const result = await call(adapter, "/v1/responses", "POST", { model: "auto", input: "Hi" }, { authorization: `Bearer ${adapter.token}` });
     assert.equal(result.status, 200);
-    // auto must resolve to a model the pinned provider actually serves
     assert.equal(upstreamModel, "gpt-5.6-luna");
   } finally {
     globalThis.fetch = originalFetch;

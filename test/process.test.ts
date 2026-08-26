@@ -30,10 +30,9 @@ test("points Codex at the local adapter via -c provider overrides", () => {
 
 test("attaches the generated model catalog when one was written", () => {
   const adapter = { port: 8788, token: "tok" } as any;
-  const config = { host: "127.0.0.1", port: 8787, model: "auto", apiKey: "k", logLevel: "info" };
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info" };
   const args = codexLaunchArgs(config as any, adapter, "/tmp/catalog/models.json");
-  assert.deepEqual(args.slice(10), ["-c", "model_catalog_json='/tmp/catalog/models.json'"]);
-  assert.ok(!args.includes("-m"));
+  assert.deepEqual(args.slice(10), ["-c", "model_catalog_json='/tmp/catalog/models.json'", "-m", "gpt-5.6-luna"]);
 });
 
 test("keeps every Claude Code tier on the selected model by default", async () => {

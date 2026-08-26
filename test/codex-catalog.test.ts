@@ -74,11 +74,15 @@ test("catalogModels appends a custom OpenRouter id so Codex resolves its metadat
   assert.equal(custom.max_output_tokens, 16384);
 });
 
-test("catalogModels keeps the registry list for known, auto, and unknown providers", () => {
+test("catalogModels scopes entries to the selected provider", () => {
   const base: ProviderModel[] = [
     { provider: "deepseek", model: "deepseek-v4-pro", protocol: "chat-completions", endpoint: "https://x" },
+    { provider: "opencode", model: "gpt-5.6-luna", protocol: "responses", endpoint: "https://x" },
   ];
-  assert.equal(catalogModels({ provider: "deepseek", model: "deepseek-v4-pro" }, base), base);
-  assert.equal(catalogModels({ provider: "deepseek", model: "auto" }, base), base);
-  assert.equal(catalogModels({ provider: "nonexistent", model: "mystery" }, base), base);
+  assert.deepEqual(
+    catalogModels({ provider: "deepseek", model: "deepseek-v4-pro" }, base),
+    [base[0]],
+  );
+  // Unknown providers keep an empty scope instead of leaking other providers.
+  assert.deepEqual(catalogModels({ provider: "nonexistent", model: "mystery" }, base), []);
 });

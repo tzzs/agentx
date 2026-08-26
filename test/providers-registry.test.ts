@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { apiKeyFor, providerFor, providerRegistry, refreshOpenCodeModels, allModels } from "../src/providers/registry.js";
+import { apiKeyFor, providerFor, providerRegistry, refreshProviderCatalog, allModels } from "../src/providers/registry.js";
 
 test("resolves OpenCode models through the provider registry", () => {
   const provider = providerFor("gpt-5.6-luna");
@@ -40,9 +40,9 @@ test("refreshes the OpenCode model catalog and enriches limits from the public r
     assert.match(String(input), /opencode\.ai\/zen\/go\/v1\/models/);
     return new Response(JSON.stringify({ data: [{ id: "nova-1" }, { id: "gpt-5.6-luna" }, { id: "nova-2" }] }), { status: 200, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
-  const refreshed = await refreshOpenCodeModels(fetcher);
+  const refreshed = await refreshProviderCatalog({ provider: "opencode", metadata: true }, fetcher);
   try {
-    assert.equal(refreshed, true);
+    assert.equal(refreshed.list, true);
     const opencode = providerRegistry.find((provider) => provider.id === "opencode")!;
     assert.deepEqual(opencode.models.map((item) => item.model), ["gpt-5.6-luna", "nova-1", "nova-2"]);
     assert.equal(providerFor("nova-1").protocol, "chat-completions");
@@ -71,9 +71,9 @@ test("keeps working when only the metadata source is unreachable", async () => {
     if (/models\.dev/.test(String(input))) throw new Error("offline");
     return new Response(JSON.stringify({ data: [{ id: "solo-model" }] }), { status: 200 });
   }) as typeof fetch;
-  const refreshed = await refreshOpenCodeModels(fetcher);
+  const refreshed = await refreshProviderCatalog({ provider: "opencode", metadata: true }, fetcher);
   try {
-    assert.equal(refreshed, true);
+    assert.equal(refreshed.list, true);
     assert.equal(providerFor("solo-model").contextWindow, undefined);
   } finally {
     providerRegistry.find((provider) => provider.id === "opencode")!.models = original;
@@ -89,9 +89,9 @@ test("applies metadata to static providers even when the list refresh fails", as
     }
     return new Response(JSON.stringify({ error: "down" }), { status: 500 });
   }) as typeof fetch;
-  const refreshed = await refreshOpenCodeModels(fetcher);
+  const refreshed = await refreshProviderCatalog({ provider: "opencode", metadata: true }, fetcher);
   try {
-    assert.equal(refreshed, false);
+    assert.equal(refreshed.list, false);
     assert.equal(providerFor("deepseek-v4-pro", "deepseek").contextWindow, 986000);
   } finally {
     providerRegistry.find((provider) => provider.id === "deepseek")!.models = originalDeepseek;
@@ -102,7 +102,7 @@ test("applies metadata to static providers even when the list refresh fails", as
 test("keeps the fallback catalog when the upstream refresh fails", async () => {
   const before = providerRegistry.find((provider) => provider.id === "opencode")!.models.map((item) => item.model);
   const fetcher = (async () => new Response(JSON.stringify({ error: "down" }), { status: 500 })) as typeof fetch;
-  assert.equal(await refreshOpenCodeModels(fetcher), false);
+  assert.equal((await refreshProviderCatalog({ provider: "opencode", metadata: true }, fetcher)).list, false);
   assert.deepEqual(providerRegistry.find((provider) => provider.id === "opencode")!.models.map((item) => item.model), before);
 });
 
@@ -126,9 +126,9 @@ test("backfills models missing from models.dev from the OpenRouter catalog", asy
     if (/models\.dev/.test(url)) return new Response(JSON.stringify({}), { status: 200 });
     return new Response(JSON.stringify({ data: [{ id: "glm-5.3" }, { id: "kimi-k3" }, { id: "big" }] }), { status: 200 });
   }) as typeof fetch;
-  const refreshed = await refreshOpenCodeModels(fetcher);
+  const refreshed = await refreshProviderCatalog({ provider: "opencode", metadata: true }, fetcher);
   try {
-    assert.equal(refreshed, true);
+    assert.equal(refreshed.list, true);
     // Suffix match against "vendor/model" ids; non-text/image modalities drop; invalid numbers skip.
     assert.equal(providerFor("glm-5.3").contextWindow, 205000);
     assert.equal(providerFor("glm-5.3").maxOutputTokens, 131072);
@@ -153,9 +153,9 @@ test("prefers models.dev metadata over OpenRouter field by field", async () => {
     }
     return new Response(JSON.stringify({ data: [{ id: "nova-1" }] }), { status: 200 });
   }) as typeof fetch;
-  const refreshed = await refreshOpenCodeModels(fetcher);
+  const refreshed = await refreshProviderCatalog({ provider: "opencode", metadata: true }, fetcher);
   try {
-    assert.equal(refreshed, true);
+    assert.equal(refreshed.list, true);
     // models.dev wins where present; only its gaps fall through to OpenRouter.
     assert.equal(providerFor("nova-1").contextWindow, 111111);
     assert.equal(providerFor("nova-1").maxOutputTokens, 4096);
@@ -175,9 +175,9 @@ test("keeps working when only the OpenRouter source is unreachable", async () =>
     }
     return new Response(JSON.stringify({ data: [{ id: "solo-model" }] }), { status: 200 });
   }) as typeof fetch;
-  const refreshed = await refreshOpenCodeModels(fetcher);
+  const refreshed = await refreshProviderCatalog({ provider: "opencode", metadata: true }, fetcher);
   try {
-    assert.equal(refreshed, true);
+    assert.equal(refreshed.list, true);
     assert.equal(providerFor("deepseek-v4-flash", "deepseek").contextWindow, 256000);
     assert.equal(providerFor("solo-model").contextWindow, undefined);
   } finally {
@@ -199,9 +199,9 @@ test("skips OpenRouter backfill when a suffix match is ambiguous", async () => {
     if (/models\.dev/.test(url)) return new Response(JSON.stringify({}), { status: 200 });
     return new Response(JSON.stringify({ data: [{ id: "twin" }, { id: "unique" }] }), { status: 200 });
   }) as typeof fetch;
-  const refreshed = await refreshOpenCodeModels(fetcher);
+  const refreshed = await refreshProviderCatalog({ provider: "opencode", metadata: true }, fetcher);
   try {
-    assert.equal(refreshed, true);
+    assert.equal(refreshed.list, true);
     assert.equal(providerFor("twin").contextWindow, undefined);
     assert.equal(providerFor("unique").contextWindow, 3000);
   } finally {

@@ -35,9 +35,9 @@ test("model availability respects the provider namespace", () => {
   assert.equal(modelAvailable("openrouter", "auto"), true);
 });
 
-test("auto is always available", () => {
-  assert.equal(modelAvailable("deepseek", "auto"), true);
-  assert.equal(modelAvailable("opencode", "auto"), true);
+test("auto is not an available concrete model", () => {
+  assert.equal(modelAvailable("deepseek", "auto"), false);
+  assert.equal(modelAvailable("opencode", "auto"), false);
 });
 
 test("only openrouter accepts custom model ids", () => {
@@ -66,9 +66,9 @@ test("keeps a preferred model when it belongs to the provider", async () => {
   assert.equal(await resolveModelForProvider("deepseek", "deepseek-v4-pro"), "deepseek-v4-pro");
 });
 
-test("auto model preference is preserved through resolution", async () => {
+test("auto preference resolves to a concrete provider model", async () => {
   await saveLastModel("deepseek", "deepseek-v4-pro");
-  assert.equal(await resolveModelForProvider("deepseek", "auto"), "auto");
+  assert.equal(await resolveModelForProvider("deepseek", "auto"), "deepseek-v4-pro");
 });
 
 test("provider switch to an unavailable model re-selects automatically", async () => {
