@@ -1,5 +1,6 @@
-import { allModels, providerById, providerRegistry } from "./providers/registry.js";
 import { loadDefaultRuntime, loadLastModel } from "./runtime.js";
+
+import { allModels, providerById } from "./providers/registry.js";
 
 export type RuntimeSource = "cli" | "env" | "default" | "interactive" | "builtin";
 
@@ -37,14 +38,13 @@ export function providerAcceptsCustomModels(providerId: string): boolean {
 
 /** True when the model id is usable against the provider (or is the auto marker). */
 export function modelAvailable(providerId: string, model: string): boolean {
-  if (model === "auto") return true;
   if (providerAcceptsCustomModels(providerId)) return true;
   return allModels.some((item) => item.provider === providerId && item.model === model);
 }
 
 /**
  * Resolve the model to use with a provider. Preferences, in order:
- *   1. an explicitly preferred model that belongs to the provider ("auto" passes through)
+ *   1. an explicitly preferred model that belongs to the provider
  *   2. the provider's remembered last model
  *   3. the provider's default model
  */

@@ -5,9 +5,8 @@ import { fromResponsesResponse, toResponsesRequest } from "./providers.js";
 import { pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream, type StreamUsageOptions } from "./streaming.js";
 import type { ProviderModel } from "./providers/types.js";
 import type { TokenUsage } from "./usage/types.js";
-import { fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, providers, selectModel, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
+import { fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, providers, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
 import { apiKeyFor, providerDisplayName } from "./providers/registry.js";
-import { defaultModelFor } from "./selection.js";
 import { extractUsage } from "./providers/usage/index.js";
 import { TokenUsageCollector } from "./usage/collector.js";
 import { defaultUsageStore } from "./usage/storage.js";
@@ -106,14 +105,14 @@ async function proxyRequest(
   request: IncomingMessage,
   response: ServerResponse,
   token: string,
-  route: { defaultModel: (input: any) => string; payload: (input: any, model: string) => unknown },
+  route: { fallbackModel: string; payload: (input: any, model: string) => unknown },
 ): Promise<{ input: any; model: string; watched: Response } | undefined> {
   if (!authorized(request, token)) { json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } }); return undefined; }
   try {
     const input = JSON.parse(await body(request));
     // The endpoint decides which model id counts as "configured" (/v1/responses
     // honors the client-echoed input.model; /v1/messages only config/env).
-    const model = selectModel(input, route.defaultModel(input), config.provider);
+    const model = honorRequestedModel(input.model, route.fallbackModel, config.provider);
     debug(config, `POST ${request.url} model=${model}`);
     const provider = providerFor(model, config.provider); const apiKey = apiKeyFor(provider, config.apiKey);
     const payload = route.payload(input, model);
@@ -132,9 +131,7 @@ async function proxyRequest(
 }
 
 export async function startAdapter(config: Config, options: AdapterOptions = {}): Promise<Adapter> {
-  // "auto" defers model resolution to per-request routing; validate against
-  // the provider's default model instead so startup still verifies the key.
-  const initialModel = config.model === "auto" ? defaultModelFor(config.provider ?? "opencode") : config.model;
+  const initialModel = config.model;
   const initialProvider = providerFor(initialModel, config.provider); const initialApiKey = apiKeyFor(initialProvider, config.apiKey);
   if (!initialApiKey) throw new Error(`API key not found for provider "${initialProvider.provider}". Set the provider API key environment variable or use --api-key <key>.`);
   // Claude Code validates the key shape before sending a request. This is still
@@ -171,7 +168,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     if (pathname === "/v1/responses" && request.method === "POST") {
       // Honor auto routing here too: Codex echoes OPENAI_MODEL=auto back.
       const proxied = await proxyRequest(config, request, response, token, {
-        defaultModel: (input) => honorRequestedModel(input.model, config.model, config.provider),
+        fallbackModel: config.model,
         payload: (input, model) => {
           const provider = providerFor(model, config.provider);
           return provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model);
@@ -192,7 +189,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
       // Claude Code pins every tier to the configured model, but its haiku
       // background lane may carry a faster sibling (see clientEnvironment);
       // honor such requests instead of forcing the main model.
-      defaultModel: (input) => honorRequestedModel(input.model, config.model, config.provider),
+      fallbackModel: config.model,
       payload: (input, model) => {
         const provider = providerFor(model, config.provider);
         return provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model);

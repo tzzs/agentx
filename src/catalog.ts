@@ -19,23 +19,6 @@ export function honorRequestedModel(requested: unknown, fallback: string, provid
   if (typeof requested !== "string" || !requested || requested === fallback) return fallback;
   try { const match = resolveProvider(requested, providerId); return match.model === requested ? requested : fallback; } catch { return fallback; }
 }
-/**
- * Resolve the effective model. A fixed configuration wins; "auto" routes by
- * request shape but only within the models of the target provider so a pinned
- * provider never receives a model id it does not serve.
- */
-export function selectModel(request: AnthropicRequest, configured: string, providerId?: string): string {
-  if (configured !== "auto") return configured;
-  // Responses-protocol bodies carry `input` instead of `messages`; either way
-  // the JSON length is only a rough request-size signal.
-  const size = JSON.stringify(request.messages ?? (request as any).input ?? "").length;
-  const ranked = ["gpt-5.6-luna", "deepseek-v4-pro", "deepseek-v4-flash"];
-  const wanted = request.tools?.length || size > 10000 ? ranked[0] : size > 2000 ? ranked[1] : ranked[2];
-  if (!providerId) return wanted;
-  const candidates = allModels.filter((item) => item.provider === providerId).map((item) => item.model);
-  return candidates.includes(wanted) ? wanted : candidates[0] ?? wanted;
-}
-
 /** Sampling knobs shared by both upstream protocols (undefined drops the key). */
 function samplingParams(input: Record<string, any>): Record<string, unknown> {
   return {

@@ -80,18 +80,17 @@ export function buildCodexCatalog(models: ProviderModel[] = allModels): string {
 }
 
 /**
- * Catalog input: every registry model plus the selected runtime when it is a
- * custom (non-registry) id — e.g. an arbitrary OpenRouter model. Without the
- * extra entry Codex cannot resolve the id and falls back to its warning about
- * degraded metadata. The "auto" marker and unknown providers keep the plain
- * registry list.
+ * Catalog input for one bound provider. The selected custom id is appended so
+ * Codex can resolve it; models owned by other providers are intentionally
+ * omitted because request routing rejects cross-provider ids.
  */
-export function catalogModels(selected: Pick<Config, "provider" | "model">, base: ProviderModel[] = allModels): ProviderModel[] {
-  if (selected.model === "auto" || base.some((model) => model.model === selected.model)) return base;
+export function catalogModels(selected: Pick<Config, "provider"> & { model: string }, base: ProviderModel[] = allModels): ProviderModel[] {
+  const scoped = base.filter((model) => !selected.provider || model.provider === selected.provider);
+  if (!selected.model || scoped.some((model) => model.model === selected.model)) return scoped;
   try {
-    return [...base, withExternalMetadata(providerFor(selected.model, selected.provider))];
+    return [...scoped, withExternalMetadata(providerFor(selected.model, selected.provider))];
   } catch {
-    return base;
+    return scoped;
   }
 }
 

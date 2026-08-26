@@ -47,7 +47,7 @@ export function codexLaunchArgs(config: Config, adapter: Adapter, catalogPath?: 
     "-c", "model_providers.agentx.wire_api='responses'",
     "-c", "model_providers.agentx.env_key='OPENAI_API_KEY'",
     ...(catalogPath ? ["-c", `model_catalog_json='${catalogPath}'`] : []),
-    ...(config.model === "auto" ? [] : ["-m", config.model]),
+    "-m", config.model,
   ];
 }
 
