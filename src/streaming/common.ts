@@ -16,6 +16,7 @@ export interface StreamUsageOptions {
   protocol: "responses" | "chat-completions";
   sessionId?: string;
   onUsage?: (usage: TokenUsage) => void;
+  onDiagnostic?: (message: string) => void;
 }
 
 /**
@@ -63,7 +64,11 @@ export async function drain(reader: ReadableStreamDefaultReader<Uint8Array>, con
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() ?? "";
     lines.forEach(consume);
-    if (done) return;
+    if (done) {
+      // A valid SSE event may end at EOF without a trailing newline.
+      if (buffer) consume(buffer);
+      return;
+    }
   }
 }
 

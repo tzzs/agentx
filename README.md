@@ -286,6 +286,8 @@ agentx claude --model gpt-5.6-luna
 
 Implicit request-shape routing has been removed. Use an explicit background model when Claude Code's background lane should use another model from the same provider.
 
+Claude Code assumes an unrecognized model has its default ~200k-token context window and auto-compacts well before that. DeepSeek's `deepseek-v4-flash`/`deepseek-v4-pro` (and their `[1m]` variants) actually offer a much larger window, so the `claude` launcher declares `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for them automatically (unless you already set those variables yourself). Without this, long DeepSeek sessions were auto-compacted far earlier than necessary, silently dropping a large fraction of the conversation.
+
 ## API Translation
 
 The adapter does not persist conversation history. Claude Code sends the complete conversation on each request; the only local persistence is aggregated token usage statistics (see [Token Usage Statistics](#token-usage-statistics)).
@@ -297,7 +299,11 @@ Supported translation areas include:
 - Anthropic text messages and response text
 - Anthropic streaming events to Anthropic SSE events
 - Anthropic `tools`, `tool_use`, and `tool_result` to function tools and function call outputs
+- Anthropic `thinking` / `output_config.effort` to the upstream's reasoning controls (DeepSeek's `thinking`/`reasoning_effort` over Chat Completions, or `reasoning.effort` over the Responses API)
+- Anthropic `tool_choice` to the upstream's Chat Completions or Responses tool-choice shape
 - Responses and Chat Completions usage data to Anthropic usage fields
+
+For DeepSeek specifically, its thinking mode requires every assistant turn's `reasoning_content` to be echoed back anchored to the same message as the tool call it led to; the adapter keeps an assistant message's text, reasoning, and tool calls together instead of splitting them across separate messages, and only forwards `reasoning_content` for DeepSeek (other Chat Completions upstreams do not expect that field). An abnormal upstream stop — `content_filter`, `insufficient_system_resource`, or a stream that ends without either a `finish_reason` or `[DONE]` — surfaces as an error instead of silently reading back as a normal `end_turn`.
 
 The adapter translates tool protocols only. It does not execute tools and does not persist prompts, tool arguments, or conversation state.
 

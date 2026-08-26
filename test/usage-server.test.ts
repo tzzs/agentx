@@ -111,3 +111,53 @@ test("honors only provider-compatible requested models", async () => {
     await adapter.close();
   }
 });
+
+test("surfaces a DeepSeek insufficient_system_resource stop as a 502, not a 200 end_turn", async () => {
+  const store = await createUsageStore({ backend: "memory" });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const path = typeof input === "string" ? input : input.url;
+    if (!path.includes("api.deepseek.com")) return originalFetch(input, init);
+    return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "Next I will edit the file" }, finish_reason: "insufficient_system_resource" }] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  const deepSeekConfig = { ...config, provider: "deepseek", model: "deepseek-v4-flash" };
+  const adapter = await startAdapter(deepSeekConfig, { store });
+  try {
+    const message = await call(adapter, "/v1/messages", "POST", { model: "deepseek-v4-flash", messages: [{ role: "user", content: "Hi" }] }, { authorization: `Bearer ${adapter.token}`, "x-api-key": adapter.token });
+    assert.equal(message.status, 502);
+    assert.match(message.body.error.message, /insufficient/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await adapter.close();
+  }
+});
+
+test("surfaces a DeepSeek stream that drops mid-turn as an error event, not a 200 end_turn", async () => {
+  const store = await createUsageStore({ backend: "memory" });
+  const originalFetch = globalThis.fetch;
+  const stream = new ReadableStream({
+    start(controller) {
+      // The upstream stops after partial content with neither a finish_reason
+      // chunk nor [DONE] — a dropped connection, not a completed turn.
+      controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Next I will edit the file"}}]}\n\n'));
+      controller.close();
+    }
+  });
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const path = typeof input === "string" ? input : input.url;
+    if (!path.includes("api.deepseek.com")) return originalFetch(input, init);
+    return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+  }) as typeof fetch;
+  const deepSeekConfig = { ...config, provider: "deepseek", model: "deepseek-v4-flash" };
+  const adapter = await startAdapter(deepSeekConfig, { store });
+  try {
+    const message = await call(adapter, "/v1/messages", "POST", { model: "deepseek-v4-flash", messages: [{ role: "user", content: "Hi" }], stream: true }, { authorization: `Bearer ${adapter.token}`, "x-api-key": adapter.token });
+    assert.equal(message.status, 200);
+    assert.match(message.text, /event: error/);
+    assert.doesNotMatch(message.text, /"stop_reason":"end_turn"/);
+    assert.doesNotMatch(message.text, /event: message_stop/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await adapter.close();
+  }
+});

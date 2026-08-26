@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, toChatCompletionsRequest, toChatRequest } from "../src/catalog.js";
+import { chatResponseFailure, fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, toChatCompletionsRequest, toChatRequest } from "../src/catalog.js";
 import { toResponsesRequest } from "../src/providers.js";
 test("routes DeepSeek models through chat completions", () => {
   assert.equal(providerFor("deepseek-v4-flash").protocol, "chat-completions");
@@ -39,15 +39,30 @@ test("omits the tools field when no tool converts for chat upstreams", () => {
   assert.equal("tools" in result, false);
 });
 test("converts Anthropic tool use and tool result to chat completions", () => {
+  // Text and the tool call it led to must stay one assistant message; splitting
+  // them (the old behavior) loses the DeepSeek reasoning_content anchor below.
   const result = toChatRequest({ messages: [
     { role: "assistant", content: [{ type: "text", text: "Running" }, { type: "tool_use", id: "call-1", name: "bash", input: { command: "pwd" } }] },
     { role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", content: "/tmp" }] }
   ] }, "deepseek-v4-flash") as any;
   assert.deepEqual(result.messages, [
-    { role: "assistant", content: "Running" },
-    { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: "bash", arguments: '{"command":"pwd"}' } }] },
+    { role: "assistant", content: "Running", tool_calls: [{ id: "call-1", type: "function", function: { name: "bash", arguments: '{"command":"pwd"}' } }] },
     { role: "tool", tool_call_id: "call-1", content: "/tmp" }
   ]);
+});
+test("keeps DeepSeek reasoning_content anchored to the message with its tool call", () => {
+  const result = toChatRequest({ messages: [
+    { role: "assistant", content: [{ type: "thinking", thinking: "check cwd first" }, { type: "tool_use", id: "call-1", name: "bash", input: { command: "pwd" } }] },
+  ] }, "deepseek-v4-flash") as any;
+  assert.deepEqual(result.messages, [
+    { role: "assistant", content: null, reasoning_content: "check cwd first", tool_calls: [{ id: "call-1", type: "function", function: { name: "bash", arguments: '{"command":"pwd"}' } }] },
+  ]);
+});
+test("drops thinking blocks for non-DeepSeek chat completions providers", () => {
+  const result = toChatRequest({ messages: [
+    { role: "assistant", content: [{ type: "thinking", thinking: "internal" }, { type: "text", text: "Hi" }] },
+  ] }, "ox-alpha-free") as any;
+  assert.deepEqual(result.messages, [{ role: "assistant", content: "Hi" }]);
 });
 test("converts system and plain text messages for chat completions", () => {
   const result = toChatRequest({ system: [{ type: "text", text: "Be brief" }], messages: [{ role: "user", content: "Hi" }] }, "deepseek-v4-pro") as any;
@@ -115,4 +130,23 @@ test("falls back to the configured model for unknown or foreign requests", () =>
 });
 test("keeps OpenRouter passthrough semantics for arbitrary ids", () => {
   assert.equal(honorRequestedModel("zoo/any-model", "openai/gpt-4o-mini", "openrouter"), "zoo/any-model");
+});
+test("treats normal finish reasons as no failure", () => {
+  for (const reason of [undefined, null, "stop", "length", "tool_calls", "function_call"]) {
+    assert.equal(chatResponseFailure({ choices: [{ finish_reason: reason }] }), undefined);
+  }
+});
+test("flags DeepSeek's insufficient_system_resource and content_filter as failures, not a silent end_turn", () => {
+  assert.match(chatResponseFailure({ choices: [{ finish_reason: "insufficient_system_resource" }] }) ?? "", /insufficient/);
+  assert.match(chatResponseFailure({ choices: [{ finish_reason: "content_filter" }] }) ?? "", /filtered/);
+  assert.match(chatResponseFailure({ choices: [{ finish_reason: "weird_new_reason" }] }) ?? "", /weird_new_reason/);
+});
+test("gates DeepSeek thinking and reasoning_effort behind the provider/model check", () => {
+  const deepseek = toChatRequest({ thinking: { type: "disabled" }, messages: [{ role: "user", content: "Hi" }] } as any, "deepseek-v4-flash") as any;
+  assert.deepEqual(deepseek.thinking, { type: "disabled" });
+  const other = toChatRequest({ thinking: { type: "disabled" }, messages: [{ role: "user", content: "Hi" }] } as any, "ox-alpha-free") as any;
+  assert.equal("thinking" in other, false);
+  // tool_choice is a standard Chat Completions field; it applies regardless of provider.
+  const toolChoice = toChatRequest({ tool_choice: "any", messages: [{ role: "user", content: "Hi" }] } as any, "ox-alpha-free") as any;
+  assert.equal(toolChoice.tool_choice, "required");
 });

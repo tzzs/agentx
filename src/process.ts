@@ -19,6 +19,20 @@ export function backgroundModel(config: Config): string {
   } catch { return config.model; }
 }
 
+function supportsDeepSeekLongContext(model: string): boolean {
+  return /(?:^|\/)deepseek-v4-(?:flash|pro)(?:\[1m\])?$/.test(model);
+}
+
+/** Claude Code does not know custom DeepSeek ids, so declare their real window. */
+function claudeContextEnvironment(config: Config, inherited: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const models = [config.model, backgroundModel(config)];
+  if (!models.some(supportsDeepSeekLongContext)) return {};
+  return {
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS: inherited.CLAUDE_CODE_MAX_CONTEXT_TOKENS ?? "1000000",
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: inherited.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "786432",
+  };
+}
+
 export function clientEnvironment(config: Config, adapter: Adapter, client: "anthropic" | "openai"): NodeJS.ProcessEnv {
   const baseUrl = `http://${config.host}:${adapter.port}`;
   const inherited = { ...process.env };
@@ -27,7 +41,7 @@ export function clientEnvironment(config: Config, adapter: Adapter, client: "ant
   const auxModel = client === "anthropic" ? backgroundModel(config) : config.model;
   return client === "openai"
     ? { ...inherited, OPENAI_BASE_URL: `${baseUrl}/v1`, OPENAI_API_KEY: adapter.token, OPENAI_MODEL: config.model }
-    : { ...inherited, AGENTX_MODEL: config.model, ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: adapter.token, ANTHROPIC_MODEL: config.model, ANTHROPIC_DEFAULT_OPUS_MODEL: config.model, ANTHROPIC_DEFAULT_SONNET_MODEL: config.model, ANTHROPIC_DEFAULT_HAIKU_MODEL: auxModel, ANTHROPIC_SMALL_FAST_MODEL: auxModel, CLAUDE_CODE_SUBAGENT_MODEL: config.model };
+    : { ...inherited, ...claudeContextEnvironment(config, inherited), AGENTX_MODEL: config.model, ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: adapter.token, ANTHROPIC_MODEL: config.model, ANTHROPIC_DEFAULT_OPUS_MODEL: config.model, ANTHROPIC_DEFAULT_SONNET_MODEL: config.model, ANTHROPIC_DEFAULT_HAIKU_MODEL: auxModel, ANTHROPIC_SMALL_FAST_MODEL: auxModel, CLAUDE_CODE_SUBAGENT_MODEL: config.model };
 }
 
 /**

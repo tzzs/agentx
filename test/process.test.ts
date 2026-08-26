@@ -48,6 +48,48 @@ test("keeps every Claude Code tier on the selected model by default", async () =
   assert.equal(env.CLAUDE_CODE_SUBAGENT_MODEL, "gpt-5.6-luna");
 });
 
+test("declares DeepSeek's real context window so Claude Code stops auto-compacting at 200k", () => {
+  const adapter = { port: 8788, token: "local-token" } as any;
+  const config = { host: "127.0.0.1", port: 8787, model: "deepseek-v4-flash", apiKey: "k", logLevel: "info" };
+  const env = clientEnvironment(config as any, adapter, "anthropic");
+  assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "1000000");
+  assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, "786432");
+});
+test("leaves Claude Code's own context window management alone for non-DeepSeek models", () => {
+  const adapter = { port: 8788, token: "local-token" } as any;
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info" };
+  const env = clientEnvironment(config as any, adapter, "anthropic");
+  assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined);
+  assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, undefined);
+});
+test("declares the DeepSeek context window when only the background tier uses it", () => {
+  const adapter = { port: 8788, token: "local-token" } as any;
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", backgroundModel: "deepseek-v4-pro" };
+  const env = clientEnvironment(config as any, adapter, "anthropic");
+  assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "1000000");
+});
+test("never sets the DeepSeek context window for the Codex/OpenAI client", () => {
+  const adapter = { port: 8788, token: "local-token" } as any;
+  const config = { host: "127.0.0.1", port: 8787, model: "deepseek-v4-flash", apiKey: "k", logLevel: "info" };
+  const env = clientEnvironment(config as any, adapter, "openai");
+  assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined);
+});
+test("keeps an operator-set context window instead of overriding it", () => {
+  const previous = { max: process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, window: process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW };
+  process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "500000";
+  delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+  try {
+    const adapter = { port: 8788, token: "local-token" } as any;
+    const config = { host: "127.0.0.1", port: 8787, model: "deepseek-v4-flash", apiKey: "k", logLevel: "info" };
+    const env = clientEnvironment(config as any, adapter, "anthropic");
+    assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "500000");
+    assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, "786432");
+  } finally {
+    if (previous.max === undefined) delete process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS; else process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = previous.max;
+    if (previous.window === undefined) delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW; else process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = previous.window;
+  }
+});
+
 test("routes the background lane elsewhere only when explicitly configured", () => {
   // Opt-in override for the haiku/background tier.
   const optedIn = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", backgroundModel: "deepseek-v4-flash" };

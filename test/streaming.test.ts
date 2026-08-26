@@ -99,6 +99,60 @@ test("reports max_tokens when a Chat Completions stream hits the length limit", 
   await pipeResponsesStream(upstream, output as never, "deepseek-v4-pro", { provider: "deepseek", model: "deepseek-v4-pro", protocol: "chat-completions" });
   assert.match(output.text, /"stop_reason":"max_tokens"/); assert.doesNotMatch(output.text, /"stop_reason":"end_turn"/);
 });
+test("surfaces DeepSeek insufficient_system_resource as an error instead of a silent end_turn", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"choices":[{"delta":{"content":"Next I will edit"}}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"insufficient_system_resource"}]}\n\n',
+    "data: [DONE]\n\n"
+  ]);
+  const output = sink();
+  const diagnostics: string[] = [];
+  await pipeResponsesStream(upstream, output as never, "deepseek-v4-flash", { provider: "deepseek", model: "deepseek-v4-flash", protocol: "chat-completions", onDiagnostic: (message) => diagnostics.push(message) });
+  assert.match(output.text, /event: error/); assert.match(output.text, /insufficient/);
+  assert.doesNotMatch(output.text, /"stop_reason":"end_turn"/); assert.doesNotMatch(output.text, /event: message_stop/);
+  assert.ok(diagnostics.some((message) => message.includes("insufficient_system_resource")));
+});
+test("surfaces a content_filter stop as an error for Codex-style Chat Completions streams", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}\n\n',
+    "data: [DONE]\n\n"
+  ]);
+  const output = sink();
+  await pipeChatStreamToResponses(upstream, output as never, "deepseek-v4-pro", { provider: "deepseek", model: "deepseek-v4-pro", protocol: "chat-completions" });
+  assert.match(output.text, /event: response\.failed/); assert.match(output.text, /filtered/);
+  assert.doesNotMatch(output.text, /response\.completed/);
+});
+test("treats a Chat Completions stream that ends with neither finish_reason nor [DONE] as a dropped connection", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"choices":[{"delta":{"content":"Next I will edit the file"}}]}\n\n',
+  ]);
+  const output = sink();
+  await pipeResponsesStream(upstream, output as never, "deepseek-v4-flash", { provider: "deepseek", model: "deepseek-v4-flash", protocol: "chat-completions" });
+  assert.match(output.text, /event: error/);
+  assert.doesNotMatch(output.text, /"stop_reason":"end_turn"/); assert.doesNotMatch(output.text, /event: message_stop/);
+});
+test("treats a Codex-facing Chat Completions stream with no finish_reason or [DONE] as a dropped connection", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"choices":[{"delta":{"content":"Next I will edit the file"}}]}\n\n',
+  ]);
+  const output = sink();
+  await pipeChatStreamToResponses(upstream, output as never, "deepseek-v4-flash", { provider: "deepseek", model: "deepseek-v4-flash", protocol: "chat-completions" });
+  assert.match(output.text, /event: response\.failed/);
+  assert.doesNotMatch(output.text, /response\.completed/);
+});
+test("does not fail a text-only Chat Completions stream that closes with [DONE] but no finish_reason", async () => {
+  // Some gateways (e.g. under load) omit the finish_reason chunk but still send
+  // a proper [DONE]; that alone must still read as a normal, complete turn.
+  const upstream = scriptedUpstream([
+    'data: {"choices":[{"delta":{"content":"All done"}}]}\n\n',
+    "data: [DONE]\n\n"
+  ]);
+  const output = sink();
+  await pipeResponsesStream(upstream, output as never, "deepseek-v4-flash", { provider: "deepseek", model: "deepseek-v4-flash", protocol: "chat-completions" });
+  assert.match(output.text, /"stop_reason":"end_turn"/); assert.match(output.text, /event: message_stop/);
+  assert.doesNotMatch(output.text, /event: error/);
+});
 
 test("keeps text after tool calls in its own block instead of appending to tool JSON", async () => {
   const upstream = scriptedUpstream([

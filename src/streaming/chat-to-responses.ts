@@ -1,3 +1,4 @@
+import { chatResponseFailure } from "../catalog.js";
 import { cancelOnDisconnect, drain, errorMessage, event, failureMessage, REASONING_OUTPUT_INDEX, reasoningDeltaOf, reportUsage, SSE_HEADERS, startHeartbeat, UpstreamFailure, type StreamUsageOptions } from "./common.js";
 
 /**
@@ -14,14 +15,24 @@ export async function pipeChatStreamToResponses(upstream: Response, response: im
   const stopHeartbeat = startHeartbeat(response);
   try {
   const id = `resp_${crypto.randomUUID()}`; const msgId = `msg_${crypto.randomUUID()}`; let text = ""; let inputTokens = 0; let outputTokens = 0; let sawUsage = false; let truncated = false; let lastUsage: any; let rsId = ""; let rsText = ""; let messageAnnounced = false; const calls = new Map<number, { id: string; name: string; arguments: string; announced: boolean }>();
+  // A chat-completions upstream must close every turn with either a
+  // finish_reason or [DONE]; seeing neither means the connection dropped
+  // mid-turn and must not read back as a normal "completed" response.
+  let sawFinishReason = false; let sawDone = false;
   event(response, "response.created", { type: "response.created", response: { id, object: "response", status: "in_progress", model, output: [] } });
   const consume = (line: string) => {
-    if (!line.startsWith("data:")) return; const value = line.slice(5).trim(); if (!value || value === "[DONE]") return;
+    if (!line.startsWith("data:")) return; const value = line.slice(5).trim(); if (!value) return;
+    if (value === "[DONE]") { sawDone = true; return; }
     try {
       const item = JSON.parse(value);
       const failure = failureMessage(item);
       if (failure) throw new UpstreamFailure(failure);
       const choice = item.choices?.[0]; const delta = choice?.delta?.content;
+      if (choice?.finish_reason != null) {
+        sawFinishReason = true;
+        const chatFailure = chatResponseFailure(item);
+        if (chatFailure) { options?.onDiagnostic?.(`chat completions finish_reason=${choice.finish_reason}: ${chatFailure}`); throw new UpstreamFailure(chatFailure); }
+      }
       if (choice?.finish_reason === "length") truncated = true;
       if (typeof delta === "string" && delta) {
         // Codex keys text on the announced message item; announce it once.
@@ -59,6 +70,11 @@ export async function pipeChatStreamToResponses(upstream: Response, response: im
   };
   try {
     await drain(reader, consume);
+    if (!sawFinishReason && !sawDone) {
+      const message = "Upstream chat completions stream ended before a finish_reason or [DONE] was received.";
+      options?.onDiagnostic?.(message);
+      throw new UpstreamFailure(message);
+    }
     if (rsId) {
       event(response, "response.reasoning_summary_text.done", { type: "response.reasoning_summary_text.done", item_id: rsId, output_index: REASONING_OUTPUT_INDEX, summary_index: 0, text: rsText });
       event(response, "response.reasoning_summary_part.done", { type: "response.reasoning_summary_part.done", item_id: rsId, output_index: REASONING_OUTPUT_INDEX, summary_index: 0, part: { type: "summary_text", text: rsText } });

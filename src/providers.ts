@@ -1,9 +1,15 @@
 export interface AnthropicMessage { role: string; content: unknown; }
+export interface AnthropicThinking { type?: string; budget_tokens?: number; [key: string]: unknown; }
 export interface AnthropicRequest {
   model?: string; system?: string | Array<{ type: string; text?: string }>;
   max_tokens?: number; messages: AnthropicMessage[]; stream?: boolean;
   temperature?: number; top_p?: number; stop_sequences?: string[];
   tools?: Array<{ name: string; description?: string; input_schema: unknown }>;
+  thinking?: AnthropicThinking;
+  output_config?: { effort?: string; [key: string]: unknown };
+  tool_choice?: unknown;
+  metadata?: unknown;
+  context_management?: unknown;
 }
 
 /** Build a data URI (or pass through remote URLs) from an Anthropic image source. */
@@ -11,6 +17,60 @@ export function imageDataUri(source: any): string | undefined {
   if (!source) return undefined;
   if (source.type === "url" && typeof source.url === "string") return source.url;
   if (source.type === "base64" && typeof source.data === "string") return `data:${source.media_type ?? "image/png"};base64,${source.data}`;
+  return undefined;
+}
+
+/** Normalize Claude/DeepSeek effort names to the Chat Completions values. */
+export function reasoningEffort(input: any): "low" | "high" | "max" | undefined {
+  const value = input?.output_config?.effort ?? input?.reasoning?.effort;
+  if (typeof value !== "string") return undefined;
+  if (value === "low") return "low";
+  if (value === "max") return "max";
+  if (value === "medium" || value === "high" || value === "xhigh" || value === "ultracode") return "high";
+  return undefined;
+}
+
+/** Convert Anthropic thinking controls to DeepSeek's OpenAI-shaped control. */
+export function chatThinking(input: any): { type: "enabled" | "disabled" } | undefined {
+  const type = input?.thinking?.type;
+  if (type === "disabled") return { type: "disabled" };
+  if (type === "enabled" || type === "adaptive") return { type: "enabled" };
+  if (input?.reasoning?.effort === "none") return { type: "disabled" };
+  if (input?.reasoning?.effort !== undefined) return { type: "enabled" };
+  return undefined;
+}
+
+/** Convert Anthropic tool-choice variants to Chat Completions variants. */
+export function chatToolChoice(value: unknown): unknown {
+  if (typeof value === "string") {
+    if (value === "none" || value === "auto") return value;
+    if (value === "any" || value === "required") return "required";
+    return undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const choice = value as { type?: string; name?: string; function?: { name?: string } };
+  if (choice.type === "none" || choice.type === "auto") return choice.type;
+  if (choice.type === "any" || choice.type === "required") return "required";
+  if (choice.type === "tool" && typeof choice.name === "string") {
+    return { type: "function", function: { name: choice.name } };
+  }
+  if (choice.type === "function" && typeof choice.function?.name === "string") return value;
+  return undefined;
+}
+
+/** Convert Anthropic tool-choice variants to Responses API variants. */
+export function responsesToolChoice(value: unknown): unknown {
+  if (typeof value === "string") {
+    if (value === "none" || value === "auto" || value === "required") return value;
+    if (value === "any") return "required";
+    return undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const choice = value as { type?: string; name?: string; function?: { name?: string } };
+  if (choice.type === "none" || choice.type === "auto" || choice.type === "required") return choice.type;
+  if (choice.type === "any") return "required";
+  if (choice.type === "tool" && typeof choice.name === "string") return { type: "function", name: choice.name };
+  if (choice.type === "function" && typeof choice.function?.name === "string") return { type: "function", name: choice.function.name };
   return undefined;
 }
 
@@ -26,12 +86,17 @@ function convertContent(content: any, role: string): any {
 }
 
 export function toResponsesRequest(input: AnthropicRequest, model: string): Record<string, unknown> {
+  const thinking = chatThinking(input);
+  const effort = reasoningEffort(input);
+  const toolChoice = responsesToolChoice(input.tool_choice);
   const body: Record<string, unknown> = {
     model, input: toResponsesInput(input.messages),
     ...(input.max_tokens === undefined ? {} : { max_output_tokens: input.max_tokens }),
     ...(input.stream ? { stream: true } : {}),
     ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
-    ...(input.top_p === undefined ? {} : { top_p: input.top_p })
+    ...(input.top_p === undefined ? {} : { top_p: input.top_p }),
+    ...(thinking?.type === "disabled" ? { reasoning: { effort: "none" } } : effort ? { reasoning: { effort } } : {}),
+    ...(toolChoice === undefined ? {} : { tool_choice: toolChoice })
   };
   if (input.tools) body.tools = input.tools.map((tool) => ({ type: "function", name: tool.name, description: tool.description, parameters: tool.input_schema }));
   if (input.system !== undefined) {
@@ -92,6 +157,17 @@ export function fromResponsesResponse(response: any, model: string): Record<stri
       cache_read_input_tokens: response.usage?.input_tokens_details?.cached_tokens ?? 0
     }
   };
+}
+
+/** Return a failure for a Responses result that must not look like a turn end. */
+export function responsesResponseFailure(response: any): string | undefined {
+  if (response?.status === "failed") {
+    return response.error?.message ?? response.error ?? "The upstream response failed.";
+  }
+  if (response?.status === "incomplete" && response.incomplete_details?.reason !== "max_output_tokens") {
+    return `The upstream response is incomplete (${String(response.incomplete_details?.reason ?? "unknown")}).`;
+  }
+  return undefined;
 }
 
 function parseArguments(value: unknown): unknown { try { return typeof value === "string" ? JSON.parse(value) : value ?? {}; } catch { return {}; } }

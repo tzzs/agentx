@@ -1,11 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { fromResponsesResponse, toResponsesRequest } from "./providers.js";
+import { fromResponsesResponse, responsesResponseFailure, toResponsesRequest } from "./providers.js";
 import { pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream, type StreamUsageOptions } from "./streaming/index.js";
 import type { ProviderModel } from "./providers/types.js";
 import type { TokenUsage } from "./usage/types.js";
-import { fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, providers, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
+import { chatResponseFailure, fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, providers, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
 import { apiKeyFor, providerDisplayName } from "./providers/registry.js";
 import { extractUsage } from "./providers/usage/index.js";
 import { TokenUsageCollector } from "./usage/collector.js";
@@ -32,8 +32,8 @@ function parsePeriod(url: URL): UsagePeriod | undefined {
   const value = url.searchParams.get("period");
   return value === "today" || value === "week" || value === "month" || value === "all" ? value : undefined;
 }
-function streamOptions(provider: ProviderModel, sessionId: string, onUsage?: (usage: TokenUsage) => void): StreamUsageOptions {
-  return { provider: provider.provider, model: provider.model, protocol: provider.protocol, sessionId, onUsage };
+function streamOptions(config: Config, provider: ProviderModel, sessionId: string, onUsage?: (usage: TokenUsage) => void): StreamUsageOptions {
+  return { provider: provider.provider, model: provider.model, protocol: provider.protocol, sessionId, onUsage, onDiagnostic: (message) => debug(config, `stream diagnostic: ${message}`) };
 }
 async function upstreamError(response: ServerResponse, providerName: string, upstream: Response, status: number) {
   let message = `${providerName} returned HTTP ${status}`;
@@ -171,17 +171,19 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
         fallbackModel: config.model,
         payload: (input, model) => {
           const provider = providerFor(model, config.provider);
-          return provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model);
+          return provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model, provider.provider);
         },
       });
       if (!proxied) return;
       const { input, model, watched } = proxied;
       const provider = providerFor(model, config.provider);
-      const options = streamOptions(provider, sessionFor(input), safeRecord);
+      const options = streamOptions(config, provider, sessionFor(input), safeRecord);
       if (input.stream && provider.protocol === "chat-completions") return pipeChatStreamToResponses(watched, response, model, options);
       if (input.stream) return pipeResponsesPassthrough(watched, response, model, options);
       if (!watched.body) return response.end();
       const value = await watched.json(); recordUsage(value, provider, sessionFor(input));
+      const failure = provider.protocol === "chat-completions" ? chatResponseFailure(value) : responsesResponseFailure(value);
+      if (failure) return json(response, 502, { error: { message: failure, type: "upstream_error" } });
       return json(response, watched.status, provider.protocol === "chat-completions" ? fromChatResponseToResponses(value, model) : value);
     }
     if (pathname !== "/v1/messages" || request.method !== "POST") return json(response, 404, { error: { message: "Not found", type: "not_found" } });
@@ -192,14 +194,16 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
       fallbackModel: config.model,
       payload: (input, model) => {
         const provider = providerFor(model, config.provider);
-        return provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model);
+        return provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model, provider.provider);
       },
     });
     if (!proxied) return;
     const { input, model, watched } = proxied;
     const provider = providerFor(model, config.provider);
-    if (input.stream) return pipeResponsesStream(watched, response, model, streamOptions(provider, sessionFor(input), safeRecord));
+    if (input.stream) return pipeResponsesStream(watched, response, model, streamOptions(config, provider, sessionFor(input), safeRecord));
     const value = await watched.json(); recordUsage(value, provider, sessionFor(input));
+    const failure = provider.protocol === "chat-completions" ? chatResponseFailure(value) : responsesResponseFailure(value);
+    if (failure) return json(response, 502, { error: { message: failure, type: "upstream_error" } });
     return json(response, watched.status, provider.protocol === "responses" ? fromResponsesResponse(value, model) : fromChatResponse(value, model));
   });
   let port = config.port;

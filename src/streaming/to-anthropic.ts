@@ -1,4 +1,5 @@
 import type { ServerResponse } from "node:http";
+import { chatResponseFailure } from "../catalog.js";
 import { cacheTokensOf, cancelOnDisconnect, drain, errorMessage, event, failureMessage, reasoningDeltaOf, reportUsage, SSE_HEADERS, startHeartbeat, UpstreamFailure, type StreamUsageOptions } from "./common.js";
 
 /**
@@ -18,6 +19,10 @@ export async function pipeResponsesStream(upstream: Response, response: ServerRe
   const id = `msg_${crypto.randomUUID()}`;
   event(response, "message_start", { type: "message_start", message: { id, type: "message", role: "assistant", model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } });
   let outputTokens = 0; let inputTokens = 0; let sawUsage = false; let blockIndex = 0; let blockStarted = false; let blockType: "text" | "tool_use" | "thinking" | undefined; let toolStop = false; let truncated = false; let lastUsage: any;
+  // A chat-completions-shaped upstream (unlike a native Responses one) must
+  // close every turn with either a finish_reason or [DONE]; seeing neither
+  // means the connection dropped mid-turn and must not read back as end_turn.
+  let sawChatShape = false; let sawFinishReason = false; let sawDone = false;
   // Parallel tool calls arrive interleaved and keyed by chat `index` or
   // Responses `item_id`; each key gets its own Anthropic content block.
   const calls = new Map<string | number, { id: string; name: string }>();
@@ -47,12 +52,21 @@ export async function pipeResponsesStream(upstream: Response, response: ServerRe
   };
   const consume = (line: string) => {
     if (!line.startsWith("data:")) return;
-    const value = line.slice(5).trim(); if (!value || value === "[DONE]") return;
+    const value = line.slice(5).trim(); if (!value) return;
+    if (value === "[DONE]") { sawDone = true; return; }
     try {
       const item = JSON.parse(value);
       const failure = failureMessage(item);
       if (failure) throw new UpstreamFailure(failure);
       const choice = item.choices?.[0];
+      if (Array.isArray(item.choices)) {
+        sawChatShape = true;
+        if (choice?.finish_reason != null) {
+          sawFinishReason = true;
+          const chatFailure = chatResponseFailure(item);
+          if (chatFailure) { options?.onDiagnostic?.(`chat completions finish_reason=${choice.finish_reason}: ${chatFailure}`); throw new UpstreamFailure(chatFailure); }
+        }
+      }
       if (choice?.finish_reason === "length") truncated = true;
       const reasoning = reasoningDeltaOf(item);
       if (typeof reasoning === "string") { startThinking(); event(response, "content_block_delta", { type: "content_block_delta", index: blockIndex, delta: { type: "thinking_delta", thinking: reasoning } }); }
@@ -91,6 +105,11 @@ export async function pipeResponsesStream(upstream: Response, response: ServerRe
   };
   try {
     await drain(reader, consume);
+    if (sawChatShape && !sawFinishReason && !sawDone) {
+      const message = "Upstream chat completions stream ended before a finish_reason or [DONE] was received.";
+      options?.onDiagnostic?.(message);
+      throw new UpstreamFailure(message);
+    }
     if (!blockStarted) startText();
     stopBlock();
     const stopReason = truncated ? "max_tokens" : toolStop ? "tool_use" : "end_turn";

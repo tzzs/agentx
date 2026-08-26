@@ -263,6 +263,8 @@ agentx claude --model gpt-5.6-luna
 
 基于请求大小或工具数量的隐式路由已移除。如果 Claude 后台通道需要同 Provider 的其他模型，请显式配置 `--background-model`。
 
+Claude Code 遇到不认识的模型时，会假定它使用默认的约 200k token 上下文窗口，并早早触发自动压缩。DeepSeek 的 `deepseek-v4-flash`/`deepseek-v4-pro`（以及它们的 `[1m]` 变体）实际拥有大得多的上下文窗口，因此 `claude` 启动器会为这些模型自动声明 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 与 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`（除非你已自行设置过这两个环境变量）。如果没有这一步，长时间的 DeepSeek 会话会被过早自动压缩，悄无声息地丢弃相当大一部分对话内容。
+
 ## API 转换
 
 适配器不会持久化对话历史。Claude Code 会在每次请求中携带完整对话；唯一的本地持久化是聚合后的 Token 用量统计（见 [Token 用量统计](#token-用量统计)）。
@@ -274,7 +276,11 @@ agentx claude --model gpt-5.6-luna
 - Anthropic 文本消息与响应文本
 - Anthropic 流式事件与上游 SSE 事件转换
 - Anthropic `tools`、`tool_use`、`tool_result` 与 function tool、function call output 转换
+- Anthropic `thinking` / `output_config.effort` 转换为上游的思考控制参数（Chat Completions 上是 DeepSeek 的 `thinking`/`reasoning_effort`，Responses API 上是 `reasoning.effort`）
+- Anthropic `tool_choice` 转换为上游 Chat Completions 或 Responses 对应的 tool-choice 结构
 - Responses 和 Chat Completions usage 字段转换为 Anthropic usage 字段
+
+DeepSeek 的思考模式要求每个 assistant 回合的 `reasoning_content` 必须回传，并且要挂在它所引出的那个 tool call 所在的同一条消息上；适配器会把一条 assistant 消息的文本、reasoning 与 tool call 保持在同一条消息里，而不是拆分成多条，并且只对 DeepSeek 转发 `reasoning_content`（其它 Chat Completions 上游并不期望这个字段）。当上游以异常方式结束——`content_filter`、`insufficient_system_resource`，或者流结束时既没有 `finish_reason` 也没有 `[DONE]`——都会转换为错误返回，而不是被悄悄当成正常的 `end_turn`。
 
 适配器只负责工具协议转换，不会执行工具，也不会持久化 prompt、工具参数或对话状态。
 
