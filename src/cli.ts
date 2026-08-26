@@ -7,7 +7,7 @@ import { runInteractiveLauncher, LaunchCancelledError } from "./ui.js";
 import { credentialEnvName, providerById, refreshProviderCatalog } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
 import { runDoctor, renderDoctor, executableExists } from "./doctor.js";
-import { credentialInstructions, credentialSource, promptCredential, resolveCredential, storedCredential } from "./credentials.js";
+import { credentialInstructions, credentialSource, promptCredential, resolveCredential } from "./credentials.js";
 import { queryProviderUsage, usageProvider } from "./quota.js";
 import { runUsageStats } from "./usage/cli.js";
 import { resolveRuntimeNonInteractive } from "./selection.js";
@@ -51,6 +51,13 @@ function helpText(command?: string): string {
       lines.push("Options:");
       lines.push("  --period <range>    Time range for token statistics (default all)");
       lines.push("  --provider <id>     Query provider quota instead of token statistics");
+      return lines.join("\n");
+    } else if (command === "doctor") {
+      lines.push("Usage: agentx doctor [options]");
+      lines.push("Options:");
+      lines.push("  --client <name>     Limit checks to one client (claude, codex, all; default all)");
+      lines.push("  --offline           Skip network-dependent checks");
+      lines.push(...OPTION_LINES);
       return lines.join("\n");
     } else if (command === "exec") {
       lines.push("Usage: agentx exec [options] -- <command> [args...]");
@@ -217,7 +224,11 @@ async function main() {
   if (command === "doctor") {
     const doctorOptions = options(args);
     await refreshProviderCatalog({ provider: doctorOptions.provider ?? process.env.AGENTX_PROVIDER });
-    const result = await runDoctor(doctorOptions);
+    const result = await runDoctor({
+      ...doctorOptions,
+      client: doctorOptions.client === "claude" || doctorOptions.client === "codex" || doctorOptions.client === "all" ? doctorOptions.client : undefined,
+      offline: doctorOptions.offline === "true" || doctorOptions.offline === "" ? true : undefined,
+    });
     console.log(renderDoctor(result));
     if (result.issues.length) process.exitCode = 1;
     return;
