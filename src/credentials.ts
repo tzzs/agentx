@@ -29,13 +29,17 @@ export function credentialInstructions(provider: ProviderDefinition): string {
 
 /**
  * Prompt for a provider API key. The value is valid for the current session
- * only; instructions are printed so the user can persist it manually.
+ * only; instructions are printed so the user can persist it manually. `io`
+ * defaults to real process stdio; the interactive launcher (ui.ts) passes its
+ * own injectable streams through so this participates in the same test seam.
  */
-export async function promptCredential(provider: ProviderDefinition): Promise<string> {
-  if (!input.isTTY || !output.isTTY) throw new Error("Secret input requires an interactive terminal.");
+export async function promptCredential(provider: ProviderDefinition, io: { input: NodeJS.ReadStream; output: NodeJS.WriteStream } = { input, output }): Promise<string> {
+  if (!io.input.isTTY || !io.output.isTTY) throw new Error("Secret input requires an interactive terminal.");
   const value = await password({
     message: `${provider.name} API key`,
     validate: (entry) => (entry?.trim().length ? undefined : "API key cannot be empty."),
+    input: io.input,
+    output: io.output,
   });
   if (isCancel(value)) throw new Error("Credential input cancelled.");
   const trimmed = value.trim();

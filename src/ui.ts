@@ -1,4 +1,4 @@
-import { stdin as input, stdout as output } from "node:process";
+import { stdin as realStdin, stdout as realStdout } from "node:process";
 import { autocomplete, cancel, intro, isCancel, log, multiselect, note, outro, select, text } from "@clack/prompts";
 import { providerRegistry, openRouterCatalogIds, registerCustomProvider, unregisterCustomProvider } from "./providers/registry.js";
 import type { ProviderDefinition, ProviderProtocol } from "./providers/types.js";
@@ -9,6 +9,21 @@ import {
 import {
   forgetCustomProvider, forgetRuntime, rememberedModelIds, remembererProviders, saveCustomProvider, saveDefaultRuntime, type RuntimeSelection,
 } from "./runtime.js";
+
+/** Injectable I/O streams every prompt in this module renders through; real process stdio by default. */
+let io: { input: NodeJS.ReadStream; output: NodeJS.WriteStream } = { input: realStdin, output: realStdout };
+/** `{ input, output }` spread into every clack call so it honors the current `io`. */
+function stdio() { return { input: io.input, output: io.output }; }
+
+/**
+ * Test-only seam: point every prompt this module renders at fake streams
+ * instead of real process stdio, so the interactive flows (Add/Remove custom
+ * provider, provider/model pickers, …) are actually drivable in tests.
+ * Mirrors the `setCachedOpenRouter` isolation seam in providers/registry.ts.
+ */
+export function __setTestIO(next: { input: NodeJS.ReadStream; output: NodeJS.WriteStream }): void { io = next; }
+/** Restore real process stdio after a test that called `__setTestIO`. */
+export function __resetTestIO(): void { io = { input: realStdin, output: realStdout }; }
 
 /** Thrown when the user cancels the launcher (q / Ctrl+C) instead of launching. */
 export class LaunchCancelledError extends Error {
@@ -60,7 +75,7 @@ export async function providerEntries(): Promise<ProviderEntry[]> {
  * from it.
  */
 export async function runInteractiveLauncher(client: string, initial: RuntimeDecision): Promise<LauncherOutcome> {
-  if (!input.isTTY || !output.isTTY) {
+  if (!io.input.isTTY || !io.output.isTTY) {
     return { provider: initial.provider, model: initial.model, madeDefault: false, defaultApplied: initial.defaultApplied, changed: false };
   }
 
@@ -99,17 +114,17 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
   // The quick-start path offers the common actions, plus a manager for saved
   // models whose upstream ids were renamed or pulled (e.g. OpenRouter).
   const title = `${clientDisplayName(client)} — AgentX`;
-  intro(title);
+  intro(title, stdio());
   if (startWithDefault) {
-    log.message(`Using: ${providerLabel(provider)} / ${model}`);
+    log.message(`Using: ${providerLabel(provider)} / ${model}`, stdio());
     const shortcut = await selectDefaultAction(provider, model, client);
-    if (isCancel(shortcut) || shortcut === "cancel") { cancel(`${clientDisplayName(client)} launch cancelled`); throw new LaunchCancelledError(0); }
+    if (isCancel(shortcut) || shortcut === "cancel") { cancel(`${clientDisplayName(client)} launch cancelled`, stdio()); throw new LaunchCancelledError(0); }
     if (shortcut === "start") {
-      outro("Ready");
+      outro("Ready", stdio());
       return { provider, model, madeDefault: false, defaultApplied: true, changed: false, apiKey: sessionKeys.get(provider) };
     }
     if (shortcut === "native") {
-      outro("Launching native — adapter skipped");
+      outro("Launching native — adapter skipped", stdio());
       return { provider, model, madeDefault: false, defaultApplied: true, changed: false, native: true };
     }
     if (shortcut === "manage") {
@@ -125,7 +140,7 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
   }
 
   const nextProvider = providerChosenViaFirstUse ? provider : await selectProvider(providers, provider);
-  if (isCancel(nextProvider)) { cancel("Provider selection cancelled"); throw new LaunchCancelledError(0); }
+  if (isCancel(nextProvider)) { cancel("Provider selection cancelled", stdio()); throw new LaunchCancelledError(0); }
   if (nextProvider !== provider) {
     provider = nextProvider;
     // selectProvider may have added or removed a custom provider along the way.
@@ -137,12 +152,12 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
   const entry = providers.find((item) => item.definition.id === provider);
   if (entry && !entry.configured) {
     const apiKey = await configureProvider(entry.definition);
-    if (!apiKey) { cancel("Provider not configured"); throw new LaunchCancelledError(0); }
+    if (!apiKey) { cancel("Provider not configured", stdio()); throw new LaunchCancelledError(0); }
     sessionKeys.set(provider, apiKey);
   }
 
   const nextModel = await selectModel(provider, model);
-  if (isCancel(nextModel)) { cancel("Model selection cancelled"); throw new LaunchCancelledError(0); }
+  if (isCancel(nextModel)) { cancel("Model selection cancelled", stdio()); throw new LaunchCancelledError(0); }
   if (nextModel !== model) { model = nextModel; changed = true; }
 
   // Reaching the picker flow means the selection is the intended runtime;
@@ -150,7 +165,7 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
   madeDefault = true;
   await saveDefaultRuntime(client, { provider, model });
 
-  outro(changed ? `${providerLabel(provider)} / ${model}` : "Ready");
+  outro(changed ? `${providerLabel(provider)} / ${model}` : "Ready", stdio());
 
   return { provider, model, madeDefault, defaultApplied: startWithDefault, changed, apiKey: sessionKeys.get(provider) };
 }
@@ -196,40 +211,42 @@ const PROTOCOL_OPTIONS: Array<{ value: ProviderProtocol; label: string }> = [
  * cancelled at any step.
  */
 async function addCustomProviderFlow(): Promise<string | undefined> {
-  const name = await text({ message: "Provider name", placeholder: "My Local LLM" });
+  const name = await text({ message: "Provider name", placeholder: "My Local LLM", ...stdio() });
   if (isCancel(name) || !name.trim()) return undefined;
   const baseUrl = await text({
     message: "Base URL",
     placeholder: "http://localhost:11434",
     validate: (value) => { try { new URL(value ?? ""); return undefined; } catch { return "Enter a full URL, e.g. http://localhost:11434"; } },
+    ...stdio(),
   });
   if (isCancel(baseUrl)) return undefined;
-  const protocol = await select({ message: "Protocol", options: PROTOCOL_OPTIONS });
+  const protocol = await select({ message: "Protocol", options: PROTOCOL_OPTIONS, ...stdio() });
   if (isCancel(protocol)) return undefined;
   const definition = registerCustomProvider({ name: name.trim(), baseUrl, protocol });
   await saveCustomProvider(definition.id, { name: definition.name, baseUrl, protocol, model: definition.models[0].model });
-  note(`✓ ${definition.name} added`, "Custom provider");
+  note(`✓ ${definition.name} added`, "Custom provider", stdio());
   return definition.id;
 }
 
 /** Pick a custom provider to remove entirely (definition + persisted memory). Built-in providers never appear in this list. */
 async function removeCustomProviderFlow(entries: ProviderEntry[]): Promise<void> {
   const custom = entries.filter((entry) => entry.definition.custom);
-  const chosen = await select({ message: "Remove custom provider", options: custom.map((entry) => ({ value: entry.definition.id, label: entry.definition.name })) });
+  const chosen = await select({ message: "Remove custom provider", options: custom.map((entry) => ({ value: entry.definition.id, label: entry.definition.name })), ...stdio() });
   if (isCancel(chosen)) return;
   const label = custom.find((entry) => entry.definition.id === chosen)?.definition.name ?? chosen;
   unregisterCustomProvider(chosen);
   await forgetCustomProvider(chosen);
-  note(`Removed ${label}.`, "Custom provider");
+  note(`Removed ${label}.`, "Custom provider", stdio());
 }
 
-async function selectProvider(entries: ProviderEntry[], current: string): Promise<string | symbol> {
+/** Exported for tests: drives the Provider picker, including the Add/Remove custom provider sentinels. */
+export async function selectProvider(entries: ProviderEntry[], current: string): Promise<string | symbol> {
   const choices = providerOptions(entries);
   choices.push({ value: ADD_CUSTOM_PROVIDER_OPTION, label: "Add custom provider…", hint: "OpenAI or Anthropic-compatible endpoint" });
   if (entries.some((entry) => entry.definition.custom)) {
     choices.push({ value: REMOVE_CUSTOM_PROVIDER_OPTION, label: "Remove custom provider…", hint: "" });
   }
-  const chosen = await select({ message: "Provider", options: choices, initialValue: current });
+  const chosen = await select({ message: "Provider", options: choices, initialValue: current, ...stdio() });
   if (isCancel(chosen)) return chosen;
   if (chosen === ADD_CUSTOM_PROVIDER_OPTION) {
     const added = await addCustomProviderFlow();
@@ -296,6 +313,7 @@ async function selectModel(provider: string, current: string): Promise<string | 
           option.value === CUSTOM_MODEL_OPTION || option.value === BROWSE_CATALOG_OPTION || option.value === FORGET_MODEL_OPTION || defaultModelFilter(search, option)
       : undefined,
     validate: (value) => (value ? undefined : "No matching model — clear the search to see all options."),
+    ...stdio(),
   });
   if (chosen === BROWSE_CATALOG_OPTION) {
     return selectFromOpenRouterCatalog(current);
@@ -323,7 +341,7 @@ async function selectFromOpenRouterCatalog(current: string): Promise<string | sy
     options.unshift({ value: current, label: `${current} · current`, hint: "not in the live catalog" });
   }
   if (!options.length) {
-    note("OpenRouter's catalog is unavailable right now. Choose another model or enter one manually.", "Catalog");
+    note("OpenRouter's catalog is unavailable right now. Choose another model or enter one manually.", "Catalog", stdio());
     return CUSTOM_MODEL_OPTION;
   }
   const chosen = await autocomplete({
@@ -332,6 +350,7 @@ async function selectFromOpenRouterCatalog(current: string): Promise<string | sy
     placeholder: "Search ~" + catalog.length + " models…",
     maxItems: 12,
     validate: (value) => (value ? undefined : "No matching model — clear the search to see all options."),
+    ...stdio(),
   });
   if (isCancel(chosen)) return chosen;
   return chosen;
@@ -352,6 +371,7 @@ async function promptCustomModelId(label: string, suggestion: string): Promise<s
     message: `Custom model id (${label})`,
     placeholder: "vendor/model-name",
     defaultValue: suggestion,
+    ...stdio(),
   });
   if (isCancel(entered)) return entered;
   return entered.trim() || suggestion;
@@ -379,6 +399,7 @@ async function selectDefaultAction(provider: string, model: string, client: stri
       { value: "cancel", label: "Cancel" },
     ],
     initialValue: "start",
+    ...stdio(),
   });
 }
 
@@ -395,11 +416,11 @@ async function selectDefaultAction(provider: string, model: string, client: stri
 export async function runSavedModelManager(provider?: string): Promise<void> {
   const providers = await remembererProviders();
   if (provider && !providers.some((entry) => entry.provider === provider)) {
-    note(`Nothing is saved for ${providerLabel(provider)} yet. Launch once to record a model.`, "Saved models");
+    note(`Nothing is saved for ${providerLabel(provider)} yet. Launch once to record a model.`, "Saved models", stdio());
     return;
   }
   if (!provider && !providers.length) {
-    note("No saved models were found. Launch once to record a runtime.", "Saved models");
+    note("No saved models were found. Launch once to record a runtime.", "Saved models", stdio());
     return;
   }
   const chosenProvider = provider ?? await (async () => {
@@ -410,6 +431,7 @@ export async function runSavedModelManager(provider?: string): Promise<void> {
     const chosen = await select({
       message: "Provider with saved models",
       options: providerOptionsList,
+      ...stdio(),
     });
     if (isCancel(chosen)) return undefined;
     return chosen;
@@ -417,7 +439,7 @@ export async function runSavedModelManager(provider?: string): Promise<void> {
   if (!chosenProvider) return;
   const ids = await rememberedModelIds(chosenProvider);
   if (!ids.length) {
-    note("Nothing is saved for this provider.", "Saved models");
+    note("Nothing is saved for this provider.", "Saved models", stdio());
     return;
   }
   const catalog = openRouterCatalogIds();
@@ -433,18 +455,19 @@ export async function runSavedModelManager(provider?: string): Promise<void> {
     required: false,
     initialValues: ids.filter((model) => !known(model)),
     maxItems: 12,
+    ...stdio(),
   });
   if (isCancel(picked)) return;
   if (!picked.length) {
-    note("Nothing forgotten.", "Saved models");
+    note("Nothing forgotten.", "Saved models", stdio());
     return;
   }
   let forgot = 0;
   for (const model of picked) {
     if (await forgetRuntime({ provider: chosenProvider, model })) forgot++;
   }
-  if (forgot) note(`Forgot ${forgot} model${forgot === 1 ? "" : "s"} from ${providerLabel(chosenProvider)}.`, "Saved models");
-  else note("Nothing forgotten (no saved references were found).", "Saved models");
+  if (forgot) note(`Forgot ${forgot} model${forgot === 1 ? "" : "s"} from ${providerLabel(chosenProvider)}.`, "Saved models", stdio());
+  else note("Nothing forgotten (no saved references were found).", "Saved models", stdio());
 }
 
 /**
@@ -455,7 +478,7 @@ export async function runSavedModelManager(provider?: string): Promise<void> {
  */
 async function chooseRuntime(entries: ProviderEntry[], prompt: string): Promise<{ provider: string; apiKey?: string } | undefined> {
   const entryMap = new Map(entries.map((entry) => [entry.definition.id, entry]));
-  const chosen = await select({ message: prompt, options: providerOptions(entries) });
+  const chosen = await select({ message: prompt, options: providerOptions(entries), ...stdio() });
   if (isCancel(chosen)) return undefined;
   const entry = entryMap.get(chosen);
   let apiKey: string | undefined;
@@ -473,7 +496,7 @@ async function chooseRuntime(entries: ProviderEntry[], prompt: string): Promise<
  */
 async function configureProvider(definition: ProviderDefinition): Promise<string | undefined> {
   try {
-    return await promptCredential(definition);
+    return await promptCredential(definition, io);
   } catch {
     return undefined;
   }
