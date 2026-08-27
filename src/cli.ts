@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import { loadConfig, parseCliOptions as options } from "./config.js";
-import type { Config } from "./config.js";
-import { startAdapter, type Adapter } from "./server.js";
-import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, codexLaunchArgs } from "./process.js";
+import { startAdapter } from "./server.js";
+import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, clientEnvironment, codexLaunchArgs } from "./process.js";
 import { runInteractiveLauncher, runSavedModelManager, LaunchCancelledError } from "./ui.js";
 import { credentialEnvName, providerById, refreshProviderCatalog, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerDisplayName } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
@@ -37,6 +36,7 @@ const OPTION_LINES = [
   "  --host <host>       Local bind address (default 127.0.0.1)",
   "  --api-key <key>     Upstream API key",
   "  --verbose           Verbose logging",
+  "  --native            claude/codex only: launch the real client directly, no adapter or env overrides",
 ];
 
 function helpText(command?: string): string {
@@ -93,18 +93,25 @@ function isInteractive(): boolean {
 }
 
 /** Flags the adapter consumes itself; never forwarded to the launched client. */
-const ADAPTER_FLAGS = new Set(["--model", "--background-model", "--provider", "--port", "--host", "--api-key", "--verbose"]);
+const ADAPTER_FLAGS = new Set(["--model", "--background-model", "--provider", "--port", "--host", "--api-key", "--verbose", "--native"]);
+/** Boolean-ish adapter flags that never consume the following argument as a value. */
+const BOOLEAN_ADAPTER_FLAGS = new Set(["--verbose", "--native"]);
 
 /**
  * Strip adapter flags from `agentx claude ...` arguments so the client only
  * sees its own options. Both `--flag value` and inline `--flag=value` forms
- * are removed; a bare `--verbose` is boolean-ish and consumes nothing.
+ * are removed; a bare `--verbose` / `--native` is boolean-ish and consumes nothing.
  */
 export function clientArguments(args: string[]): string[] {
   const isAdapterFlag = (arg: string) => ADAPTER_FLAGS.has(arg) || (arg.startsWith("--") && arg.includes("=") && ADAPTER_FLAGS.has(`--${arg.slice(2).split("=", 1)[0]}`));
   const valueTaken = new Set<number>();
-  args.forEach((arg, index) => { if (ADAPTER_FLAGS.has(arg) && arg !== "--verbose" && args[index + 1] !== undefined && !args[index + 1].startsWith("--")) valueTaken.add(index + 1); });
+  args.forEach((arg, index) => { if (ADAPTER_FLAGS.has(arg) && !BOOLEAN_ADAPTER_FLAGS.has(arg) && args[index + 1] !== undefined && !args[index + 1].startsWith("--")) valueTaken.add(index + 1); });
   return args.filter((arg, index) => !isAdapterFlag(arg) && !valueTaken.has(index));
+}
+
+/** True when `--native` (or `--native=...` truthy form) was passed. */
+function isNativeRequested(opts: Record<string, string | undefined>): boolean {
+  return opts.native !== undefined && opts.native !== "false";
 }
 
 /** Prompt for a missing provider credential. Returns the key when obtained. */
@@ -137,6 +144,7 @@ async function resolveClientRuntime(command: string, opts: Record<string, string
       defaultApplied: decision.defaultApplied,
       interactive: false,
       apiKey: undefined,
+      native: false,
     };
   }
   const initial = await resolveRuntimeNonInteractive(command, opts);
@@ -147,6 +155,7 @@ async function resolveClientRuntime(command: string, opts: Record<string, string
     defaultApplied: outcome.defaultApplied,
     interactive: true,
     apiKey: outcome.apiKey,
+    native: outcome.native ?? false,
   };
 }
 
@@ -171,9 +180,9 @@ function reportMissingClient(executable: string): void {
  * retry the launch; otherwise exit with a clear message. The adapter stays up
  * throughout so a successful install flows straight into the client session.
  */
-async function launchClient(executable: string, args: string[], config: Config, adapter: Adapter, client: "anthropic" | "openai"): Promise<number> {
+async function launchClient(executable: string, args: string[], env: NodeJS.ProcessEnv): Promise<number> {
   try {
-    return await runCommand(executable, args, config, adapter, client);
+    return await runCommand(executable, args, env);
   } catch (error) {
     if (!(error instanceof ClientNotFoundError)) throw error;
     reportMissingClient(executable);
@@ -193,7 +202,7 @@ async function launchClient(executable: string, args: string[], config: Config, 
       return 1;
     }
     console.error(`✓ ${CLIENT_LABELS[executable] ?? executable} installed`);
-    return runCommand(executable, args, config, adapter, client);
+    return runCommand(executable, args, env);
   }
 }
 
@@ -273,17 +282,38 @@ async function main() {
   }
 
   const opts = options(args);
-  if (CLIENT_COMMANDS.has(command)) {
+  // Native launch is only meaningful for claude/codex: they have their own
+  // login/billing outside AgentX. It can come from an explicit `--native`
+  // flag (checked here, before any catalog/adapter work) or from the
+  // interactive quick-start menu (detected via `runtime.native` below).
+  const nativeCapable = command === "claude" || command === "codex";
+  let nativeRequested = nativeCapable && isNativeRequested(opts);
+  if (CLIENT_COMMANDS.has(command) && !nativeRequested) {
     // The launcher needs the OpenCode catalog when the provider is not yet known.
     await refreshProviderCatalog({ provider: opts.provider ?? process.env.AGENTX_PROVIDER });
     const runtime = await resolveClientRuntime(command, opts);
-    opts.provider = runtime.provider;
-    opts.model = runtime.model;
-    if (runtime.apiKey) opts.apiKey = runtime.apiKey;
-    await saveLastModel(runtime.provider, runtime.model);
+    if (runtime.native) {
+      nativeRequested = true;
+    } else {
+      opts.provider = runtime.provider;
+      opts.model = runtime.model;
+      if (runtime.apiKey) opts.apiKey = runtime.apiKey;
+      await saveLastModel(runtime.provider, runtime.model);
+    }
   } else if (command === "proxy" || command === "exec") {
     const lastSelection = await loadLastSelection();
     await refreshProviderCatalog({ provider: opts.provider ?? process.env.AGENTX_PROVIDER ?? lastSelection?.provider });
+  }
+
+  if (nativeRequested) {
+    // Bypass AgentX entirely: no catalog, credential, config, or adapter
+    // involvement, and the client's environment is left exactly as inherited
+    // (no ANTHROPIC_*/OPENAI_* overrides), so it behaves as if launched by hand.
+    const separator = args.indexOf("--");
+    const commandArgs = separator >= 0 ? args.slice(separator + 1) : clientArguments(args);
+    console.error(`AgentX\n✓ Client: ${CLIENT_LABELS[command]} (native — adapter skipped)`);
+    process.exitCode = await launchClient(command, commandArgs, process.env);
+    return;
   }
 
   const lastSelection = CLIENT_COMMANDS.has(command)
@@ -350,7 +380,7 @@ async function main() {
       : commandArgs;
 
   try {
-    process.exitCode = await launchClient(executable, launchArgs, config, adapter, client);
+    process.exitCode = await launchClient(executable, launchArgs, clientEnvironment(config, adapter, client));
   } finally {
     await adapter.close();
   }

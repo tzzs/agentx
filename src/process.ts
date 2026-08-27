@@ -98,8 +98,10 @@ export function runShellCommand(command: string): Promise<number> {
   });
 }
 
-export async function runCommand(command: string, args: string[], config: Config, adapter: Adapter, client: "anthropic" | "openai" = "anthropic"): Promise<number> {
-  const child = spawn(command, args, { stdio: "inherit", env: clientEnvironment(config, adapter, client), shell: process.platform === "win32" });
+/** Spawns `command` with `env` verbatim — the caller decides whether that is
+ * the adapter-injected environment or an untouched passthrough (native mode). */
+export async function runCommand(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  const child = spawn(command, args, { stdio: "inherit", env, shell: process.platform === "win32" });
   // The child shares the terminal process group (stdio: "inherit", not detached),
   // so a terminal Ctrl+C / SIGINT already reaches both the child and this process.
   // Forwarding SIGINT would deliver a second signal to the child, which it may

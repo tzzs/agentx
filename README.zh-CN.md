@@ -92,6 +92,17 @@ Claude Code 的所有模型档位（主模型、opus/sonnet/haiku 别名、子�
 
 如果在交互式终端启动 `claude`、`codex` 或 `pi` 时没有指定 `--provider`/`--model`，且没有设置 `AGENTX_PROVIDER`/`AGENTX_MODEL`，适配器会显示交互式运行时启动器：存在已保存默认时先显示快捷菜单，可直接启动，或进入「Change provider / model」重新选择。模型选择支持搜索：输入文字即可按模型 id 过滤列表，↑/↓ 选择、Enter 确认。切换 Provider 会自动为该 Provider 解析模型，并记住每个 Provider 最近使用的模型。完成选择后会自动保存为该客户端的默认运行时，下次启动直接从该默认值开始。非交互场景会自动使用目录中的默认模型。
 
+### 原生启动
+
+Claude Code 和 Codex 在 AgentX 之外都有自己的登录与计费方式，因此两者都支持原生启动——完全绕开 AgentX：不做 Provider/模型解析、不启动本地 Adapter、不注入任何 `ANTHROPIC_*`/`OPENAI_*` 环境变量，客户端的运行方式与你直接手动启动它完全一致。两种方式都可以触发：
+
+```bash
+agentx claude --native
+agentx codex --native
+```
+
+或者在已保存默认值时弹出的快捷菜单中选择「Launch native (skip AgentX)」。`--native` 与 `--provider`/`--model` 同时出现时会静默忽略后者，因为此时已经没有需要 AgentX 配置的内容。`pi` 没有原生模式——它始终依赖一个 OpenAI 兼容后端，因此没有「原生」可以回退。
+
 ## Codex 支持
 
 使用本地 OpenAI 兼容 Responses API 启动 Codex：
@@ -130,6 +141,7 @@ agentx claude
 agentx claude
 agentx claude --model deepseek-v4-flash
 agentx claude --port 9000 --host 127.0.0.1
+agentx claude --native   # 跳过适配器，直接以你自己的环境运行真正的 `claude`
 ```
 
 ### `codex`
@@ -138,6 +150,7 @@ agentx claude --port 9000 --host 127.0.0.1
 
 ```bash
 agentx codex
+agentx codex --native   # 跳过适配器，直接以你自己的环境运行真正的 `codex`
 ```
 
 ### `proxy`
@@ -236,6 +249,8 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 ## 配置
 
 客户端运行时按以下顺序解析：显式 CLI 参数 → 客户端已保存默认值（`runtime.json`）→ `AGENTX_PROVIDER` / `AGENTX_MODEL` → 交互式启动器选择（自动保存为默认值）→ 最近一次选择，最后回退到内置值（`opencode` / `gpt-5.6-luna`）。
+
+对于 `claude`/`codex`，`--native`（或在启动器中选择「Launch native (skip AgentX)」）会完全跳过这条解析链——参见[原生启动](#原生启动)。
 
 | CLI 参数 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |

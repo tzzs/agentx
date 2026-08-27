@@ -105,6 +105,17 @@ When `claude`, `codex`, or `pi` is started on an interactive terminal without `-
 
 The current runtime is loaded from the saved default: a quick-start menu lets you launch immediately or reopen the pickers to change provider / model. The model picker is searchable: type to filter the list by model id, with ↑/↓ to select and Enter to confirm. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Completing the pickers always saves the selection as the client's default, so the next launch starts from it. Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
 
+#### Native launch
+
+Claude Code and Codex have their own login/billing outside AgentX, so both support a native launch that bypasses AgentX entirely: no provider/model resolution, no local adapter, no `ANTHROPIC_*`/`OPENAI_*` environment injection — the client runs exactly as if you had invoked it yourself. Reach it either way:
+
+```bash
+agentx claude --native
+agentx codex --native
+```
+
+or, on the quick-start menu shown when a saved default exists, choose **Launch native (skip AgentX)**. `--native` combined with `--provider`/`--model` silently ignores them, since there is nothing left for AgentX to configure. `pi` has no native mode — it always depends on an OpenAI-compatible backend, so there is nothing "native" to fall back to.
+
 ## Codex
 
 Start Codex with an OpenAI-compatible local Responses endpoint:
@@ -143,6 +154,7 @@ Start the adapter and Claude Code together:
 agentx claude
 agentx claude --model deepseek-v4-flash
 agentx claude --port 9000 --host 127.0.0.1
+agentx claude --native   # skip the adapter; run the real `claude` with your own environment
 ```
 
 ### `codex`
@@ -151,6 +163,7 @@ Start the adapter and Codex together. Codex is launched with `-c` overrides that
 
 ```bash
 agentx codex
+agentx codex --native   # skip the adapter; run the real `codex` with your own environment
 ```
 
 ### `proxy`
@@ -264,6 +277,8 @@ Runtime resolution for agent clients follows this order:
 5. The most recent selection, then built-in defaults (`opencode` / `gpt-5.6-luna`)
 
 Every selection made in the interactive launcher is persisted as the client's default, so the next launch starts from it.
+
+For `claude`/`codex`, `--native` (or **Launch native (skip AgentX)** in the launcher) skips this resolution chain entirely — see [Native launch](#native-launch).
 
 | CLI option | Environment variable | Default | Description |
 | --- | --- | --- | --- |

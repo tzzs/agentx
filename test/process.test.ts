@@ -103,10 +103,8 @@ test("routes the background lane elsewhere only when explicitly configured", () 
 });
 
 test("reports a missing client executable with a typed, actionable error", async () => {
-  const adapter = { port: 8788, token: "tok" } as any;
-  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info" };
   await assert.rejects(
-    () => runCommand("agentx-no-such-client-xyz", [], config as any, adapter, "anthropic"),
+    () => runCommand("agentx-no-such-client-xyz", [], process.env),
     (error: any) => error instanceof ClientNotFoundError && error.executable === "agentx-no-such-client-xyz"
       && /not installed or not on PATH/.test(error.message),
   );
@@ -147,9 +145,7 @@ setInterval(() => {}, 1000);
 import { runCommand } from ${JSON.stringify(processModule)};
 import fs from "node:fs";
 fs.writeFileSync(${JSON.stringify(parentPidFile)}, String(process.pid));
-const config = { host: "127.0.0.1", model: "gpt-5.6-luna", apiKey: "k", logLevel: "info" };
-const adapter = { port: 8788, token: "tok" };
-const code = await runCommand(process.execPath, [${JSON.stringify(childScript)}], config, adapter, "anthropic");
+const code = await runCommand(process.execPath, [${JSON.stringify(childScript)}], process.env);
 fs.writeFileSync(${JSON.stringify(resultFile)}, "exit:" + code);
 process.exit(0);
 `.trim() + "\n");

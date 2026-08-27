@@ -21,3 +21,9 @@ test("codex and pi arguments are forwarded (not dropped)", () => {
   assert.deepEqual(clientArguments(["--quiet"]), ["--quiet"]);
   assert.deepEqual(clientArguments(["--model", "gpt-4", "--resume", "abc"]), ["--resume", "abc"]);
 });
+
+test("strips --native without swallowing the next argument", () => {
+  assert.deepEqual(clientArguments(["--native", "--resume", "abc"]), ["--resume", "abc"]);
+  assert.deepEqual(clientArguments(["--native", "resume", "abc"]), ["resume", "abc"]);
+  assert.deepEqual(clientArguments(["--native=true", "--continue"]), ["--continue"]);
+});

@@ -27,6 +27,8 @@ export interface LauncherOutcome extends RuntimeSelection {
   changed: boolean;
   /** Session-only API key captured by the launcher for the final provider. */
   apiKey?: string;
+  /** True when the user chose to launch the client natively, bypassing the AgentX adapter entirely. */
+  native?: boolean;
 }
 
 export interface ProviderEntry {
@@ -100,11 +102,15 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
   intro(title);
   if (startWithDefault) {
     log.message(`Using: ${providerLabel(provider)} / ${model}`);
-    const shortcut = await selectDefaultAction(provider, model);
+    const shortcut = await selectDefaultAction(provider, model, client);
     if (isCancel(shortcut) || shortcut === "cancel") { cancel(`${clientDisplayName(client)} launch cancelled`); throw new LaunchCancelledError(0); }
     if (shortcut === "start") {
       outro("Ready");
       return { provider, model, madeDefault: false, defaultApplied: true, changed: false, apiKey: sessionKeys.get(provider) };
+    }
+    if (shortcut === "native") {
+      outro("Launching native — adapter skipped");
+      return { provider, model, madeDefault: false, defaultApplied: true, changed: false, native: true };
     }
     if (shortcut === "manage") {
       await runSavedModelManager();
@@ -291,12 +297,18 @@ async function promptCustomModelId(label: string, suggestion: string): Promise<s
  * immediately, enter the full reconfiguration flow, or review/forget saved
  * model ids that are no longer offered upstream.
  */
-async function selectDefaultAction(provider: string, model: string): Promise<string | symbol> {
+/** Clients with their own login/billing outside AgentX, so a native (adapter-free) launch makes sense. */
+const NATIVE_CAPABLE_CLIENTS = new Set(["claude", "codex"]);
+
+async function selectDefaultAction(provider: string, model: string, client: string): Promise<string | symbol> {
   const runtime = `${providerLabel(provider)} / ${model}`;
   return select({
     message: "",
     options: [
       { value: "start", label: "Start", hint: runtime },
+      ...(NATIVE_CAPABLE_CLIENTS.has(client)
+        ? [{ value: "native", label: "Launch native (skip AgentX)", hint: "no adapter, no env overrides" }]
+        : []),
       { value: "change", label: "Change provider / model" },
       { value: "manage", label: "Forget a saved model…", hint: "rename / removed ids" },
       { value: "cancel", label: "Cancel" },
