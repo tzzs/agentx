@@ -33,6 +33,34 @@ function claudeContextEnvironment(config: Config, inherited: NodeJS.ProcessEnv):
   };
 }
 
+/**
+ * Set on every environment AgentX constructs for a launched client — the only
+ * variable whose sole purpose is marking "AgentX built this environment", as
+ * opposed to `AGENTX_MODEL` etc. which users also set by hand as automation
+ * input. Lets `nativeClientEnvironment` tell an ancestor AgentX launch apart
+ * from a genuinely hand-configured environment.
+ */
+const AGENTX_ACTIVE = "AGENTX_ACTIVE";
+
+/** Every variable AgentX itself ever injects into a launched client, across both protocols. */
+const AGENTX_MANAGED_ENV_KEYS = [
+  AGENTX_ACTIVE,
+  "AGENTX_MODEL",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_SMALL_FAST_MODEL",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+  "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+  "OPENAI_BASE_URL",
+  "OPENAI_API_KEY",
+  "OPENAI_MODEL",
+];
+
 export function clientEnvironment(config: Config, adapter: Adapter, client: "anthropic" | "openai"): NodeJS.ProcessEnv {
   const baseUrl = `http://${config.host}:${adapter.port}`;
   const inherited = { ...process.env };
@@ -40,8 +68,27 @@ export function clientEnvironment(config: Config, adapter: Adapter, client: "ant
   delete inherited.ANTHROPIC_AUTH_TOKEN;
   const auxModel = client === "anthropic" ? backgroundModel(config) : config.model;
   return client === "openai"
-    ? { ...inherited, OPENAI_BASE_URL: `${baseUrl}/v1`, OPENAI_API_KEY: adapter.token, OPENAI_MODEL: config.model }
-    : { ...inherited, ...claudeContextEnvironment(config, inherited), AGENTX_MODEL: config.model, ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: adapter.token, ANTHROPIC_MODEL: config.model, ANTHROPIC_DEFAULT_OPUS_MODEL: config.model, ANTHROPIC_DEFAULT_SONNET_MODEL: config.model, ANTHROPIC_DEFAULT_HAIKU_MODEL: auxModel, ANTHROPIC_SMALL_FAST_MODEL: auxModel, CLAUDE_CODE_SUBAGENT_MODEL: config.model };
+    ? { ...inherited, [AGENTX_ACTIVE]: "1", OPENAI_BASE_URL: `${baseUrl}/v1`, OPENAI_API_KEY: adapter.token, OPENAI_MODEL: config.model }
+    : { ...inherited, ...claudeContextEnvironment(config, inherited), [AGENTX_ACTIVE]: "1", AGENTX_MODEL: config.model, ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: adapter.token, ANTHROPIC_MODEL: config.model, ANTHROPIC_DEFAULT_OPUS_MODEL: config.model, ANTHROPIC_DEFAULT_SONNET_MODEL: config.model, ANTHROPIC_DEFAULT_HAIKU_MODEL: auxModel, ANTHROPIC_SMALL_FAST_MODEL: auxModel, CLAUDE_CODE_SUBAGENT_MODEL: config.model };
+}
+
+/**
+ * Environment for a `--native` launch. Normally the inherited environment is
+ * handed through untouched, matching "runs exactly as if you had invoked it
+ * yourself". But `--native` can itself run nested inside a client AgentX
+ * already launched (e.g. `agentx claude --native` typed inside a Claude Code
+ * session that `agentx claude` started) — in that case the inherited
+ * environment still carries AgentX's own ANTHROPIC_ and OPENAI_ overrides from
+ * the outer launch, which would silently point the "native" client right
+ * back at the adapter it's supposed to bypass. `AGENTX_ACTIVE` marks exactly
+ * that case, so it's scrubbed only when actually present — a hand-configured
+ * environment that never went through AgentX is left completely alone.
+ */
+export function nativeClientEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (!env[AGENTX_ACTIVE]) return env;
+  const cleaned = { ...env };
+  for (const key of AGENTX_MANAGED_ENV_KEYS) delete cleaned[key];
+  return cleaned;
 }
 
 /**

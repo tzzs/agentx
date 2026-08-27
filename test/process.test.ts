@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { backgroundModel, clientEnvironment, codexLaunchArgs, runCommand, ClientNotFoundError } from "../src/process.js";
+import { backgroundModel, clientEnvironment, codexLaunchArgs, nativeClientEnvironment, runCommand, ClientNotFoundError } from "../src/process.js";
 
 test("injects OpenAI environment for Codex", async () => {
   const adapter = { port: 8788, token: "local-token" } as any;
@@ -100,6 +100,42 @@ test("routes the background lane elsewhere only when explicitly configured", () 
   // Same value as the main model is a no-op.
   const same = { host: "127.0.0.1", port: 8787, model: "ox-alpha-free", apiKey: "k", logLevel: "info", backgroundModel: "ox-alpha-free" };
   assert.equal(backgroundModel(same), "ox-alpha-free");
+});
+
+test("native launch leaves a hand-configured environment completely untouched", () => {
+  // No AGENTX_ACTIVE marker: this environment never went through AgentX, even
+  // though it happens to set a variable AgentX also uses (an enterprise
+  // ANTHROPIC_BASE_URL proxy, say) — native mode must not second-guess it.
+  const env = { PATH: "/usr/bin", ANTHROPIC_BASE_URL: "https://my-enterprise-proxy.example.com" };
+  assert.deepEqual(nativeClientEnvironment(env), env);
+});
+
+test("native launch scrubs AgentX's own variables when nested inside an AgentX-launched client", () => {
+  const adapter = { port: 8788, token: "local-token" } as any;
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info" };
+  // Models the reported bug: a Claude Code session started by `agentx claude`
+  // (so its process env carries AgentX's overrides) runs `agentx claude
+  // --native` from inside itself. The nested launch must not inherit the
+  // outer adapter's ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN et al.
+  const contaminated = { ...clientEnvironment(config, adapter, "anthropic"), PATH: "/usr/bin", HOME: "/home/user" };
+  const cleaned = nativeClientEnvironment(contaminated);
+  for (const key of ["AGENTX_ACTIVE", "AGENTX_MODEL", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"]) {
+    assert.equal(cleaned[key], undefined, `${key} should have been scrubbed`);
+  }
+  assert.equal(cleaned.PATH, "/usr/bin");
+  assert.equal(cleaned.HOME, "/home/user");
+});
+
+test("native launch scrubs Codex's OpenAI variables the same way", () => {
+  const adapter = { port: 8788, token: "local-token" } as any;
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info" };
+  const contaminated = { ...clientEnvironment(config, adapter, "openai"), PATH: "/usr/bin" };
+  const cleaned = nativeClientEnvironment(contaminated);
+  assert.equal(cleaned.AGENTX_ACTIVE, undefined);
+  assert.equal(cleaned.OPENAI_BASE_URL, undefined);
+  assert.equal(cleaned.OPENAI_API_KEY, undefined);
+  assert.equal(cleaned.OPENAI_MODEL, undefined);
+  assert.equal(cleaned.PATH, "/usr/bin");
 });
 
 test("reports a missing client executable with a typed, actionable error", async () => {

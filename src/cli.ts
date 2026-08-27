@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { loadConfig, parseCliOptions as options } from "./config.js";
 import { startAdapter } from "./server.js";
-import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, clientEnvironment, codexLaunchArgs } from "./process.js";
+import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, clientEnvironment, codexLaunchArgs, nativeClientEnvironment } from "./process.js";
 import { runInteractiveLauncher, runSavedModelManager, LaunchCancelledError } from "./ui.js";
 import { credentialEnvName, providerById, refreshProviderCatalog, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerDisplayName } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
@@ -307,12 +307,16 @@ async function main() {
 
   if (nativeRequested) {
     // Bypass AgentX entirely: no catalog, credential, config, or adapter
-    // involvement, and the client's environment is left exactly as inherited
-    // (no ANTHROPIC_*/OPENAI_* overrides), so it behaves as if launched by hand.
+    // involvement, and the client's environment is left as inherited (no
+    // ANTHROPIC_*/OPENAI_* overrides), so it behaves as if launched by hand.
+    // nativeClientEnvironment additionally scrubs AgentX's own variables when
+    // this process is itself nested inside a client AgentX already launched
+    // (e.g. `agentx claude --native` typed inside an agentx-started Claude
+    // Code session) — see its doc comment in process.ts.
     const separator = args.indexOf("--");
     const commandArgs = separator >= 0 ? args.slice(separator + 1) : clientArguments(args);
     console.error(`AgentX\n✓ Client: ${CLIENT_LABELS[command]} (native — adapter skipped)`);
-    process.exitCode = await launchClient(command, commandArgs, process.env);
+    process.exitCode = await launchClient(command, commandArgs, nativeClientEnvironment(process.env));
     return;
   }
 

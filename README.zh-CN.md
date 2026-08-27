@@ -103,6 +103,8 @@ agentx codex --native
 
 或者在已保存默认值时弹出的快捷菜单中选择「Launch native (skip AgentX)」。`--native` 与 `--provider`/`--model` 同时出现时会静默忽略后者，因为此时已经没有需要 AgentX 配置的内容。`pi` 没有原生模式——它始终依赖一个 OpenAI 兼容后端，因此没有「原生」可以回退。
 
+如果 `--native` 是嵌套运行在 AgentX 自己启动的客户端内部——例如在由 `agentx claude` 启动的 Claude Code 会话中再次输入 `agentx claude --native`——继承到的环境仍然带着外层启动注入的 `ANTHROPIC_*`/`OPENAI_*` 覆盖值。AgentX 会检测到这种情况（依据它在每个自建环境中都会设置的一个内部标记），并在启动子进程前只清除自己注入的那些变量，使嵌套的客户端仍然以原生方式启动，而不是悄悄指回本该被跳过的 Adapter。一个从未经过 AgentX 的、纯手工配置的环境——即便其中恰好使用了相同的变量名——则完全不会被改动。
+
 ## Codex 支持
 
 使用本地 OpenAI 兼容 Responses API 启动 Codex：

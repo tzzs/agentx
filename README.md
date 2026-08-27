@@ -116,6 +116,8 @@ agentx codex --native
 
 or, on the quick-start menu shown when a saved default exists, choose **Launch native (skip AgentX)**. `--native` combined with `--provider`/`--model` silently ignores them, since there is nothing left for AgentX to configure. `pi` has no native mode — it always depends on an OpenAI-compatible backend, so there is nothing "native" to fall back to.
 
+If `--native` runs nested inside a client AgentX itself launched — for example, typing `agentx claude --native` inside a Claude Code session started by `agentx claude` — the inherited environment still carries the outer launch's `ANTHROPIC_*`/`OPENAI_*` overrides. AgentX detects this (via an internal marker set on every environment it constructs) and strips exactly its own variables before spawning, so the nested client still starts native instead of silently pointing back at the adapter it's meant to skip. A hand-configured environment that never went through AgentX — including one that happens to set the same variable names for your own purposes — is left completely untouched.
+
 ## Codex
 
 Start Codex with an OpenAI-compatible local Responses endpoint:
