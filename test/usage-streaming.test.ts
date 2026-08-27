@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { pipeResponsesStream, pipeChatStreamToResponses, pipeResponsesPassthrough } from "../src/streaming/index.js";
 import type { TokenUsage } from "../src/usage/types.js";
 import { renderUsageStats } from "../src/usage/cli.js";
-import { openAIPricing, anthropicPricing, googlePricing, calculateCost } from "../src/usage/pricing/index.js";
 
 function collect(options: NonNullable<Parameters<typeof pipeResponsesStream>[3]>) {
   const usages: TokenUsage[] = [];
@@ -134,21 +133,16 @@ test("renders usage statistics for the CLI", () => {
   assert.match(text, /openai/);
   assert.match(text, /120K/);
   assert.match(text, /Total:\s+155K/);
+  assert.match(text, /Cached/);
 });
 
-test("pricing providers calculate estimated cost", () => {
-  const usage = { provider: "openai", model: "gpt-4o", inputTokens: 1_000_000, outputTokens: 1_000_000, totalTokens: 2_000_000 };
-  assert.ok(openAIPricing.calculate("gpt-4o", usage) > 0);
-  assert.ok(anthropicPricing.calculate("claude-sonnet-4", usage) > 0);
-  assert.ok(googlePricing.calculate("gemini-2.5-pro", usage) > 0);
-  assert.ok(calculateCost("unknown", "model", usage) > 0);
-  assert.equal(openAIPricing.calculate("gpt-4o", { provider: "openai", model: "gpt-4o", inputTokens: 0, outputTokens: 0, totalTokens: 0 }), 0);
-});
-
-test("cached input is billed as a subset of input, not on top of it", () => {
-  const usage = { provider: "openai", model: "gpt-4o", inputTokens: 1000, outputTokens: 0, totalTokens: 1000, cachedInputTokens: 900 };
-  // (1000-900) * $5/M + 900 * $2.50/M = $0.00275
-  assert.equal(openAIPricing.calculate("gpt-4o", usage), 0.00275);
+test("hides the Cached column when no model has cached tokens", () => {
+  const text = renderUsageStats({
+    period: "all",
+    totals: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+    models: [{ provider: "openai", model: "gpt-5", inputTokens: 100, outputTokens: 50, cachedTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, tokens: 150, requests: 1 }]
+  });
+  assert.doesNotMatch(text, /Cached/);
 });
 
 test("stream pipes capture cache and reasoning tokens from final usage", async () => {

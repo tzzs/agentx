@@ -1,4 +1,5 @@
 import { providerById } from "./providers/registry.js";
+import { resolveCredential } from "./credentials.js";
 
 export interface UsageResult {
   provider: string;
@@ -43,3 +44,11 @@ export async function queryProviderUsage(providerId: string, apiKey: string): Pr
 }
 
 export function usageProvider(id?: string) { return providerById(id ?? process.env.AGENTX_PROVIDER ?? "opencode"); }
+
+/** Resolve credentials, query quota, and format the result; shared by `agentx quota` and the deprecated `agentx usage --provider`. */
+export async function runQuotaCommand(providerId: string | undefined): Promise<{ output: string; exitCode: number }> {
+  const provider = usageProvider(providerId);
+  const key = provider.id === "opencode" ? "" : await resolveCredential(provider);
+  const result = await queryProviderUsage(provider.id, key);
+  return { output: JSON.stringify(result, null, 2), exitCode: !result.success && result.supported ? 1 : 0 };
+}
