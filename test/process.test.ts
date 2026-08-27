@@ -156,7 +156,9 @@ async function waitForFile(path: string, child?: any, timeoutMs = 5000) {
   throw new Error(`Timed out waiting for ${path}`);
 }
 
-test("forwards SIGTERM but not SIGINT to the child", async () => {
+test("forwards SIGTERM but not SIGINT to the child", {
+  skip: process.platform === "win32" && "process.kill(pid, signal) does not emulate POSIX signal delivery/process groups on Windows, so this scenario has no equivalent there",
+}, async () => {
   const dir = mkdtempSync(join(tmpdir(), "agentx-sig-"));
   const parentPidFile = join(dir, "parent.pid");
   const childPidFile = join(dir, "child.pid");
