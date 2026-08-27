@@ -2,4 +2,6 @@
 export { pipeChatStreamToResponses } from "./chat-to-responses.js";
 export { pipeResponsesPassthrough } from "./responses-passthrough.js";
 export { pipeResponsesStream } from "./to-anthropic.js";
+export { pipeAnthropicPassthrough } from "./anthropic-passthrough.js";
+export { pipeAnthropicStreamToResponses } from "./anthropic-to-responses.js";
 export type { StreamUsageOptions } from "./common.js";

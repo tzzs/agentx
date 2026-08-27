@@ -171,3 +171,140 @@ export function responsesResponseFailure(response: any): string | undefined {
 }
 
 function parseArguments(value: unknown): unknown { try { return typeof value === "string" ? JSON.parse(value) : value ?? {}; } catch { return {}; } }
+
+/**
+ * Responses ↔ Anthropic, the direction this file did not previously need:
+ * a custom provider can speak native Anthropic Messages API, and Codex
+ * (which only ever sees the local Responses endpoint) still needs to reach
+ * it. `toResponsesRequest`/`fromResponsesResponse` above assume the upstream
+ * is Responses-shaped; these two assume the upstream is Anthropic-shaped.
+ */
+
+/** Convert Responses tool-choice variants to Anthropic's object-shaped tool_choice ({"type": "auto"|"any"|"none"|"tool", name?}). */
+function anthropicToolChoice(value: unknown): unknown {
+  if (typeof value === "string") {
+    if (value === "none" || value === "auto") return { type: value };
+    if (value === "required") return { type: "any" };
+    return undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const choice = value as { type?: string; name?: string };
+  if (choice.type === "function" && typeof choice.name === "string") return { type: "tool", name: choice.name };
+  return undefined;
+}
+
+/**
+ * Map a Responses `reasoning.effort` string to Anthropic's extended-thinking
+ * control. Anthropic requires a concrete `budget_tokens` when thinking is
+ * enabled but a Responses effort string carries no token budget, so these are
+ * reasonable tiered defaults rather than a value derived from the request —
+ * the same kind of approximation `reasoningEffort()` above already makes
+ * collapsing effort levels into Chat Completions' three-value scale.
+ */
+function anthropicThinking(effort: unknown): AnthropicThinking | undefined {
+  if (typeof effort !== "string") return undefined;
+  if (effort === "none") return { type: "disabled" };
+  if (effort === "low") return { type: "enabled", budget_tokens: 4096 };
+  if (effort === "max") return { type: "enabled", budget_tokens: 32000 };
+  if (effort === "medium" || effort === "high" || effort === "xhigh" || effort === "ultracode") return { type: "enabled", budget_tokens: 16000 };
+  return undefined;
+}
+
+/** Build an Anthropic image content block from a Responses `input_image.image_url`, which may be a real URL or a data: URI. */
+function toAnthropicImageSource(url: string): { type: "url"; url: string } | { type: "base64"; media_type: string; data: string } | undefined {
+  const dataMatch = /^data:([^;]+);base64,(.+)$/.exec(url);
+  if (dataMatch) return { type: "base64", media_type: dataMatch[1], data: dataMatch[2] };
+  return url ? { type: "url", url } : undefined;
+}
+
+/** Responses message content (string or input_text/input_image parts) to Anthropic message content. */
+function toAnthropicContent(content: any): any {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts = content.map((part: any) => {
+    if (part?.type === "input_text" || part?.type === "output_text") return part.text ? { type: "text", text: part.text } : undefined;
+    if (part?.type === "input_image" && typeof part.image_url === "string") { const source = toAnthropicImageSource(part.image_url); return source ? { type: "image", source } : undefined; }
+    return undefined;
+  }).filter((part: any) => part !== undefined);
+  if (!parts.length) return "";
+  return parts.every((part: any) => part.type === "text") ? parts.map((part: any) => part.text).join("") : parts;
+}
+
+/** Plain text of a Responses message item's content, ignoring non-text parts. */
+function responsesItemText(content: any): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.filter((part: any) => part?.type === "output_text" || part?.type === "input_text").map((part: any) => part.text ?? "").join("");
+}
+
+export function toAnthropicRequest(input: any, model: string): Record<string, unknown> {
+  const items = typeof input.input === "string" ? [{ role: "user", content: input.input }] : input.input ?? [];
+  const messages: AnthropicMessage[] = [];
+  // Responses represents one assistant turn as separate top-level items
+  // (a message item for text, a function_call item per tool call); Anthropic
+  // wants them merged back into one assistant message's content blocks.
+  let pendingAssistantBlocks: any[] = [];
+  const flushAssistant = () => { if (pendingAssistantBlocks.length) { messages.push({ role: "assistant", content: pendingAssistantBlocks }); pendingAssistantBlocks = []; } };
+  for (const item of items) {
+    if (item.type === "reasoning") continue; // no signature to echo upstream; dropped like other local-only reasoning echoes
+    if (item.type === "function_call") { pendingAssistantBlocks.push({ type: "tool_use", id: item.call_id ?? item.id, name: item.name, input: parseArguments(item.arguments) }); continue; }
+    if (item.type === "function_call_output") {
+      flushAssistant();
+      messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: item.call_id, content: typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "") }] });
+      continue;
+    }
+    if (item.role === "assistant") { const text = responsesItemText(item.content); if (text) pendingAssistantBlocks.push({ type: "text", text }); continue; }
+    if (item.role) { flushAssistant(); messages.push({ role: item.role === "developer" ? "user" : item.role, content: toAnthropicContent(item.content) }); }
+  }
+  flushAssistant();
+
+  const thinking = anthropicThinking(input.reasoning?.effort);
+  const toolChoice = anthropicToolChoice(input.tool_choice);
+  const tools = Array.isArray(input.tools)
+    ? input.tools.filter((tool: any) => typeof tool?.name === "string").map((tool: any) => ({ name: tool.name, ...(tool.description === undefined ? {} : { description: tool.description }), input_schema: tool.parameters ?? { type: "object", properties: {} } }))
+    : undefined;
+  return {
+    model,
+    messages,
+    // Anthropic requires max_tokens; a Responses caller that omits max_output_tokens still needs a concrete value sent upstream.
+    max_tokens: input.max_output_tokens ?? 4096,
+    ...(input.instructions ? { system: input.instructions } : {}),
+    ...(input.stream ? { stream: true } : {}),
+    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+    ...(input.top_p === undefined ? {} : { top_p: input.top_p }),
+    ...(thinking ? { thinking } : {}),
+    ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
+    ...(tools?.length ? { tools } : {}),
+  };
+}
+
+export function fromAnthropicResponse(response: any, model: string): Record<string, unknown> {
+  const content = Array.isArray(response.content) ? response.content : [];
+  const output: any[] = [];
+  const thinkingText = content.filter((part: any) => part?.type === "thinking").map((part: any) => part.thinking ?? "").join("");
+  if (thinkingText) output.push({ type: "reasoning", id: `rs_${crypto.randomUUID()}`, summary: [{ type: "summary_text", text: thinkingText }] });
+  const text = content.filter((part: any) => part?.type === "text").map((part: any) => part.text ?? "").join("");
+  if (text) output.push({ type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text }] });
+  for (const part of content) {
+    if (part?.type !== "tool_use") continue;
+    output.push({ type: "function_call", call_id: part.id, name: part.name, arguments: JSON.stringify(part.input ?? {}), status: "completed" });
+  }
+  const incomplete = response.stop_reason === "max_tokens";
+  const inputTokens = response.usage?.input_tokens ?? 0;
+  const outputTokens = response.usage?.output_tokens ?? 0;
+  const cached = response.usage?.cache_read_input_tokens;
+  return {
+    id: response.id ?? `resp_${crypto.randomUUID()}`,
+    object: "response",
+    status: incomplete ? "incomplete" : "completed",
+    model,
+    output,
+    usage: {
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: inputTokens + outputTokens,
+      ...(cached !== undefined && cached !== null ? { input_tokens_details: { cached_tokens: Number(cached) } } : {}),
+    },
+    ...(incomplete ? { incomplete_details: { reason: "max_output_tokens" } } : {}),
+  };
+}

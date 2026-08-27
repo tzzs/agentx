@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chatThinking, chatToolChoice, fromResponsesResponse, reasoningEffort, responsesResponseFailure, responsesToolChoice, toResponsesRequest } from "../src/providers.js";
+import { chatThinking, chatToolChoice, fromAnthropicResponse, fromResponsesResponse, reasoningEffort, responsesResponseFailure, responsesToolChoice, toAnthropicRequest, toResponsesRequest } from "../src/providers.js";
 
 test("converts Anthropic request to Responses request", () => {
   assert.deepEqual(toResponsesRequest({ system: "Be concise", max_tokens: 10, messages: [{ role: "user", content: "Hi" }] }, "gpt-5.6-luna"), { model: "gpt-5.6-luna", input: [{ role: "user", content: "Hi" }], instructions: "Be concise", max_output_tokens: 10 });
@@ -91,4 +91,77 @@ test("flags a failed or truly incomplete Responses result but not a length-limit
   assert.match(responsesResponseFailure({ status: "incomplete", incomplete_details: { reason: "content_filter" } }) ?? "", /content_filter/);
   assert.equal(responsesResponseFailure({ status: "incomplete", incomplete_details: { reason: "max_output_tokens" } }), undefined);
   assert.equal(responsesResponseFailure({ status: "completed" }), undefined);
+});
+
+// --- Responses <-> Anthropic (custom providers whose upstream speaks native Anthropic Messages API) ---
+
+test("converts a basic Responses request to an Anthropic request", () => {
+  const result = toAnthropicRequest({ instructions: "Be concise", input: "Hi", max_output_tokens: 10 }, "claude-x") as any;
+  assert.deepEqual(result, { model: "claude-x", messages: [{ role: "user", content: "Hi" }], max_tokens: 10, system: "Be concise" });
+});
+
+test("defaults max_tokens when the Responses request omits max_output_tokens (Anthropic requires it)", () => {
+  const result = toAnthropicRequest({ input: "Hi" }, "claude-x") as any;
+  assert.equal(result.max_tokens, 4096);
+});
+
+test("converts Responses tools and tool_choice to Anthropic shape", () => {
+  const result = toAnthropicRequest({
+    input: "Hi",
+    tools: [{ type: "function", name: "bash", description: "Run a command", parameters: { type: "object" } }],
+    tool_choice: { type: "function", name: "bash" },
+  }, "claude-x") as any;
+  assert.deepEqual(result.tools, [{ name: "bash", description: "Run a command", input_schema: { type: "object" } }]);
+  assert.deepEqual(result.tool_choice, { type: "tool", name: "bash" });
+});
+
+test("maps Responses reasoning.effort to Anthropic thinking with a token budget", () => {
+  assert.deepEqual((toAnthropicRequest({ input: "Hi", reasoning: { effort: "none" } }, "claude-x") as any).thinking, { type: "disabled" });
+  assert.deepEqual((toAnthropicRequest({ input: "Hi", reasoning: { effort: "high" } }, "claude-x") as any).thinking, { type: "enabled", budget_tokens: 16000 });
+  assert.equal((toAnthropicRequest({ input: "Hi" }, "claude-x") as any).thinking, undefined);
+});
+
+test("merges a Responses turn's separate function_call items back into one Anthropic assistant message", () => {
+  const result = toAnthropicRequest({
+    input: [
+      { role: "user", content: "run ls" },
+      { role: "assistant", content: [{ type: "output_text", text: "Sure," }] },
+      { type: "function_call", call_id: "call_1", name: "bash", arguments: '{"cmd":"ls"}' },
+      { type: "function_call_output", call_id: "call_1", output: "file.txt" },
+      { role: "assistant", content: [{ type: "output_text", text: "Done." }] },
+    ],
+  }, "claude-x") as any;
+  assert.deepEqual(result.messages, [
+    { role: "user", content: "run ls" },
+    { role: "assistant", content: [{ type: "text", text: "Sure," }, { type: "tool_use", id: "call_1", name: "bash", input: { cmd: "ls" } }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "file.txt" }] },
+    { role: "assistant", content: [{ type: "text", text: "Done." }] },
+  ]);
+});
+
+test("drops reasoning items from a Responses request (no signature to echo upstream)", () => {
+  const result = toAnthropicRequest({ input: [{ type: "reasoning", summary: [{ type: "summary_text", text: "thinking…" }] }, { role: "user", content: "go" }] }, "claude-x") as any;
+  assert.deepEqual(result.messages, [{ role: "user", content: "go" }]);
+});
+
+test("converts an Anthropic response's content blocks to Responses output items", () => {
+  const result = fromAnthropicResponse({
+    id: "msg_1",
+    content: [{ type: "thinking", thinking: "let me think" }, { type: "text", text: "OK" }, { type: "tool_use", id: "call_1", name: "bash", input: { cmd: "ls" } }],
+    stop_reason: "tool_use",
+    usage: { input_tokens: 50, output_tokens: 9, cache_read_input_tokens: 40 },
+  }, "claude-x") as any;
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.output[0], { type: "reasoning", id: result.output[0].id, summary: [{ type: "summary_text", text: "let me think" }] });
+  assert.deepEqual(result.output[1], { type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "OK" }] });
+  assert.deepEqual(result.output[2], { type: "function_call", call_id: "call_1", name: "bash", arguments: '{"cmd":"ls"}', status: "completed" });
+  assert.equal(result.usage.input_tokens, 50);
+  assert.equal(result.usage.output_tokens, 9);
+  assert.deepEqual(result.usage.input_tokens_details, { cached_tokens: 40 });
+});
+
+test("marks an Anthropic response incomplete when stop_reason is max_tokens", () => {
+  const result = fromAnthropicResponse({ id: "msg_1", content: [{ type: "text", text: "cut off" }], stop_reason: "max_tokens", usage: { input_tokens: 1, output_tokens: 1 } }, "claude-x") as any;
+  assert.equal(result.status, "incomplete");
+  assert.deepEqual(result.incomplete_details, { reason: "max_output_tokens" });
 });

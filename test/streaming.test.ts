@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream } from "../src/streaming/index.js";
+import { pipeAnthropicPassthrough, pipeAnthropicStreamToResponses, pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream } from "../src/streaming/index.js";
+import type { TokenUsage } from "../src/usage/types.js";
 
 function sink() {
   let text = "";
@@ -238,4 +239,123 @@ test("finalizes the assistant message item for Codex turn collection", async () 
   assert.match(output.text, /event: response\.output_item\.added\ndata: .*"item":\{"type":"message","id":"msg_/);
   assert.match(output.text, /event: response\.output_item\.done\ndata: \{"type":"response\.output_item\.done","output_index":0,"item":\{"type":"message","id":"msg_.*?"status":"completed","content":\[\{"type":"output_text","text":"ok"\}\]\}/);
   assert.match(output.text, /"usage":\{"input_tokens":2,"output_tokens":1,"total_tokens":3\}/);
+});
+
+// --- pipeAnthropicPassthrough: Claude Code <-> a custom provider that already speaks Anthropic ---
+
+test("pipeAnthropicPassthrough forwards a native Anthropic SSE stream byte-for-byte and captures usage", async () => {
+  const chunks = [
+    'data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":0}}}\n\n',
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}\n\n',
+    'data: {"type":"content_block_stop","index":0}\n\n',
+    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}\n\n',
+    'data: {"type":"message_stop"}\n\n',
+  ];
+  const upstream = scriptedUpstream(chunks);
+  const output = sink();
+  const usages: TokenUsage[] = [];
+  await pipeAnthropicPassthrough(upstream, output as never, "claude-x", { provider: "custom", model: "claude-x", protocol: "anthropic", onUsage: (usage) => usages.push(usage) });
+  // Byte-faithful: every upstream chunk appears verbatim in the forwarded output.
+  for (const chunk of chunks) assert.ok(output.text.includes(chunk));
+  assert.equal(usages[0].inputTokens, 10);
+  assert.equal(usages[0].outputTokens, 5);
+});
+
+test("pipeAnthropicPassthrough emits an Anthropic error event on upstream failure", async () => {
+  const upstream = failingUpstream('data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}\n\n');
+  const output = sink();
+  await pipeAnthropicPassthrough(upstream, output as never, "claude-x");
+  assert.match(output.text, /event: error/); assert.match(output.text, /connection reset/);
+});
+
+// --- pipeAnthropicStreamToResponses: Codex <-> a custom provider that already speaks Anthropic ---
+
+test("pipeAnthropicStreamToResponses translates text deltas into Responses events", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"type":"message_start","message":{"usage":{"input_tokens":5,"output_tokens":0}}}\n\n',
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}\n\n',
+    'data: {"type":"content_block_stop","index":0}\n\n',
+    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n',
+    'data: {"type":"message_stop"}\n\n',
+  ]);
+  const output = sink();
+  await pipeAnthropicStreamToResponses(upstream, output as never, "claude-x");
+  assert.match(output.text, /event: response\.output_text\.delta\ndata: .*"delta":"Hi"/);
+  assert.match(output.text, /event: response\.completed/);
+  assert.match(output.text, /data: \[DONE\]/);
+});
+
+test("pipeAnthropicStreamToResponses translates a tool_use content block into a Responses function call", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"bash"}}\n\n',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"cmd\\":\\"ls\\"}"}}\n\n',
+    'data: {"type":"content_block_stop","index":0}\n\n',
+    'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":3}}\n\n',
+    'data: {"type":"message_stop"}\n\n',
+  ]);
+  const output = sink();
+  await pipeAnthropicStreamToResponses(upstream, output as never, "claude-x");
+  assert.match(output.text, /"type":"function_call"/); assert.match(output.text, /"name":"bash"/);
+  assert.match(output.text, /event: response\.function_call_arguments\.delta/); assert.match(output.text, /cmd/);
+});
+
+test("pipeAnthropicStreamToResponses translates thinking deltas into Responses reasoning events, ahead of the answer text", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}\n\n',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"pondering"}}\n\n',
+    'data: {"type":"content_block_stop","index":0}\n\n',
+    'data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}\n\n',
+    'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Answer"}}\n\n',
+    'data: {"type":"content_block_stop","index":1}\n\n',
+    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}\n\n',
+    'data: {"type":"message_stop"}\n\n',
+  ]);
+  const output = sink();
+  await pipeAnthropicStreamToResponses(upstream, output as never, "claude-x");
+  assert.match(output.text, /event: response\.reasoning_summary_text\.delta\ndata: .*"delta":"pondering"/);
+  assert.match(output.text, /event: response\.output_text\.delta\ndata: .*"delta":"Answer"/);
+  assert.ok(output.text.indexOf('"pondering"') < output.text.indexOf('"delta":"Answer"'));
+});
+
+test("pipeAnthropicStreamToResponses reports input/output/cached usage from message_start and message_delta", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"type":"message_start","message":{"usage":{"input_tokens":50}}}\n\n',
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}\n\n',
+    'data: {"type":"content_block_stop","index":0}\n\n',
+    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9,"cache_read_input_tokens":40}}\n\n',
+    'data: {"type":"message_stop"}\n\n',
+  ]);
+  const output = sink();
+  const usages: TokenUsage[] = [];
+  await pipeAnthropicStreamToResponses(upstream, output as never, "claude-x", { provider: "custom", model: "claude-x", protocol: "anthropic", onUsage: (usage) => usages.push(usage) });
+  assert.equal(usages[0].inputTokens, 50);
+  assert.equal(usages[0].outputTokens, 9);
+  assert.equal(usages[0].cachedInputTokens, 40);
+});
+
+test("pipeAnthropicStreamToResponses emits response.failed when the upstream stream fails mid-flight", async () => {
+  const upstream = failingUpstream('data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}\n\n');
+  const output = sink();
+  await pipeAnthropicStreamToResponses(upstream, output as never, "claude-x");
+  assert.match(output.text, /event: response\.failed/); assert.match(output.text, /connection reset/);
+});
+
+test("pipeAnthropicStreamToResponses ends the stream with an error on an in-band error event", async () => {
+  const upstream = scriptedUpstream([
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}\n\n',
+    'data: {"type":"error","error":{"type":"overloaded_error","message":"provider overloaded"}}\n\n',
+  ]);
+  const output = sink();
+  await pipeAnthropicStreamToResponses(upstream, output as never, "claude-x");
+  assert.match(output.text, /event: response\.failed/); assert.match(output.text, /provider overloaded/); assert.doesNotMatch(output.text, /response\.completed/);
+});
+
+test("pipeAnthropicStreamToResponses treats a stream with no message_stop as a dropped connection", async () => {
+  const upstream = scriptedUpstream(['data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}\n\n']);
+  const output = sink();
+  await pipeAnthropicStreamToResponses(upstream, output as never, "claude-x");
+  assert.match(output.text, /event: response\.failed/); assert.doesNotMatch(output.text, /response\.completed/);
 });

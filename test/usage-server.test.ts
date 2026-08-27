@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { startAdapter } from "../src/server.js";
 import { createUsageStore } from "../src/usage/storage.js";
 
-const config = { host: "127.0.0.1", port: 0, model: "gpt-5.6-luna", provider: "opencode", apiKey: "test-key", logLevel: "info" };
+const config = { host: "127.0.0.1", port: 0, model: "gpt-5.6-luna", provider: "opencode", apiKey: "test-key", logLevel: "info", retry: 0 };
 
 async function call(adapter: Awaited<ReturnType<typeof startAdapter>>, path: string, method = "GET", body?: any, headers: Record<string, string> = {}) {
   const response = await fetch(`http://127.0.0.1:${adapter.port}${path}`, {

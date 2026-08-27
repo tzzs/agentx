@@ -77,6 +77,7 @@ export async function drain(reader: ReadableStreamDefaultReader<Uint8Array>, con
 export function cacheTokensOf(usage: any): { cached?: number; reasoning?: number } {
   const cached = usage?.prompt_tokens_details?.cached_tokens
     ?? usage?.input_tokens_details?.cached_tokens
+    ?? usage?.cache_read_input_tokens
     ?? usage?.cached_tokens;
   const reasoning = usage?.completion_tokens_details?.reasoning_tokens ?? usage?.output_tokens_details?.reasoning_tokens;
   return {

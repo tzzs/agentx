@@ -8,7 +8,7 @@ import { backgroundModel, clientEnvironment, codexLaunchArgs, nativeClientEnviro
 
 test("injects OpenAI environment for Codex", async () => {
   const adapter = { port: 8788, token: "local-token" } as any;
-  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "upstream", logLevel: "info" };
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "upstream", logLevel: "info", retry: 0 };
   const env = clientEnvironment(config, adapter, "openai");
   assert.equal(env.OPENAI_BASE_URL, "http://127.0.0.1:8788/v1"); assert.equal(env.OPENAI_API_KEY, "local-token"); assert.equal(env.OPENAI_MODEL, "gpt-5.6-luna");
   const anthropicEnv = clientEnvironment(config, adapter, "anthropic");
@@ -17,7 +17,7 @@ test("injects OpenAI environment for Codex", async () => {
 
 test("points Codex at the local adapter via -c provider overrides", () => {
   const adapter = { port: 8788, token: "local-token" } as any;
-  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "upstream", logLevel: "info" };
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "upstream", logLevel: "info", retry: 0 };
   assert.deepEqual(codexLaunchArgs(config as any, adapter), [
     "-c", "model_provider='agentx'",
     "-c", "model_providers.agentx.name='AgentX'",
@@ -30,14 +30,14 @@ test("points Codex at the local adapter via -c provider overrides", () => {
 
 test("attaches the generated model catalog when one was written", () => {
   const adapter = { port: 8788, token: "tok" } as any;
-  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info" };
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", retry: 0 };
   const args = codexLaunchArgs(config as any, adapter, "/tmp/catalog/models.json");
   assert.deepEqual(args.slice(10), ["-c", "model_catalog_json='/tmp/catalog/models.json'", "-m", "gpt-5.6-luna"]);
 });
 
 test("keeps every Claude Code tier on the selected model by default", async () => {
   const adapter = { port: 8788, token: "local-token" } as any;
-  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info" };
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", retry: 0 };
   const env = clientEnvironment(config, adapter, "anthropic");
   // User choice wins by default: no tier is silently redirected elsewhere.
   assert.equal(env.ANTHROPIC_MODEL, "gpt-5.6-luna");
@@ -50,27 +50,27 @@ test("keeps every Claude Code tier on the selected model by default", async () =
 
 test("declares DeepSeek's real context window so Claude Code stops auto-compacting at 200k", () => {
   const adapter = { port: 8788, token: "local-token" } as any;
-  const config = { host: "127.0.0.1", port: 8787, model: "deepseek-v4-flash", apiKey: "k", logLevel: "info" };
+  const config = { host: "127.0.0.1", port: 8787, model: "deepseek-v4-flash", apiKey: "k", logLevel: "info", retry: 0 };
   const env = clientEnvironment(config as any, adapter, "anthropic");
   assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "1000000");
   assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, "786432");
 });
 test("leaves Claude Code's own context window management alone for non-DeepSeek models", () => {
   const adapter = { port: 8788, token: "local-token" } as any;
-  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info" };
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", retry: 0 };
   const env = clientEnvironment(config as any, adapter, "anthropic");
   assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined);
   assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, undefined);
 });
 test("declares the DeepSeek context window when only the background tier uses it", () => {
   const adapter = { port: 8788, token: "local-token" } as any;
-  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", backgroundModel: "deepseek-v4-pro" };
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", retry: 0, backgroundModel: "deepseek-v4-pro" };
   const env = clientEnvironment(config as any, adapter, "anthropic");
   assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "1000000");
 });
 test("never sets the DeepSeek context window for the Codex/OpenAI client", () => {
   const adapter = { port: 8788, token: "local-token" } as any;
-  const config = { host: "127.0.0.1", port: 8787, model: "deepseek-v4-flash", apiKey: "k", logLevel: "info" };
+  const config = { host: "127.0.0.1", port: 8787, model: "deepseek-v4-flash", apiKey: "k", logLevel: "info", retry: 0 };
   const env = clientEnvironment(config as any, adapter, "openai");
   assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined);
 });
@@ -80,7 +80,7 @@ test("keeps an operator-set context window instead of overriding it", () => {
   delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
   try {
     const adapter = { port: 8788, token: "local-token" } as any;
-    const config = { host: "127.0.0.1", port: 8787, model: "deepseek-v4-flash", apiKey: "k", logLevel: "info" };
+    const config = { host: "127.0.0.1", port: 8787, model: "deepseek-v4-flash", apiKey: "k", logLevel: "info", retry: 0 };
     const env = clientEnvironment(config as any, adapter, "anthropic");
     assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "500000");
     assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, "786432");
@@ -92,13 +92,13 @@ test("keeps an operator-set context window instead of overriding it", () => {
 
 test("routes the background lane elsewhere only when explicitly configured", () => {
   // Opt-in override for the haiku/background tier.
-  const optedIn = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", backgroundModel: "deepseek-v4-flash" };
+  const optedIn = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", retry: 0, backgroundModel: "deepseek-v4-flash" };
   assert.equal(backgroundModel(optedIn), "deepseek-v4-flash");
   // An unresolvable override must not break startup; the main model is kept.
-  const unknown = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", backgroundModel: "no-such-model" };
+  const unknown = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", retry: 0, backgroundModel: "no-such-model" };
   assert.equal(backgroundModel(unknown), "gpt-5.6-luna");
   // Same value as the main model is a no-op.
-  const same = { host: "127.0.0.1", port: 8787, model: "ox-alpha-free", apiKey: "k", logLevel: "info", backgroundModel: "ox-alpha-free" };
+  const same = { host: "127.0.0.1", port: 8787, model: "ox-alpha-free", apiKey: "k", logLevel: "info", retry: 0, backgroundModel: "ox-alpha-free" };
   assert.equal(backgroundModel(same), "ox-alpha-free");
 });
 
@@ -112,7 +112,7 @@ test("native launch leaves a hand-configured environment completely untouched", 
 
 test("native launch scrubs AgentX's own variables when nested inside an AgentX-launched client", () => {
   const adapter = { port: 8788, token: "local-token" } as any;
-  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info" };
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", retry: 0 };
   // Models the reported bug: a Claude Code session started by `agentx claude`
   // (so its process env carries AgentX's overrides) runs `agentx claude
   // --native` from inside itself. The nested launch must not inherit the
@@ -128,7 +128,7 @@ test("native launch scrubs AgentX's own variables when nested inside an AgentX-l
 
 test("native launch scrubs Codex's OpenAI variables the same way", () => {
   const adapter = { port: 8788, token: "local-token" } as any;
-  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info" };
+  const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", retry: 0 };
   const contaminated = { ...clientEnvironment(config, adapter, "openai"), PATH: "/usr/bin" };
   const cleaned = nativeClientEnvironment(contaminated);
   assert.equal(cleaned.AGENTX_ACTIVE, undefined);

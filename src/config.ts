@@ -9,6 +9,8 @@ export interface Config {
   backgroundModel?: string;
   apiKey: string;
   logLevel: string;
+  /** Retry attempts on upstream network failure or 429/502/503/504; 0 disables retry. */
+  retry: number;
 }
 
 /**
@@ -53,6 +55,8 @@ export function loadConfig(
   const provider = options.provider ?? process.env.AGENTX_PROVIDER;
   const port = Number(options.port ?? process.env.AGENTX_PORT ?? 8787);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid port");
+  const retry = Number(options.retry ?? process.env.AGENTX_RETRY ?? 3);
+  if (!Number.isInteger(retry) || retry < 0) throw new Error("Invalid retry count");
   const envModel = process.env.AGENTX_MODEL === "auto" ? undefined : process.env.AGENTX_MODEL;
   const rememberedModel = remembered.provider && provider && remembered.provider !== provider
     ? undefined
@@ -64,6 +68,7 @@ export function loadConfig(
     provider,
     backgroundModel: options["background-model"] ?? process.env.AGENTX_BACKGROUND_MODEL,
     apiKey,
-    logLevel: options.verbose ? "debug" : process.env.AGENTX_LOG_LEVEL ?? "info"
+    logLevel: options.verbose ? "debug" : process.env.AGENTX_LOG_LEVEL ?? "info",
+    retry,
   };
 }
