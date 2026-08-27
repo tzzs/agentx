@@ -15,6 +15,21 @@ const fallbackOpenCodeIds = ["gpt-5.6-luna", "deepseek-v4-pro", "deepseek-v4-fla
 /** OpenCode models served through the Responses API rather than Chat Completions. */
 const responsesModelIds = new Set(["gpt-5.6-luna"]);
 
+/**
+ * DeepSeek's long-context ids are OpenCode's own branding — the same two ids
+ * are served both through OpenCode's gateway and through the direct DeepSeek
+ * provider — so models.dev/OpenRouter never carry a matching entry for either
+ * listing. Without an explicit override Codex's generated catalog falls back
+ * to a conservative 131072 (see codex-catalog.ts), auto-compacting long
+ * DeepSeek sessions far earlier than necessary — the same under-declaration
+ * CLAUDE_CODE_MAX_CONTEXT_TOKENS fixes for Claude Code in process.ts.
+ */
+const DEEPSEEK_LONG_CONTEXT_IDS = new Set(["deepseek-v4-pro", "deepseek-v4-flash"]);
+const DEEPSEEK_LONG_CONTEXT_WINDOW = 1_000_000;
+function deepSeekLongContextWindow(model: string): number | undefined {
+  return DEEPSEEK_LONG_CONTEXT_IDS.has(model) ? DEEPSEEK_LONG_CONTEXT_WINDOW : undefined;
+}
+
 interface ModelMetadata { contextWindow?: number; maxOutputTokens?: number; modalities?: string[] }
 
 /** Per-provider metadata tables keyed by models.dev section id then model id. */
@@ -195,12 +210,13 @@ function openCodeModels(ids: string[], devMetadata?: MetadataMap, routerMetadata
     model,
     protocol: responsesModelIds.has(model) ? "responses" : "chat-completions",
     endpoint: responsesModelIds.has(model) ? `${openCodeBase}/responses` : `${openCodeBase}/chat/completions`,
+    ...(deepSeekLongContextWindow(model) !== undefined ? { contextWindow: deepSeekLongContextWindow(model) } : {}),
   }, devMetadata, routerMetadata));
 }
 
 export const providerRegistry: ProviderDefinition[] = [
   { id: "opencode", name: "OpenCode", apiKeyEnv: "OPENCODE_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: true }, models: openCodeModels(fallbackOpenCodeIds) },
-  { id: "deepseek", name: "DeepSeek", apiKeyEnv: "DEEPSEEK_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: true }, models: models("deepseek", `${deepSeekBase}/chat/completions`, ["deepseek-v4-pro", "deepseek-v4-flash"], "chat-completions") },
+  { id: "deepseek", name: "DeepSeek", apiKeyEnv: "DEEPSEEK_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: true }, models: models("deepseek", `${deepSeekBase}/chat/completions`, ["deepseek-v4-pro", "deepseek-v4-flash"], "chat-completions").map((model) => ({ ...model, contextWindow: deepSeekLongContextWindow(model.model) })) },
   { id: "openrouter", name: "OpenRouter", apiKeyEnv: "OPENROUTER_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: false }, models: models("openrouter", `${openRouterBase}/chat/completions`, [process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini"], "chat-completions") }
 ];
 

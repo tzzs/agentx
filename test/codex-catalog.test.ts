@@ -17,6 +17,31 @@ test("catalog covers every registry model with the verified field set", () => {
   }
 });
 
+test("declares DeepSeek's real context window instead of the 131072 unknown-model default", () => {
+  // deepseek-v4-flash/pro are OpenCode's own branding, so models.dev/OpenRouter
+  // carry no matching entry; without an explicit registry override Codex would
+  // under-declare their real long-context window, auto-compacting far earlier
+  // than necessary (the same class of bug CLAUDE_CODE_MAX_CONTEXT_TOKENS fixes
+  // for Claude Code in process.ts).
+  const catalog = JSON.parse(buildCodexCatalog()) as { models: Array<Record<string, unknown>> };
+  for (const slug of ["deepseek-v4-flash", "deepseek-v4-pro"]) {
+    const entry = catalog.models.find((item) => item.slug === slug)!;
+    assert.equal(entry.context_window, 1_000_000, `${slug} context_window`);
+    assert.equal(entry.max_context_window, 1_000_000, `${slug} max_context_window`);
+  }
+});
+
+test("declares DeepSeek's real context window when reached through the OpenCode gateway, not just the direct provider", () => {
+  // The originally reported bug used provider: opencode, model: deepseek-v4-flash
+  // (OpenCode's own gateway listing), not the direct "deepseek" provider — this
+  // is the exact catalog Codex would generate for that configuration.
+  const models = catalogModels({ provider: "opencode", model: "deepseek-v4-flash" });
+  const catalog = JSON.parse(buildCodexCatalog(models)) as { models: Array<Record<string, unknown>> };
+  const entry = catalog.models.find((item) => item.slug === "deepseek-v4-flash")!;
+  assert.equal(entry.context_window, 1_000_000);
+  assert.equal(entry.max_context_window, 1_000_000);
+});
+
 test("prefers real registry limits and falls back to safe defaults", () => {
   const models = [
     { provider: "opencode", model: "known-model", protocol: "chat-completions" as const, endpoint: "https://x", contextWindow: 1000000, maxOutputTokens: 384000, modalities: ["text", "image"] },

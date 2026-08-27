@@ -101,7 +101,9 @@ npx agentx codex
 npx agentx codex --model gpt-5.6-luna
 ```
 
-启动器通过 `-c` 参数定义一个内联的 `agentx` 模型 Provider，指向 `http://127.0.0.1:<port>/v1`，其 Bearer Token 是以 `OPENAI_API_KEY` 注入的临时本地 Token。启动时还会生成一份模型目录（`~/.config/agentx/codex-models.json`，经 `model_catalog_json` 传入），让目录中的模型——包括你在启动器中输入的自定义 OpenRouter 模型 id——以真实元数据加载，而不是触发 Codex 的 fallback 元数据警告：上下文窗口与输出上限对所有 Provider 生效，在可用时取自公开注册表 models.dev，models.dev 缺失的模型回退到 OpenRouter 公开目录，否则使用保守默认值。新版 Codex 已不再读取那些环境变量，该方式可以正常工作，并完全绕过 Codex 的登录页——无需 ChatGPT 登录或 `~/.codex/auth.json`，也不会修改你已有的 `~/.codex/config.toml`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
+启动器通过 `-c` 参数定义一个内联的 `agentx` 模型 Provider，指向 `http://127.0.0.1:<port>/v1`，其 Bearer Token 是以 `OPENAI_API_KEY` 注入的临时本地 Token。启动时还会生成一份模型目录（`~/.config/agentx/codex-models.json`，经 `model_catalog_json` 传入），让目录中的模型——包括你在启动器中输入的自定义 OpenRouter 模型 id——以真实元数据加载，而不是触发 Codex 的 fallback 元数据警告：上下文窗口与输出上限对所有 Provider 生效，在可用时取自公开注册表 models.dev，models.dev 缺失的模型回退到 OpenRouter 公开目录，否则使用保守默认值。DeepSeek 的 `deepseek-v4-pro`/`deepseek-v4-flash` 是个例外：它们是 OpenCode 自己的品牌命名（同时通过 OpenCode 网关和直连的 DeepSeek Provider 提供），两个公开注册表都没有对应词条，因此目录会显式声明它们约 1M 的真实上下文窗口，而不是回退到保守的 128k——否则 Codex 会比必要时机早得多地对长时间 DeepSeek 会话做自动压缩，这与 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 为 Claude Code 修复的是同一类问题（见[模型和路由](#模型和路由)）。新版 Codex 已不再读取那些环境变量，该方式可以正常工作，并完全绕过 Codex 的登录页——无需 ChatGPT 登录或 `~/.codex/auth.json`，也不会修改你已有的 `~/.codex/config.toml`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
+
+Pi Agent 通过与 Codex 相同的 OpenAI 兼容环境启动（`OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL`），其请求也经过同一个本地 Responses 边界转换，因此可以获得与 Codex 相同的 DeepSeek reasoning/tool_choice/错误处理转换。但它不会收到生成的模型目录，所以 AgentX 目前没有渠道像对 Claude Code 或 Codex 那样向它声明模型的上下文窗口。
 
 ## 安装
 

@@ -29,6 +29,17 @@ test("resolves DeepSeek explicitly instead of the same-named OpenCode model", ()
   assert.equal(provider.provider, "deepseek"); assert.match(provider.endpoint, /api\.deepseek\.com/);
 });
 
+test("declares the real DeepSeek context window under both the OpenCode gateway and the direct provider", () => {
+  // The reported bug used provider: opencode, model: deepseek-v4-flash — the
+  // OpenCode-branded listing, not the direct "deepseek" provider — so the
+  // override must apply to both, not just the one models_dev/OpenRouter would
+  // otherwise miss for.
+  for (const provider of ["opencode", "deepseek"] as const) {
+    assert.equal(providerFor("deepseek-v4-flash", provider).contextWindow, 1_000_000);
+    assert.equal(providerFor("deepseek-v4-pro", provider).contextWindow, 1_000_000);
+  }
+});
+
 test("supports arbitrary OpenRouter model ids", () => {
   const provider = providerFor("anthropic/claude-sonnet-4", "openrouter");
   assert.equal(provider.provider, "openrouter"); assert.equal(provider.model, "anthropic/claude-sonnet-4");
@@ -51,7 +62,8 @@ test("refreshes the OpenCode model catalog and enriches limits from the public r
     if (/models\.dev/.test(String(input))) {
       return new Response(JSON.stringify({
         opencode: { models: { "nova-1": { limit: { context: 262144, output: 32768 }, modalities: { input: ["text", "image"] } }, "gpt-5.6-luna": { limit: { context: 1050000 } } } },
-        deepseek: { models: { "deepseek-v4-flash": { limit: { context: 1000000, output: 384000 } } } },
+        // A conflicting context (500000) proves the explicit registry default wins; output still enriches normally.
+        deepseek: { models: { "deepseek-v4-flash": { limit: { context: 500000, output: 384000 } } } },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
     assert.match(String(input), /opencode\.ai\/zen\/go\/v1\/models/);
@@ -71,10 +83,14 @@ test("refreshes the OpenCode model catalog and enriches limits from the public r
     assert.deepEqual(providerFor("nova-1").modalities, ["text", "image"]);
     assert.equal(providerFor("gpt-5.6-luna").contextWindow, 1050000);
     assert.equal(providerFor("nova-2").contextWindow, undefined);
-    // Static providers are enriched through their own models.dev section.
+    // Static providers are enriched through their own models.dev section, but
+    // deepseek-v4-flash/pro carry an explicit registry contextWindow (Codex's
+    // catalog otherwise under-declares their real long-context window as
+    // 131072) which a live metadata refresh must not override; maxOutputTokens
+    // has no such override and still enriches normally.
     assert.equal(providerFor("deepseek-v4-flash", "deepseek").contextWindow, 1000000);
     assert.equal(providerFor("deepseek-v4-flash", "deepseek").maxOutputTokens, 384000);
-    assert.equal(providerFor("deepseek-v4-pro", "deepseek").contextWindow, undefined);
+    assert.equal(providerFor("deepseek-v4-pro", "deepseek").contextWindow, 1000000);
   } finally {
     providerRegistry.find((provider) => provider.id === "opencode")!.models = original;
     providerRegistry.find((provider) => provider.id === "deepseek")!.models = originalDeepseek;
@@ -100,16 +116,25 @@ test("keeps working when only the metadata source is unreachable", async () => {
 
 test("applies metadata to static providers even when the list refresh fails", async () => {
   const originalDeepseek = providerRegistry.find((provider) => provider.id === "deepseek")!.models;
+  // deepseek-v4-pro/flash carry an explicit contextWindow now, so a synthetic
+  // id with no override is what demonstrates plain metadata enrichment here.
+  providerRegistry.find((provider) => provider.id === "deepseek")!.models = [
+    ...originalDeepseek,
+    { provider: "deepseek", model: "deepseek-legacy-test", protocol: "chat-completions", endpoint: "https://x" },
+  ];
+  allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
   const fetcher = (async (input: any) => {
     if (/models\.dev/.test(String(input))) {
-      return new Response(JSON.stringify({ deepseek: { models: { "deepseek-v4-pro": { limit: { context: 986000 } } } } }), { status: 200 });
+      return new Response(JSON.stringify({ deepseek: { models: { "deepseek-legacy-test": { limit: { context: 986000 } }, "deepseek-v4-pro": { limit: { context: 555000 } } } } }), { status: 200 });
     }
     return new Response(JSON.stringify({ error: "down" }), { status: 500 });
   }) as typeof fetch;
   const refreshed = await refreshProviderCatalog({ provider: "opencode", metadata: true }, fetcher);
   try {
     assert.equal(refreshed.list, false);
-    assert.equal(providerFor("deepseek-v4-pro", "deepseek").contextWindow, 986000);
+    assert.equal(providerFor("deepseek-legacy-test", "deepseek").contextWindow, 986000);
+    // A conflicting live entry for deepseek-v4-pro must still lose to the explicit default.
+    assert.equal(providerFor("deepseek-v4-pro", "deepseek").contextWindow, 1_000_000);
   } finally {
     providerRegistry.find((provider) => provider.id === "deepseek")!.models = originalDeepseek;
     allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
@@ -184,19 +209,28 @@ test("prefers models.dev metadata over OpenRouter field by field", async () => {
 
 test("keeps working when only the OpenRouter source is unreachable", async () => {
   const snapshot = takeSnapshot();
+  // deepseek-v4-flash/pro carry an explicit contextWindow now, so a synthetic
+  // id with no override is what demonstrates plain metadata enrichment here.
+  providerRegistry.find((provider) => provider.id === "deepseek")!.models = [
+    ...providerRegistry.find((provider) => provider.id === "deepseek")!.models,
+    { provider: "deepseek", model: "deepseek-legacy-test", protocol: "chat-completions", endpoint: "https://x" },
+  ];
+  allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
   const fetcher = (async (input: any) => {
     const url = String(input);
     if (/openrouter\.ai/.test(url)) throw new Error("offline");
     if (/models\.dev/.test(url)) {
-      return new Response(JSON.stringify({ deepseek: { models: { "deepseek-v4-flash": { limit: { context: 256000 } } } } }), { status: 200 });
+      return new Response(JSON.stringify({ deepseek: { models: { "deepseek-legacy-test": { limit: { context: 256000 } }, "deepseek-v4-flash": { limit: { context: 256000 } } } } }), { status: 200 });
     }
     return new Response(JSON.stringify({ data: [{ id: "solo-model" }] }), { status: 200 });
   }) as typeof fetch;
   const refreshed = await refreshProviderCatalog({ provider: "opencode", metadata: true }, fetcher);
   try {
     assert.equal(refreshed.list, true);
-    assert.equal(providerFor("deepseek-v4-flash", "deepseek").contextWindow, 256000);
+    assert.equal(providerFor("deepseek-legacy-test", "deepseek").contextWindow, 256000);
     assert.equal(providerFor("solo-model").contextWindow, undefined);
+    // A conflicting live entry for deepseek-v4-flash must still lose to the explicit default.
+    assert.equal(providerFor("deepseek-v4-flash", "deepseek").contextWindow, 1_000_000);
   } finally {
     restoreSnapshot(snapshot);
   }
