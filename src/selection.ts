@@ -33,7 +33,9 @@ export function defaultModelFor(providerId: string): string {
 /** True when the provider accepts arbitrary model ids beyond its registry list. */
 export function providerAcceptsCustomModels(providerId: string): boolean {
   // OpenRouter proxies every upstream model and is not enumerated exhaustively.
-  return providerId === "openrouter";
+  if (providerId === "openrouter") return true;
+  // A runtime-registered custom provider has no known model catalog either.
+  try { return Boolean(providerById(providerId).custom); } catch { return false; }
 }
 
 /** True when the model id is usable against the provider (or is the auto marker). */

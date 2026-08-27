@@ -1,13 +1,13 @@
 import { stdin as input, stdout as output } from "node:process";
 import { autocomplete, cancel, intro, isCancel, log, multiselect, note, outro, select, text } from "@clack/prompts";
-import { providerRegistry, openRouterCatalogIds } from "./providers/registry.js";
-import type { ProviderDefinition } from "./providers/types.js";
+import { providerRegistry, openRouterCatalogIds, registerCustomProvider, unregisterCustomProvider } from "./providers/registry.js";
+import type { ProviderDefinition, ProviderProtocol } from "./providers/types.js";
 import { promptCredential, storedCredential } from "./credentials.js";
 import {
   clientDisplayName, defaultModelFor, modelAvailable, providerAcceptsCustomModels, resolveModelForProvider, resolveRuntimeNonInteractive, type RuntimeDecision,
 } from "./selection.js";
 import {
-  forgetRuntime, rememberedModelIds, remembererProviders, saveDefaultRuntime, type RuntimeSelection,
+  forgetCustomProvider, forgetRuntime, rememberedModelIds, remembererProviders, saveCustomProvider, saveDefaultRuntime, type RuntimeSelection,
 } from "./runtime.js";
 
 /** Thrown when the user cancels the launcher (q / Ctrl+C) instead of launching. */
@@ -64,7 +64,7 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
     return { provider: initial.provider, model: initial.model, madeDefault: false, defaultApplied: initial.defaultApplied, changed: false };
   }
 
-  const providers = await providerEntries();
+  let providers = await providerEntries();
   let provider = initial.provider;
   let model = initial.model;
   let madeDefault = false;
@@ -128,6 +128,8 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
   if (isCancel(nextProvider)) { cancel("Provider selection cancelled"); throw new LaunchCancelledError(0); }
   if (nextProvider !== provider) {
     provider = nextProvider;
+    // selectProvider may have added or removed a custom provider along the way.
+    providers = await providerEntries();
     model = modelAvailable(provider, model) ? model : await resolveModelForProvider(provider);
     changed = true;
   }
@@ -173,8 +175,71 @@ function providerOptions(entries: ProviderEntry[]): Array<{ value: string; label
   }));
 }
 
+/** Sentinel option value that opens the "add a custom provider" prompt sequence. */
+const ADD_CUSTOM_PROVIDER_OPTION = "__add_custom_provider__";
+/** Sentinel option value that opens the "remove a custom provider" prompt, shown only once one exists. */
+const REMOVE_CUSTOM_PROVIDER_OPTION = "__remove_custom_provider__";
+
+const PROTOCOL_OPTIONS: Array<{ value: ProviderProtocol; label: string }> = [
+  { value: "chat-completions", label: "OpenAI Chat Completions" },
+  { value: "responses", label: "OpenAI Responses" },
+  { value: "anthropic", label: "Anthropic Messages API" },
+];
+
+/**
+ * Prompt sequence for a new custom OpenAI/Anthropic-compatible provider: name,
+ * base URL, protocol. Registers and persists the connection metadata only —
+ * never the API key, matching every other provider. The caller's existing
+ * "not configured yet" handling (in `runInteractiveLauncher`, right after
+ * provider selection) prompts for the key the same way it does for any other
+ * unconfigured provider. Returns the new provider's id, or undefined if
+ * cancelled at any step.
+ */
+async function addCustomProviderFlow(): Promise<string | undefined> {
+  const name = await text({ message: "Provider name", placeholder: "My Local LLM" });
+  if (isCancel(name) || !name.trim()) return undefined;
+  const baseUrl = await text({
+    message: "Base URL",
+    placeholder: "http://localhost:11434",
+    validate: (value) => { try { new URL(value ?? ""); return undefined; } catch { return "Enter a full URL, e.g. http://localhost:11434"; } },
+  });
+  if (isCancel(baseUrl)) return undefined;
+  const protocol = await select({ message: "Protocol", options: PROTOCOL_OPTIONS });
+  if (isCancel(protocol)) return undefined;
+  const definition = registerCustomProvider({ name: name.trim(), baseUrl, protocol });
+  await saveCustomProvider(definition.id, { name: definition.name, baseUrl, protocol, model: definition.models[0].model });
+  note(`✓ ${definition.name} added`, "Custom provider");
+  return definition.id;
+}
+
+/** Pick a custom provider to remove entirely (definition + persisted memory). Built-in providers never appear in this list. */
+async function removeCustomProviderFlow(entries: ProviderEntry[]): Promise<void> {
+  const custom = entries.filter((entry) => entry.definition.custom);
+  const chosen = await select({ message: "Remove custom provider", options: custom.map((entry) => ({ value: entry.definition.id, label: entry.definition.name })) });
+  if (isCancel(chosen)) return;
+  const label = custom.find((entry) => entry.definition.id === chosen)?.definition.name ?? chosen;
+  unregisterCustomProvider(chosen);
+  await forgetCustomProvider(chosen);
+  note(`Removed ${label}.`, "Custom provider");
+}
+
 async function selectProvider(entries: ProviderEntry[], current: string): Promise<string | symbol> {
-  return select({ message: "Provider", options: providerOptions(entries), initialValue: current });
+  const choices = providerOptions(entries);
+  choices.push({ value: ADD_CUSTOM_PROVIDER_OPTION, label: "Add custom provider…", hint: "OpenAI or Anthropic-compatible endpoint" });
+  if (entries.some((entry) => entry.definition.custom)) {
+    choices.push({ value: REMOVE_CUSTOM_PROVIDER_OPTION, label: "Remove custom provider…", hint: "" });
+  }
+  const chosen = await select({ message: "Provider", options: choices, initialValue: current });
+  if (isCancel(chosen)) return chosen;
+  if (chosen === ADD_CUSTOM_PROVIDER_OPTION) {
+    const added = await addCustomProviderFlow();
+    return selectProvider(await providerEntries(), added ?? current);
+  }
+  if (chosen === REMOVE_CUSTOM_PROVIDER_OPTION) {
+    await removeCustomProviderFlow(entries);
+    return selectProvider(await providerEntries(), current);
+  }
+  return chosen;
 }
 
 /** Sentinel option value that switches the model picker into free-form entry. */

@@ -215,12 +215,75 @@ function openCodeModels(ids: string[], devMetadata?: MetadataMap, routerMetadata
 }
 
 export const providerRegistry: ProviderDefinition[] = [
-  { id: "opencode", name: "OpenCode", apiKeyEnv: "OPENCODE_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: true }, models: openCodeModels(fallbackOpenCodeIds) },
-  { id: "deepseek", name: "DeepSeek", apiKeyEnv: "DEEPSEEK_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: true }, models: models("deepseek", `${deepSeekBase}/chat/completions`, ["deepseek-v4-pro", "deepseek-v4-flash"], "chat-completions").map((model) => ({ ...model, contextWindow: deepSeekLongContextWindow(model.model) })) },
-  { id: "openrouter", name: "OpenRouter", apiKeyEnv: "OPENROUTER_API_KEY", capabilities: { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: false }, models: models("openrouter", `${openRouterBase}/chat/completions`, [process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini"], "chat-completions") }
+  { id: "opencode", name: "OpenCode", apiKeyEnv: "OPENCODE_API_KEY", models: openCodeModels(fallbackOpenCodeIds) },
+  { id: "deepseek", name: "DeepSeek", apiKeyEnv: "DEEPSEEK_API_KEY", models: models("deepseek", `${deepSeekBase}/chat/completions`, ["deepseek-v4-pro", "deepseek-v4-flash"], "chat-completions").map((model) => ({ ...model, contextWindow: deepSeekLongContextWindow(model.model) })) },
+  { id: "openrouter", name: "OpenRouter", apiKeyEnv: "OPENROUTER_API_KEY", models: models("openrouter", `${openRouterBase}/chat/completions`, [process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini"], "chat-completions") }
 ];
 
 export const allModels = providerRegistry.flatMap((provider) => provider.models);
+
+/** Turn an arbitrary display name into a lowercase, hyphenated id segment. */
+function slugify(name: string): string {
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "custom-provider";
+}
+
+/** Derive the ALL_CAPS_WITH_UNDERSCORES env-var suffix AgentX will read the API key from (e.g. "my-llm" -> "MY_LLM_API_KEY", read as AGENTX_MY_LLM_API_KEY). */
+function envKeyFor(id: string): string {
+  return `${id.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+}
+
+function customProviderEndpoint(baseUrl: string, protocol: ProviderModel["protocol"]): string {
+  const base = baseUrl.replace(/\/+$/, "");
+  if (protocol === "anthropic") return `${base}/v1/messages`;
+  if (protocol === "responses") return `${base}/responses`;
+  return `${base}/chat/completions`;
+}
+
+export interface CustomProviderInput {
+  name: string;
+  baseUrl: string;
+  protocol: ProviderModel["protocol"];
+  /** Upstream doesn't expose a model list for an arbitrary endpoint, so this is a single free-form id (defaults to "custom-model"). */
+  model?: string;
+}
+
+/**
+ * Register (or update) a user-defined provider pointing at an arbitrary
+ * OpenAI- or Anthropic-compatible endpoint. Idempotent by derived id:
+ * re-registering the same name in place replaces the existing entry instead
+ * of duplicating it — this matters because it's called on every launch to
+ * re-hydrate providers persisted in runtime.json, not just when a user adds
+ * one interactively. Only a clash with a *built-in* provider id gets a
+ * numeric suffix; two custom providers whose names happen to slugify to the
+ * same id are treated as the same provider slot (last write wins), which is
+ * acceptable at the scale a single user configures by hand.
+ */
+export function registerCustomProvider(input: CustomProviderInput): ProviderDefinition {
+  const base = slugify(input.name);
+  const existingCustom = providerRegistry.some((entry) => entry.id === base && entry.custom);
+  let id = base;
+  if (!existingCustom) {
+    let suffix = 2;
+    while (providerRegistry.some((entry) => entry.id === id)) id = `${base}-${suffix++}`;
+  }
+  const model: ProviderModel = { provider: id, model: input.model ?? "custom-model", protocol: input.protocol, endpoint: customProviderEndpoint(input.baseUrl, input.protocol) };
+  const definition: ProviderDefinition = { id, name: input.name, apiKeyEnv: envKeyFor(id), models: [model], custom: true };
+  const index = providerRegistry.findIndex((entry) => entry.id === id);
+  if (index >= 0) providerRegistry[index] = definition;
+  else providerRegistry.push(definition);
+  allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+  return definition;
+}
+
+/** Remove a runtime-registered custom provider from the in-memory registry. Built-in providers cannot be removed this way and this returns false for them. */
+export function unregisterCustomProvider(id: string): boolean {
+  const index = providerRegistry.findIndex((entry) => entry.id === id && entry.custom);
+  if (index < 0) return false;
+  providerRegistry.splice(index, 1);
+  allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+  return true;
+}
 
 /**
  * Refresh provider model catalogs. OpenCode's list is fetched only when the

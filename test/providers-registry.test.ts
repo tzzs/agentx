@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiKeyFor, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerFor, providerRegistry, refreshProviderCatalog, setOpenRouterCatalogIds, allModels, withExternalMetadata } from "../src/providers/registry.js";
+import { apiKeyFor, credentialEnvName, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerById, providerFor, providerRegistry, refreshProviderCatalog, registerCustomProvider, setOpenRouterCatalogIds, unregisterCustomProvider, allModels, withExternalMetadata } from "../src/providers/registry.js";
 import { saveOpenRouterModels } from "../src/runtime.js";
 
 // refreshProviderCatalog/hydrateOpenRouterCatalog read and write runtime.json;
@@ -339,6 +339,71 @@ test("hydrateOpenRouterCatalog does not overwrite an already-populated cache", a
   } finally {
     restoreSnapshot(snapshot);
   }
+});
+
+// registerCustomProvider adds entries that takeSnapshot/restoreSnapshot (above)
+// cannot undo — that helper only resets .models on providers that already
+// existed at snapshot time, it never removes newly-added ones. Every test
+// below must unregister anything it registers instead.
+
+test("registerCustomProvider derives a slug id and an AGENTX_ env var name from the display name", () => {
+  try {
+    const definition = registerCustomProvider({ name: "My Local LLM", baseUrl: "http://localhost:11434", protocol: "chat-completions" });
+    assert.equal(definition.id, "my-local-llm");
+    assert.equal(definition.apiKeyEnv, "MY_LOCAL_LLM_API_KEY");
+    assert.equal(credentialEnvName(definition), "AGENTX_MY_LOCAL_LLM_API_KEY");
+    assert.equal(definition.custom, true);
+    assert.equal(definition.models[0].endpoint, "http://localhost:11434/chat/completions");
+    assert.equal(definition.models[0].model, "custom-model");
+  } finally { unregisterCustomProvider("my-local-llm"); }
+});
+
+test("registerCustomProvider builds the right endpoint shape per protocol", () => {
+  try {
+    assert.equal(registerCustomProvider({ name: "Responses Test", baseUrl: "http://x/", protocol: "responses" }).models[0].endpoint, "http://x/responses");
+    assert.equal(registerCustomProvider({ name: "Anthropic Test", baseUrl: "http://x", protocol: "anthropic" }).models[0].endpoint, "http://x/v1/messages");
+  } finally { unregisterCustomProvider("responses-test"); unregisterCustomProvider("anthropic-test"); }
+});
+
+test("registerCustomProvider avoids clobbering a built-in provider id, but is idempotent for repeated custom registrations", () => {
+  let shadowedId: string | undefined;
+  try {
+    // "OpenCode" slugifies to the built-in id "opencode" — must not shadow it.
+    const shadowed = registerCustomProvider({ name: "OpenCode", baseUrl: "http://x", protocol: "chat-completions" });
+    shadowedId = shadowed.id;
+    assert.notEqual(shadowed.id, "opencode");
+    assert.equal(providerById("opencode").custom, undefined);
+
+    // Registering the same custom provider twice updates in place, not a duplicate entry.
+    registerCustomProvider({ name: "Repeat Me", baseUrl: "http://a", protocol: "chat-completions", model: "one" });
+    registerCustomProvider({ name: "Repeat Me", baseUrl: "http://b", protocol: "responses", model: "two" });
+    const matches = providerRegistry.filter((entry) => entry.id === "repeat-me");
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].models[0].endpoint, "http://b/responses");
+    assert.equal(matches[0].models[0].model, "two");
+  } finally { if (shadowedId) unregisterCustomProvider(shadowedId); unregisterCustomProvider("repeat-me"); }
+});
+
+test("a registered custom provider resolves through providerFor/apiKeyFor like a built-in one", () => {
+  try {
+    registerCustomProvider({ name: "Bench Provider", baseUrl: "http://bench.local", protocol: "chat-completions", model: "bench-model" });
+    const model = providerFor("bench-model", "bench-provider");
+    assert.equal(model.provider, "bench-provider");
+    process.env.AGENTX_BENCH_PROVIDER_API_KEY = "bench-key";
+    assert.equal(apiKeyFor(model), "bench-key");
+    delete process.env.AGENTX_BENCH_PROVIDER_API_KEY;
+  } finally { unregisterCustomProvider("bench-provider"); }
+});
+
+test("unregisterCustomProvider removes a custom provider but refuses to remove a built-in one", () => {
+  registerCustomProvider({ name: "Removable", baseUrl: "http://x", protocol: "chat-completions" });
+  assert.ok(providerRegistry.some((entry) => entry.id === "removable"));
+  assert.equal(unregisterCustomProvider("removable"), true);
+  assert.ok(!providerRegistry.some((entry) => entry.id === "removable"));
+  assert.ok(!allModels.some((item) => item.provider === "removable"));
+
+  assert.equal(unregisterCustomProvider("opencode"), false);
+  assert.ok(providerRegistry.some((entry) => entry.id === "opencode"));
 });
 
 test("refreshProviderCatalog hydrates the OpenRouter cache from disk even when no network fetch is needed", async () => {

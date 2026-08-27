@@ -16,6 +16,14 @@ export interface RuntimeSelection {
   model: string;
 }
 
+/** Connection metadata for a user-registered custom provider. Never includes an API key. */
+export interface CustomProviderState {
+  name: string;
+  baseUrl: string;
+  protocol: string;
+  model?: string;
+}
+
 /** Persistent, non-secret agent runtime state (no API keys ever stored here). */
 export interface RuntimeState {
   /** Default runtime per client id (claude, codex, pi). */
@@ -26,6 +34,8 @@ export interface RuntimeState {
   last?: RuntimeSelection;
   /** Last-seen OpenRouter catalog ids (cached models.dev-style data, not user state). */
   openrouterModels?: string[];
+  /** User-registered custom providers, keyed by their derived id. Connection metadata only — never an API key. */
+  customProviders?: Record<string, CustomProviderState>;
 }
 
 /** Config directory path; reads env lazily so tests can redirect it. */
@@ -49,7 +59,8 @@ function normalizeState(raw: Partial<RuntimeState>): RuntimeState {
   // The OpenRouter catalog id cache is metadata, not user state, but it must
   // round-trip or every offline launch loses the screening list.
   const openrouterModels = Array.isArray(raw.openrouterModels) ? raw.openrouterModels : [];
-  return { defaults, lastModels, openrouterModels, ...(last ? { last } : {}) };
+  const customProviders = raw.customProviders && typeof raw.customProviders === "object" ? raw.customProviders : {};
+  return { defaults, lastModels, openrouterModels, customProviders, ...(last ? { last } : {}) };
 }
 
 export async function loadRuntimeState(): Promise<RuntimeState> {
@@ -127,6 +138,37 @@ export async function forgetRuntime(on: ForgetSelection, model?: string): Promis
   if (!damaged) return false;
   await writeRuntimeState(state);
   return true;
+}
+
+/** Persist (or update) a custom provider's connection metadata. Never pass an API key here. */
+export async function saveCustomProvider(id: string, definition: CustomProviderState): Promise<void> {
+  const state = await loadRuntimeState();
+  state.customProviders = { ...state.customProviders, [id]: definition };
+  await writeRuntimeState(state);
+}
+
+/** All persisted custom providers, keyed by id. */
+export async function loadCustomProviders(): Promise<Record<string, CustomProviderState>> {
+  return (await loadRuntimeState()).customProviders ?? {};
+}
+
+/**
+ * Remove a custom provider's persisted definition, plus any default/last-model/
+ * last-selection memory that pointed at it (via `forgetRuntime`) — so a
+ * removed provider doesn't linger as a saved default that no longer resolves.
+ * Pair with `unregisterCustomProvider` (providers/registry.ts) to also drop
+ * it from the in-memory registry for the current process.
+ */
+export async function forgetCustomProvider(id: string): Promise<boolean> {
+  const state = await loadRuntimeState();
+  const existed = Boolean(state.customProviders?.[id]);
+  if (existed) {
+    const { [id]: _removed, ...rest } = state.customProviders ?? {};
+    state.customProviders = rest;
+    await writeRuntimeState(state);
+  }
+  const clearedMemory = await forgetRuntime({ provider: id });
+  return existed || clearedMemory;
 }
 
 /** Provider ids with remembered state (defaults, last models, last selection). */

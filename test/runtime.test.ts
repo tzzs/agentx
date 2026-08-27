@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  forgetRuntime, loadDefaultRuntime, loadLastModel, loadOpenRouterModels, remembererProviders, rememberedModelIds, runtimeFile, saveDefaultRuntime, saveLastModel, saveOpenRouterModels,
+  forgetCustomProvider, forgetRuntime, loadCustomProviders, loadDefaultRuntime, loadLastModel, loadOpenRouterModels, remembererProviders, rememberedModelIds, runtimeFile, saveCustomProvider, saveDefaultRuntime, saveLastModel, saveOpenRouterModels,
 } from "../src/runtime.js";
 
 let dir: string;
@@ -99,4 +99,39 @@ test("forgetRuntime clears an entire provider's memory when no model is given", 
   // `last` and the openrouter last model fall too; other providers are untouched.
   assert.ok(!(await rememberedModelIds("openrouter")).includes("vendor/alpha"));
   assert.ok(!(await rememberedModelIds("openrouter")).includes("vendor/beta"));
+});
+
+test("saveCustomProvider/loadCustomProviders round-trip connection metadata only", async () => {
+  await saveCustomProvider("my-llm", { name: "My LLM", baseUrl: "http://localhost:11434", protocol: "chat-completions" });
+  await saveCustomProvider("other-llm", { name: "Other LLM", baseUrl: "http://localhost:8000", protocol: "anthropic", model: "custom" });
+  const saved = await loadCustomProviders();
+  assert.deepEqual(saved["my-llm"], { name: "My LLM", baseUrl: "http://localhost:11434", protocol: "chat-completions" });
+  assert.deepEqual(saved["other-llm"], { name: "Other LLM", baseUrl: "http://localhost:8000", protocol: "anthropic", model: "custom" });
+});
+
+test("saving a custom provider a second time updates it in place rather than accumulating", async () => {
+  await saveCustomProvider("updatable", { name: "Updatable", baseUrl: "http://a", protocol: "chat-completions" });
+  await saveCustomProvider("updatable", { name: "Updatable", baseUrl: "http://b", protocol: "responses" });
+  const saved = await loadCustomProviders();
+  assert.equal(Object.keys(saved).length, 3); // my-llm, other-llm, updatable — no duplicate entries
+  assert.deepEqual(saved["updatable"], { name: "Updatable", baseUrl: "http://b", protocol: "responses" });
+});
+
+test("runtime.json never contains anything that looks like an API key", async () => {
+  const raw = await readFile(runtimeFile(), "utf8");
+  assert.doesNotMatch(raw.toLowerCase(), /apikey|api_key|"key"\s*:/i);
+});
+
+test("forgetCustomProvider removes the persisted definition and any default/last-model memory pointing at it", async () => {
+  await saveCustomProvider("temp-provider", { name: "Temp Provider", baseUrl: "http://x", protocol: "chat-completions" });
+  await saveDefaultRuntime("claude", { provider: "temp-provider", model: "custom-model" });
+  await saveLastModel("temp-provider", "custom-model");
+
+  assert.equal(await forgetCustomProvider("temp-provider"), true);
+  assert.equal((await loadCustomProviders())["temp-provider"], undefined);
+  assert.equal(await loadDefaultRuntime("claude"), undefined);
+  assert.equal(await loadLastModel("temp-provider"), undefined);
+
+  // Forgetting an id that was never saved reports no damage.
+  assert.equal(await forgetCustomProvider("never-existed"), false);
 });
