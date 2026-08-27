@@ -77,6 +77,34 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 | DeepSeek | `AGENTX_DEEPSEEK_API_KEY` | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
 | OpenRouter | `AGENTX_OPENROUTER_API_KEY` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
 
+### 自定义 Provider
+
+除了三个内置 Provider，你还可以注册任意 OpenAI 或 Anthropic 兼容的端点——本地模型服务（Ollama、vLLM、LM Studio）、内部网关，或其他任何兼容 API。在交互式启动器的「Change Provider」列表里选择 **Add custom provider…**，依次填入名称、Base URL 和协议；已经有自定义 Provider 时,同一个列表还会提供 **Remove custom provider…**。
+
+对于脚本和非交互场景，`--base-url` 可以在不打开启动器的情况下定义(并持久化)一个自定义 Provider——`--provider` 作为它的显示名，`--protocol` 选择上游协议形状(默认 `chat-completions`，也可以是 `responses`/`anthropic`)：
+
+```bash
+# 本地 OpenAI 兼容服务(例如 Ollama)
+agentx exec --provider "My Local LLM" --base-url http://localhost:11434 --protocol chat-completions --model llama3 -- claude
+
+# 说原生 Anthropic Messages API 协议的 Provider
+agentx exec --provider "Internal Anthropic Gateway" --base-url https://gateway.internal --protocol anthropic --model claude-x -- claude
+```
+
+注册之后,直接用它的 id(名称转小写、空格转连字符)复用,不用再重复 `--base-url`：
+
+```bash
+agentx claude --provider my-local-llm
+```
+
+凭据的处理方式和内置 Provider 完全一样——在环境变量里设置 `AGENTX_<ID>_API_KEY`(大写、下划线分隔),或者在提示时手动输入；连接元数据会持久化到 `runtime.json`,但 API Key 绝不会。要把一个自定义 Provider 彻底移除(定义本身连同所有保存的记忆,而不只是某个过期的 model id)：
+
+```bash
+agentx forget --provider my-local-llm --remove-provider
+```
+
+内置 Provider 不能用这种方式移除。无论自定义 Provider 说的是哪种协议，Claude Code 和 Codex 都能访问它——Codex 通过和访问 Chat Completions 上游相同的本地转换层，也能访问协议为 `anthropic` 的自定义 Provider(见 [API 转换](#api-转换))。
+
 当模型名可能重复时，可以显式选择 Provider：
 
 ```bash
@@ -167,7 +195,7 @@ agentx proxy
 
 ### `exec`
 
-使用临时 Anthropic 环境变量执行任意命令：
+通过本地适配器执行任意命令。和 `claude`/`codex`/`pi` 不同,`exec` 永远不会弹出交互式运行时选择器——它总是按"CLI 参数 → 环境变量 → 最近一次选择 → 内置默认值"非交互式解析,因此可以安全用于脚本和 CI:
 
 ```bash
 agentx exec -- claude
@@ -175,7 +203,13 @@ agentx exec -- opencode
 agentx exec -- my-command --argument
 ```
 
-在当前平台支持的范围内，命令的 stdin、stdout、stderr、退出码和终止信号都会被转发。
+默认情况下 `exec` 注入 Anthropic 形状的环境变量(`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_MODEL`),适用于任何接受 Anthropic 兼容端点配置的工具。如果目标工具只认 `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL`,加上 `--client-protocol openai`:
+
+```bash
+agentx exec --client-protocol openai -- my-openai-compatible-tool
+```
+
+在当前平台支持的范围内,命令的 stdin、stdout、stderr、退出码和终止信号都会被转发。
 
 ### `doctor`
 
@@ -228,14 +262,17 @@ agentx usage                 # 全部时间
 agentx usage --period today  # today / week / month / all
 ```
 
-报告按 Provider 和模型分组显示 Token 数，包含输入/输出/总量，以及基于
-Provider 定价估算的成本。统计按适配器运行保存；`--period` 可按时间范围过滤。
+报告按 Provider 和模型分组显示 Token 数，包含输入/输出/总量。统计按适配器运行保存；`--period` 可按时间范围过滤。
 
-带 `--provider` 时，该命令改为查询已公开额度接口的 Provider 额度：
+`agentx usage --provider <id>` 是 `agentx quota --provider <id>`（见下文）的过渡期别名，仍然可用，但会打印一行弃用提示。
+
+### `quota`
+
+查询 Provider 的远程额度(账户余额/限额)，仅当上游公开了额度接口时可用：
 
 ```bash
-agentx usage --provider deepseek
-agentx usage --provider openrouter
+agentx quota --provider deepseek
+agentx quota --provider openrouter
 ```
 
 OpenCode 当前会返回明确的不支持结果，因为它没有公开、文档化的额度接口。
@@ -261,6 +298,8 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 | `--port <port>` | `AGENTX_PORT` | `8787` | 首选本地端口 |
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | 具体上游模型 ID |
 | `--provider <id>` | `AGENTX_PROVIDER` | 无 | 上游 Provider（`opencode`、`deepseek`、`openrouter`） |
+| `--retry <n>` | `AGENTX_RETRY` | `3` | 上游 429/502/503/504 的重试次数(0 表示禁用) |
+| `--client-protocol <anthropic\|openai>` | | `anthropic` | 仅 `exec`:决定给被启动程序注入哪种形状的环境变量 |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | 预留的详细日志选项 |
 | | `AGENTX_USAGE_DIR` | `~/.config/agentx` | Token 用量统计存储目录 |
 
@@ -320,6 +359,7 @@ Claude Code 遇到不认识的模型时，会假定它使用默认的约 200k to
 - Anthropic `thinking` / `output_config.effort` 转换为上游的思考控制参数（Chat Completions 上是 DeepSeek 的 `thinking`/`reasoning_effort`，Responses API 上是 `reasoning.effort`）
 - Anthropic `tool_choice` 转换为上游 Chat Completions 或 Responses 对应的 tool-choice 结构
 - Responses 和 Chat Completions usage 字段转换为 Anthropic usage 字段
+- Responses 请求/响应与原生 Anthropic Messages API 上游之间的双向转换(针对协议为 `anthropic` 的自定义 Provider),包括流式响应——这是唯一一条 Codex 也会用到、而不仅限于 Claude Code 的转换方向,因为 Codex 只会看到本地的 Responses 端点
 
 DeepSeek 的思考模式要求每个 assistant 回合的 `reasoning_content` 必须回传，并且要挂在它所引出的那个 tool call 所在的同一条消息上；适配器会把一条 assistant 消息的文本、reasoning 与 tool call 保持在同一条消息里，而不是拆分成多条，并且只对 DeepSeek 转发 `reasoning_content`（其它 Chat Completions 上游并不期望这个字段）。当上游以异常方式结束——`content_filter`、`insufficient_system_resource`，或者流结束时既没有 `finish_reason` 也没有 `[DONE]`——都会转换为错误返回，而不是被悄悄当成正常的 `end_turn`。
 
@@ -354,11 +394,6 @@ DeepSeek 的思考模式要求每个 assistant 回合的 `reasoning_content` 必
 `period` 接受 `today`、`week`、`month` 或 `all`。不传 `period` 时统计全部记录。
 会话端点也支持路径形式 `GET /usage/session/<id>`。
 
-### 成本估算
-
-定价层（`src/usage/pricing/`）把 Token 数量转换为每个 Provider 的估算成本。
-用量收集与成本计算相互独立；CLI 报告仅用定价层做展示。
-
 ### 存储与数据
 
 - 统计保存在 `~/.config/agentx/usage.db`（或 `usage.json` 回退）。
@@ -390,7 +425,7 @@ npm run build
 
 项目使用 TypeScript、Node.js 原生 `fetch`、Node.js ESM 和内置 `node:test` 测试运行器。测试会先编译到 `dist/test`，再执行编译后的测试。
 
-测试覆盖请求/响应转换、system instructions、流式事件、工具调用、Provider 路由、Chat Completions 转换，以及 Token 用量适配器、存储、定价和用量查询 API。测试不需要 API Key，也不依赖网络。
+测试覆盖请求/响应转换、system instructions、流式事件、工具调用、Provider 路由、Chat Completions 转换，以及 Token 用量适配器、存储和用量查询 API。测试不需要 API Key，也不依赖网络。
 
 ## CI 与发布
 

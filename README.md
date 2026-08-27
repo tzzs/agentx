@@ -77,6 +77,34 @@ Supported upstream providers:
 | DeepSeek | `AGENTX_DEEPSEEK_API_KEY` | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
 | OpenRouter | `AGENTX_OPENROUTER_API_KEY` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
 
+### Custom providers
+
+Beyond the three built-in providers, you can register an arbitrary OpenAI- or Anthropic-compatible endpoint — a local model server (Ollama, vLLM, LM Studio), an internal gateway, or any other compatible API. In the interactive launcher's "Change Provider" list, choose **Add custom provider…** and enter a name, base URL, and protocol; the same picker also offers **Remove custom provider…** once one exists.
+
+For scripts and non-interactive use, `--base-url` defines (and persists) a custom provider without opening the launcher — `--provider` becomes its display name, and `--protocol` selects the upstream shape (`chat-completions` by default, or `responses`/`anthropic`):
+
+```bash
+# A local OpenAI-compatible server (e.g. Ollama)
+agentx exec --provider "My Local LLM" --base-url http://localhost:11434 --protocol chat-completions --model llama3 -- claude
+
+# A provider that speaks the native Anthropic Messages API
+agentx exec --provider "Internal Anthropic Gateway" --base-url https://gateway.internal --protocol anthropic --model claude-x -- claude
+```
+
+Once registered, reuse it by id (the name, lowercased and hyphenated) without repeating `--base-url`:
+
+```bash
+agentx claude --provider my-local-llm
+```
+
+The credential works exactly like a built-in provider's — set `AGENTX_<ID>_API_KEY` (uppercased, underscored) in your environment, or answer the prompt when asked; the connection metadata is persisted in `runtime.json`, but the API key never is. Remove a custom provider entirely (definition and all saved memory of it, not just a stale model id) with:
+
+```bash
+agentx forget --provider my-local-llm --remove-provider
+```
+
+Built-in providers cannot be removed this way. Both Claude Code and Codex can reach a custom provider regardless of which protocol it speaks — Codex talks to an `anthropic`-protocol custom provider through the same local translation layer that lets it reach Chat Completions upstreams (see [API Translation](#api-translation)).
+
 For scripts and advanced usage, `--provider`/`--model` override the configured runtime for a single invocation:
 
 ```bash
@@ -180,12 +208,18 @@ The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`
 
 ### `exec`
 
-Run any command with the temporary Anthropic environment:
+Run any command through the local adapter. Unlike `claude`/`codex`/`pi`, `exec` never shows the interactive runtime picker — it always resolves provider/model non-interactively (CLI flags → env vars → the most recent selection → built-in defaults), so it is safe to use in scripts and CI:
 
 ```bash
 agentx exec -- claude
 agentx exec -- opencode
 agentx exec -- my-command --argument
+```
+
+By default `exec` injects Anthropic-shaped environment variables (`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_MODEL`), matching any tool that accepts an Anthropic-compatible endpoint. For a tool that only understands `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL`, pass `--client-protocol openai`:
+
+```bash
+agentx exec --client-protocol openai -- my-openai-compatible-tool
 ```
 
 The command's stdin, stdout, stderr, exit code, and termination signals are forwarded where supported by the host platform.
@@ -246,16 +280,20 @@ agentx usage                 # all time
 agentx usage --period today  # today / week / month / all
 ```
 
-The report groups tokens by provider and model, shows input/output/total
-counts, and includes an estimated cost based on provider pricing. Statistics
-are stored per adapter run; the optional `--period` flag filters by time range.
+The report groups tokens by provider and model and shows input/output/total
+counts. Statistics are stored per adapter run; the optional `--period` flag
+filters by time range.
 
-With `--provider`, the command instead queries provider quota where the
-upstream exposes a quota endpoint:
+`agentx usage --provider <id>` is a deprecated alias for `agentx quota
+--provider <id>` (below); it still works but prints a deprecation notice.
+
+### `quota`
+
+Query provider quota (remote account balance/limit) where the upstream exposes one:
 
 ```bash
-agentx usage --provider deepseek
-agentx usage --provider openrouter
+agentx quota --provider deepseek
+agentx quota --provider openrouter
 ```
 
 OpenCode currently reports an explicit unsupported result because it does not expose a documented public quota endpoint.
@@ -289,6 +327,8 @@ For `claude`/`codex`, `--native` (or **Launch native (skip AgentX)** in the laun
 | `--port <port>` | `AGENTX_PORT` | `8787` | Preferred local port |
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Concrete upstream model id |
 | `--provider <id>` | `AGENTX_PROVIDER` | none | Upstream provider (`opencode`, `deepseek`, `openrouter`) |
+| `--retry <n>` | `AGENTX_RETRY` | `3` | Retry attempts on upstream 429/502/503/504 (0 disables) |
+| `--client-protocol <anthropic\|openai>` | | `anthropic` | `exec` only: env vars to inject for the launched program |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | Reserved for verbose logging |
 | | `AGENTX_USAGE_DIR` | `~/.config/agentx` | Directory for token usage statistics |
 
@@ -348,6 +388,7 @@ Supported translation areas include:
 - Anthropic `thinking` / `output_config.effort` to the upstream's reasoning controls (DeepSeek's `thinking`/`reasoning_effort` over Chat Completions, or `reasoning.effort` over the Responses API)
 - Anthropic `tool_choice` to the upstream's Chat Completions or Responses tool-choice shape
 - Responses and Chat Completions usage data to Anthropic usage fields
+- Responses requests/responses to and from a native Anthropic Messages API upstream (for a custom provider whose protocol is `anthropic`), including streaming — this is the one direction that also runs for Codex, not just Claude Code, since Codex only ever sees the local Responses endpoint
 
 For DeepSeek specifically, its thinking mode requires every assistant turn's `reasoning_content` to be echoed back anchored to the same message as the tool call it led to; the adapter keeps an assistant message's text, reasoning, and tool calls together instead of splitting them across separate messages, and only forwards `reasoning_content` for DeepSeek (other Chat Completions upstreams do not expect that field). An abnormal upstream stop — `content_filter`, `insufficient_system_resource`, or a stream that ends without either a `finish_reason` or `[DONE]` — surfaces as an error instead of silently reading back as a normal `end_turn`.
 
@@ -385,12 +426,6 @@ The adapter exposes read-only usage endpoints (no authentication):
 endpoints report all recorded usage. The session endpoint also accepts the
 path form `GET /usage/session/<id>`.
 
-### Cost Estimation
-
-A pricing layer (`src/usage/pricing/`) converts token counts into an estimated
-cost per provider. Collection and cost calculation are kept separate; the CLI
-report uses the pricing layer only for display.
-
 ### Storage and Data
 
 - Statistics live in `~/.config/agentx/usage.db` (or `usage.json` fallback).
@@ -423,7 +458,7 @@ npm run build
 
 The project uses TypeScript, native Node.js `fetch`, Node.js ESM, and the built-in `node:test` runner. Tests are compiled into `dist/test` before execution.
 
-The test suite covers request/response conversion, system instructions, streaming events, tool calls, provider routing, chat-completion conversion, token usage adapters, storage, pricing, and the usage query API. Tests do not require an API key or network access.
+The test suite covers request/response conversion, system instructions, streaming events, tool calls, provider routing, chat-completion conversion, token usage adapters, storage, and the usage query API. Tests do not require an API key or network access.
 
 ## CI and Publishing
 
