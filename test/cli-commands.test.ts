@@ -1,6 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -9,6 +11,36 @@ import {
 import { ClientNotFoundError } from "../src/process.js";
 import { providerById, providerRegistry, registerCustomProvider, unregisterCustomProvider } from "../src/providers/registry.js";
 import { loadCustomProviders } from "../src/runtime.js";
+
+// The compiled CLI's own module-scope entry-point guard (main() only runs
+// when this file is the one actually executed, not merely imported) can only
+// be exercised by really spawning the built dist/src/cli.js — every other
+// test in this suite imports it, which by design never triggers that guard.
+const CLI_ENTRY_POINT = fileURLToPath(new URL("../src/cli.js", import.meta.url));
+
+test("the built CLI entry point runs when invoked directly with node", () => {
+  const result = spawnSync(process.execPath, [CLI_ENTRY_POINT, "version"], { encoding: "utf8" });
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), "1.0.0");
+});
+
+test("regression: the built CLI entry point still runs when invoked through a symlink", async () => {
+  // A global npm install's bin entry (e.g. .../bin/agentx) is a symlink to
+  // this file; process.argv[1] is then the symlink path, not the resolved
+  // target import.meta.url already reports, so the guard must realpath-resolve
+  // argv[1] before comparing — a raw string comparison silently never matches
+  // and main() never runs (the actual bug this test would have caught).
+  const dir = await mkdtemp(join(tmpdir(), "agentx-entrypoint-"));
+  const linkPath = join(dir, "agentx-cli-symlink.js");
+  try {
+    await symlink(CLI_ENTRY_POINT, linkPath);
+    const result = spawnSync(process.execPath, [linkPath, "version"], { encoding: "utf8" });
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), "1.0.0");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 let configDir: string;
 let logs: string[];

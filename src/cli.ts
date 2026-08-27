@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadConfig, parseCliOptions as options } from "./config.js";
 import { startAdapter } from "./server.js";
@@ -488,7 +489,12 @@ async function main() {
 // Only run when executed directly (`node dist/src/cli.js ...`, i.e. the real
 // CLI entry point) — not when this module is imported, e.g. by tests that
 // exercise the exported command handlers directly with their own arguments.
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// process.argv[1] must be realpath-resolved before comparing: a global
+// install's bin entry is a symlink (e.g. .../bin/agentx ->
+// .../lib/node_modules/@tzzs/agentx/dist/src/cli.js), so argv[1] is the
+// symlink path while import.meta.url is already the resolved target —
+// comparing them raw silently never matches, and main() never runs.
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   main().catch((error) => {
     if (error instanceof LaunchCancelledError) { process.exitCode = error.exitCode; return; }
     const message = error instanceof Error ? error.message : error;
