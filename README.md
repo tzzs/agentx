@@ -183,6 +183,27 @@ agentx doctor
 
 The report includes Node.js, platform/WSL status, architecture, API key presence, supported models, and Claude Code discovery.
 
+### `forget`
+
+Scrub saved model ids that upstream no longer offers (for example an OpenRouter
+free launch that was renamed to its real vendor id):
+
+```bash
+agentx forget
+```
+
+The command refreshes OpenRouter's live catalog and screens every remembered
+model id against it. Interactive terminals open the "saved models" manager so
+you can pick ids to forget; non-interactive terminals print the stale list:
+
+```bash
+agentx forget    # output: DeepSeek:\n  deepseek-v4-pro  (no longer in the catalog)
+```
+
+Forgetting removes every trace of the id from `runtime.json` — per-client
+defaults, per-provider last model, and the most recent selection — so the
+renamed id stops being offered as "current" on every launch.
+
 ### `version`
 
 ```bash
@@ -276,7 +297,13 @@ The OpenCode model catalog is fetched only when no provider is selected or the s
 
 Models returned by the API use the Responses API (`gpt-5.6-luna`) or the Chat Completions API (everything else). The local `/v1/models` endpoint always reflects the current catalog; requests must resolve to a concrete configured model.
 
-The OpenRouter provider accepts any model id (defaulting to `OPENROUTER_MODEL` or `openai/gpt-4o-mini`). In the interactive launcher its model picker includes an "Enter a custom model id…" option, so you can type any OpenRouter model id (e.g. `anthropic/claude-sonnet-4.5`) directly.
+The OpenRouter provider accepts any model id (defaulting to `OPENROUTER_MODEL` or `openai/gpt-4o-mini`). In the interactive launcher its model picker includes two extra options:
+
+- **Search / enter any model id…** — type any OpenRouter model id (e.g. `anthropic/claude-sonnet-4.5`) directly.
+- **Browse OpenRouter catalog…** — search the full live catalog (~400 models) fetched from `https://openrouter.ai/api/v1/models`, so you can find real vendor-prefixed ids (e.g. `deepseek/deepseek-v4-pro`) without typing them blind. The catalog is persisted in `runtime.json` for offline screening.
+- **Forget a saved model…** — open the saved-model manager scoped to OpenRouter, so a custom id that was renamed or pulled upstream can be scrubbed without leaving the picker.
+
+Because OpenRouter accepts free-form ids, a launch can save a model that later gets renamed or pulled upstream (e.g. a free tier renamed to its real vendor id). You can scrub such stale ids from inside the model picker itself, or run `agentx forget` for the full session (see [`forget`](#forget)).
 
 Select a concrete model explicitly:
 

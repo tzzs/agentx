@@ -1,13 +1,13 @@
 import { stdin as input, stdout as output } from "node:process";
-import { autocomplete, cancel, intro, isCancel, log, outro, select, text } from "@clack/prompts";
-import { providerRegistry } from "./providers/registry.js";
+import { autocomplete, cancel, intro, isCancel, log, multiselect, note, outro, select, text } from "@clack/prompts";
+import { providerRegistry, openRouterCatalogIds } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
 import { promptCredential, storedCredential } from "./credentials.js";
 import {
-  clientDisplayName, defaultModelFor, modelAvailable, providerAcceptsCustomModels, resolveModelForProvider, type RuntimeDecision,
+  clientDisplayName, defaultModelFor, modelAvailable, providerAcceptsCustomModels, resolveModelForProvider, resolveRuntimeNonInteractive, type RuntimeDecision,
 } from "./selection.js";
 import {
-  saveDefaultRuntime, type RuntimeSelection,
+  forgetRuntime, rememberedModelIds, remembererProviders, saveDefaultRuntime, type RuntimeSelection,
 } from "./runtime.js";
 
 /** Thrown when the user cancels the launcher (q / Ctrl+C) instead of launching. */
@@ -94,21 +94,28 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
     }
   }
 
+  // The quick-start path offers the common actions, plus a manager for saved
+  // models whose upstream ids were renamed or pulled (e.g. OpenRouter).
   const title = `${clientDisplayName(client)} — AgentX`;
   intro(title);
-
-  // When a saved default exists, show a quick-start menu instead of jumping
-  // straight into the full provider / model picker.
   if (startWithDefault) {
     log.message(`Using: ${providerLabel(provider)} / ${model}`);
     const shortcut = await selectDefaultAction(provider, model);
     if (isCancel(shortcut) || shortcut === "cancel") { cancel(`${clientDisplayName(client)} launch cancelled`); throw new LaunchCancelledError(0); }
-    // "start" → launch immediately with the saved default
     if (shortcut === "start") {
       outro("Ready");
       return { provider, model, madeDefault: false, defaultApplied: true, changed: false, apiKey: sessionKeys.get(provider) };
     }
-    // "change" → fall through to the full picker flow below
+    if (shortcut === "manage") {
+      await runSavedModelManager();
+      // Forgetting may have removed the saved default this client depends on;
+      // re-resolve the effective runtime so the picker flow below starts from
+      // a valid selection instead of a stale id.
+      const fresh = await resolveRuntimeNonInteractive(client, {});
+      provider = fresh.provider;
+      model = fresh.model;
+      changed = true;
+    }
   }
 
   const nextProvider = providerChosenViaFirstUse ? provider : await selectProvider(providers, provider);
@@ -166,17 +173,40 @@ async function selectProvider(entries: ProviderEntry[], current: string): Promis
 
 /** Sentinel option value that switches the model picker into free-form entry. */
 const CUSTOM_MODEL_OPTION = "__custom__";
+/** Sentinel option value that switches into picker/search over the live catalog. */
+const BROWSE_CATALOG_OPTION = "__catalog__";
+/** Sentinel option value that routes into the saved-models (forget) manager. */
+const FORGET_MODEL_OPTION = "__forget__";
 
+/**
+ * Model picker for a provider. Registry models come first; OpenRouter also
+ * offers the live public catalog for searchable selection (in addition to
+ * free-form entry), so users can find ~400 real ids instead of typing them
+ * blind. Choosing "Forget a saved model…" opens the manager scoped to this
+ * provider; forgetting may drop a saved custom id, and on return the picker
+ * reopens so a fresh selection (or a cancel) is the only way out.
+ */
 async function selectModel(provider: string, current: string): Promise<string | symbol> {
   const options: Array<{ value: string; label: string; hint?: string }> = modelsFor(provider).map((entry) => ({ value: entry.model, label: entry.model }));
   const custom = providerAcceptsCustomModels(provider);
   // A saved custom id lives outside the registry; surface it as a pickable
-  // option so the initial value always matches an entry.
+  // option so the initial value always matches an entry. When the live
+  // catalog is known and no longer lists it, flag that inline so a renamed or
+  // pulled id (e.g. a free launch that became its real vendor id) is visible
+  // without opening the forget manager.
   if (custom && !options.some((option) => option.value === current)) {
-    options.unshift({ value: current, label: `${current} · current` });
+    const catalog = openRouterCatalogIds();
+    const stale = catalog.length > 0 && !catalog.includes(current);
+    options.unshift({
+      value: current,
+      label: `${current} · current`,
+      ...(stale ? { hint: "renamed or removed upstream?" } : {}),
+    });
   }
   if (custom) {
-    options.push({ value: CUSTOM_MODEL_OPTION, label: "Enter a custom model id…", hint: "type any model id" });
+    options.push({ value: CUSTOM_MODEL_OPTION, label: "Search / enter any model id…", hint: "type any model id" });
+    options.push({ value: BROWSE_CATALOG_OPTION, label: "Browse OpenRouter catalog…", hint: `~${openRouterCatalogIds().length} models` });
+    options.push({ value: FORGET_MODEL_OPTION, label: "Forget a saved model…", hint: "rename / removed ids" });
   }
   // A stale saved default may hold the removed "auto" marker; show a concrete
   // model instead so the initial value always matches an option.
@@ -187,15 +217,53 @@ async function selectModel(provider: string, current: string): Promise<string | 
     initialValue: initial,
     placeholder: "Type to search…",
     maxItems: 12,
-    // Keep the free-form entry visible while filtering so users can always
-    // reach it, even when their search matches no registered model.
+    // Keep the free-form entry and catalog-browse entries visible while
+    // filtering so users can always reach them, even when their search
+    // matches no registered model.
     filter: custom
-      ? (search, option) => option.value === CUSTOM_MODEL_OPTION || defaultModelFilter(search, option)
+      ? (search, option) =>
+          option.value === CUSTOM_MODEL_OPTION || option.value === BROWSE_CATALOG_OPTION || option.value === FORGET_MODEL_OPTION || defaultModelFilter(search, option)
       : undefined,
     validate: (value) => (value ? undefined : "No matching model — clear the search to see all options."),
   });
+  if (chosen === BROWSE_CATALOG_OPTION) {
+    return selectFromOpenRouterCatalog(current);
+  }
+  if (chosen === FORGET_MODEL_OPTION) {
+    await runSavedModelManager(provider);
+    // The forgotten ids may include the picker's current model; force the
+    // next selection from a concrete, still-available option instead of a
+    // removed one. Recursion depth is bounded by user cancellations.
+    return selectModel(provider, defaultModelFor(provider));
+  }
   if (chosen !== CUSTOM_MODEL_OPTION) return chosen;
   return promptCustomModelId(providerLabel(provider), initial);
+}
+
+/**
+ * Searchable picker over OpenRouter's live public catalog. The current model
+ * is offered first so it stays reachable; empty selection cancels back to the
+ * model menu.
+ */
+async function selectFromOpenRouterCatalog(current: string): Promise<string | symbol> {
+  const catalog = openRouterCatalogIds();
+  const options: Array<{ value: string; label: string; hint?: string }> = catalog.map((model) => ({ value: model, label: model }));
+  if (current && !catalog.some((model) => model === current)) {
+    options.unshift({ value: current, label: `${current} · current`, hint: "not in the live catalog" });
+  }
+  if (!options.length) {
+    note("OpenRouter's catalog is unavailable right now. Choose another model or enter one manually.", "Catalog");
+    return CUSTOM_MODEL_OPTION;
+  }
+  const chosen = await autocomplete({
+    message: "OpenRouter model",
+    options,
+    placeholder: "Search ~" + catalog.length + " models…",
+    maxItems: 12,
+    validate: (value) => (value ? undefined : "No matching model — clear the search to see all options."),
+  });
+  if (isCancel(chosen)) return chosen;
+  return chosen;
 }
 
 /** Case-insensitive substring match on the option label (clack's default). */
@@ -220,7 +288,8 @@ async function promptCustomModelId(label: string, suggestion: string): Promise<s
 
 /**
  * Quick-start menu shown when a saved default exists. The user can launch
- * immediately or enter the full reconfiguration flow.
+ * immediately, enter the full reconfiguration flow, or review/forget saved
+ * model ids that are no longer offered upstream.
  */
 async function selectDefaultAction(provider: string, model: string): Promise<string | symbol> {
   const runtime = `${providerLabel(provider)} / ${model}`;
@@ -229,10 +298,76 @@ async function selectDefaultAction(provider: string, model: string): Promise<str
     options: [
       { value: "start", label: "Start", hint: runtime },
       { value: "change", label: "Change provider / model" },
+      { value: "manage", label: "Forget a saved model…", hint: "rename / removed ids" },
       { value: "cancel", label: "Cancel" },
     ],
     initialValue: "start",
   });
+}
+
+/**
+ * Review & forget saved models. OpenRouter ids are remembered in runtime.json
+ * (defaults, per-provider last model, most recent selection); when an upstream
+ * model is renamed or pulled (e.g. a free launch renamed to its real vendor
+ * id), the stale id keeps being offered as "current" on every launch. This
+ * flow lets the user scrub those ids without hand-editing runtime.json.
+ *
+ * When `provider` is given (reached from that provider's model picker), the
+ * provider step is skipped and the list is scoped to that provider.
+ */
+export async function runSavedModelManager(provider?: string): Promise<void> {
+  const providers = await remembererProviders();
+  if (provider && !providers.some((entry) => entry.provider === provider)) {
+    note(`Nothing is saved for ${providerLabel(provider)} yet. Launch once to record a model.`, "Saved models");
+    return;
+  }
+  if (!provider && !providers.length) {
+    note("No saved models were found. Launch once to record a runtime.", "Saved models");
+    return;
+  }
+  const chosenProvider = provider ?? await (async () => {
+    const providerOptionsList = providers.map(({ provider }) => ({
+      value: provider,
+      label: providerLabel(provider),
+    }));
+    const chosen = await select({
+      message: "Provider with saved models",
+      options: providerOptionsList,
+    });
+    if (isCancel(chosen)) return undefined;
+    return chosen;
+  })();
+  if (!chosenProvider) return;
+  const ids = await rememberedModelIds(chosenProvider);
+  if (!ids.length) {
+    note("Nothing is saved for this provider.", "Saved models");
+    return;
+  }
+  const catalog = openRouterCatalogIds();
+  const known = (model: string) => catalog.includes(model);
+  const modelOptions = ids.map((model) => ({
+    value: model,
+    label: model,
+    hint: known(model) ? "offered upstream" : "no longer listed",
+  }));
+  const picked = await multiselect({
+    message: "Forget saved models (already-removed ids first). Start: repeat to toggle.",
+    options: modelOptions,
+    required: false,
+    initialValues: ids.filter((model) => !known(model)),
+    maxItems: 12,
+  });
+  if (isCancel(picked)) return;
+  if (!picked.length) {
+    note("Nothing forgotten.", "Saved models");
+    return;
+  }
+  let forgot = 0;
+  for (const model of picked) {
+    if (await forgetRuntime({ provider: chosenProvider, model })) forgot++;
+  }
+  if (forgot) note(`Forgot ${forgot} model${forgot === 1 ? "" : "s"} from ${providerLabel(chosenProvider)}.`, "Saved models");
+  else note("Nothing forgotten (no saved references were found).", "Saved models");
 }
 
 /**

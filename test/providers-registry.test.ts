@@ -1,6 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { apiKeyFor, providerFor, providerRegistry, refreshProviderCatalog, allModels } from "../src/providers/registry.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { apiKeyFor, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerFor, providerRegistry, refreshProviderCatalog, setOpenRouterCatalogIds, allModels, withExternalMetadata } from "../src/providers/registry.js";
+import { saveOpenRouterModels } from "../src/runtime.js";
+
+// refreshProviderCatalog/hydrateOpenRouterCatalog read and write runtime.json;
+// redirect it to a throwaway directory so these tests never touch a real
+// user's ~/.config/agentx/runtime.json.
+let configDir: string;
+test.before(async () => {
+  configDir = await mkdtemp(join(tmpdir(), "agentx-registry-"));
+  process.env.XDG_CONFIG_HOME = configDir;
+});
+test.after(async () => {
+  delete process.env.XDG_CONFIG_HOME;
+  await rm(configDir, { recursive: true, force: true });
+});
 
 test("resolves OpenCode models through the provider registry", () => {
   const provider = providerFor("gpt-5.6-luna");
@@ -204,6 +221,104 @@ test("skips OpenRouter backfill when a suffix match is ambiguous", async () => {
     assert.equal(refreshed.list, true);
     assert.equal(providerFor("twin").contextWindow, undefined);
     assert.equal(providerFor("unique").contextWindow, 3000);
+  } finally {
+    restoreSnapshot(snapshot);
+  }
+});
+
+test("fetchOpenRouterModels fills the interactive picker from the live catalog", async () => {
+  const snapshot = takeSnapshot();
+  const fetcher = (async (input: any) => {
+    assert.match(String(input), /openrouter\.ai\/api\/v1\/models/);
+    return new Response(JSON.stringify({ data: [
+      { id: "vendor/alpha", context_length: 1000, top_provider: { max_completion_tokens: 512 }, architecture: { input_modalities: ["text"] } },
+      { id: "vendor/beta", context_length: 2000 },
+      { id: "" },
+    ] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const ids = await fetchOpenRouterModels(fetcher);
+    assert.deepEqual(ids, ["vendor/alpha", "vendor/beta"]);
+    assert.deepEqual(openRouterCatalogIds(), ["vendor/alpha", "vendor/beta"]);
+    assert.equal(openRouterCatalogIds().length >= 2, true);
+
+    // The first catalog id becomes the registry default when no preference is set.
+    if (!process.env.OPENROUTER_MODEL) {
+      const openrouter = providerRegistry.find((provider) => provider.id === "openrouter")!;
+      assert.equal(openrouter.models[0]?.model, "vendor/alpha");
+    }
+    // Enrichment of a custom id follows the freshly fetched metadata table.
+    assert.equal(withExternalMetadata(providerFor("vendor/alpha", "openrouter")).contextWindow, 1000);
+    assert.deepEqual(withExternalMetadata(providerFor("vendor/alpha", "openrouter")).modalities, ["text"]);
+  } finally {
+    restoreSnapshot(snapshot);
+  }
+});
+
+test("fetchOpenRouterModels keeps the previous catalog when the network fails", async () => {
+  const before = openRouterCatalogIds();
+  const fetcher = (async () => { throw new Error("offline"); }) as typeof fetch;
+  assert.deepEqual(await fetchOpenRouterModels(fetcher), before);
+});
+
+test("fetchOpenRouterModels keeps the previous catalog on an empty payload", async () => {
+  const before = openRouterCatalogIds();
+  const fetcher = (async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) as typeof fetch;
+  assert.deepEqual(await fetchOpenRouterModels(fetcher), before);
+});
+
+test("openRouterCatalogIds exposes persisted ids even before a live fetch", async () => {
+  const snapshot = takeSnapshot();
+  // A metadata refresh that cannot reach the list endpoint persists ids from
+  // the OpenRouter table into the catalog cache.
+  const fetcher = (async (input: any) => {
+    const url = String(input);
+    if (/openrouter\.ai/.test(url)) {
+      return new Response(JSON.stringify({ data: [{ id: "persisted/vendor-model", context_length: 4096 }] }), { status: 200 });
+    }
+    if (/models\.dev/.test(url)) return new Response(JSON.stringify({}), { status: 200 });
+    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+  }) as typeof fetch;
+  await refreshProviderCatalog({ metadata: true }, fetcher);
+  assert.ok(openRouterCatalogIds().includes("persisted/vendor-model"));
+  restoreSnapshot(snapshot);
+});
+
+test("hydrateOpenRouterCatalog restores the persisted catalog into an empty in-memory cache", async () => {
+  const snapshot = takeSnapshot();
+  await saveOpenRouterModels(["disk/vendor-a", "disk/vendor-b"]);
+  setOpenRouterCatalogIds([]); // simulate a fresh process with nothing fetched yet
+  try {
+    assert.deepEqual(await hydrateOpenRouterCatalog(), ["disk/vendor-a", "disk/vendor-b"]);
+    assert.deepEqual(openRouterCatalogIds(), ["disk/vendor-a", "disk/vendor-b"]);
+  } finally {
+    restoreSnapshot(snapshot);
+  }
+});
+
+test("hydrateOpenRouterCatalog does not overwrite an already-populated cache", async () => {
+  const snapshot = takeSnapshot();
+  setOpenRouterCatalogIds(["memory/vendor"]);
+  await saveOpenRouterModels(["disk/other-vendor"]);
+  try {
+    assert.deepEqual(await hydrateOpenRouterCatalog(), ["memory/vendor"]);
+  } finally {
+    restoreSnapshot(snapshot);
+  }
+});
+
+test("refreshProviderCatalog hydrates the OpenRouter cache from disk even when no network fetch is needed", async () => {
+  const snapshot = takeSnapshot();
+  await saveOpenRouterModels(["disk/only-vendor"]);
+  setOpenRouterCatalogIds([]);
+  // A provider bound to something other than "opencode" with no metadata
+  // request used to early-return without touching the OpenRouter cache at
+  // all; the fetcher below must never be called.
+  const fetcher = (async () => { throw new Error("must not fetch over the network"); }) as typeof fetch;
+  try {
+    const refreshed = await refreshProviderCatalog({ provider: "openrouter" }, fetcher);
+    assert.deepEqual(refreshed, { list: false, metadata: false });
+    assert.deepEqual(openRouterCatalogIds(), ["disk/only-vendor"]);
   } finally {
     restoreSnapshot(snapshot);
   }

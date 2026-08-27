@@ -1,4 +1,5 @@
 import type { ProviderDefinition, ProviderModel } from "./types.js";
+import { loadOpenRouterModels, saveOpenRouterModels } from "../runtime.js";
 
 const openCodeBase = "https://opencode.ai/zen/go/v1";
 const deepSeekBase = "https://api.deepseek.com/v1";
@@ -85,6 +86,79 @@ function applyModelMetadata(model: ProviderModel, primary?: MetadataMap, seconda
 /** Last-fetched public catalogs, reused to enrich custom (non-registry) model ids. */
 let cachedOpenRouter: MetadataMap = new Map();
 let cachedSections: MetadataSections = new Map();
+/** Every id advertised by OpenRouter's public catalog for the interactive picker. */
+let cachedOpenRouterIds: string[] = [];
+
+/** The full id list from the last-fetched OpenRouter catalog (empty before a fetch). */
+export function openRouterCatalogIds(): string[] {
+  return cachedOpenRouterIds;
+}
+
+/**
+ * Replace the in-memory OpenRouter id list. An explicit OPENROUTER_MODEL stays
+ * the registry default; otherwise the first catalog id becomes the default so
+ * `defaultModelFor` points at a real listing.
+ */
+export function setOpenRouterCatalogIds(ids: string[]): void {
+  cachedOpenRouterIds = ids;
+  const provider = providerRegistry.find((entry) => entry.id === "openrouter");
+  if (!provider) return;
+  const preferred = process.env.OPENROUTER_MODEL ?? (ids.length ? ids[0] : undefined);
+  const current = provider.models[0]?.model;
+  if (preferred && preferred !== current) {
+    provider.models = [models("openrouter", `${openRouterBase}/chat/completions`, [preferred], "chat-completions")[0]];
+    allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+  }
+}
+
+/** Isolation seam so tests can restore the module-level model cache. */
+export function setCachedOpenRouter(table: MetadataMap): void {
+  cachedOpenRouter = table;
+}
+
+/**
+ * Fetch OpenRouter's auth-free public catalog for picker/search use. Failures
+ * keep the previously cached ids so a flaky network degrades to the last good
+ * list rather than an empty one.
+ */
+export async function fetchOpenRouterModels(
+  fetcher: typeof fetch = fetch,
+): Promise<string[]> {
+  try {
+    const response = await fetcher(openRouterModelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) });
+    if (!response.ok) return cachedOpenRouterIds;
+    const payload = await response.json();
+    const ids = ((payload?.data ?? []) as Array<{ id?: string }>)
+      .map((entry) => entry.id)
+      .filter((id): id is string => Boolean(id));
+    if (!ids.length) return cachedOpenRouterIds;
+    cachedOpenRouterIds = ids;
+    // A fresh catalog also refreshes the metadata table that enriches custom ids
+    // (Codex catalog generation, /v1/models, provider listing).
+    cachedOpenRouter = parseOpenRouterMetadata(payload);
+    setOpenRouterCatalogIds(ids);
+    return cachedOpenRouterIds;
+  } catch {
+    return cachedOpenRouterIds;
+  }
+}
+
+/**
+ * Hydrate the in-memory OpenRouter id cache from the last persisted snapshot.
+ * A fresh CLI process starts with an empty cache, which made every remembered
+ * id look stale to the picker and to `agentx forget` until something in that
+ * process happened to trigger a live fetch first; this restores the
+ * last-known-good list from disk so offline screening is accurate from the
+ * very first call. Routed through `setOpenRouterCatalogIds` so the registry's
+ * default model benefits too, same as a live fetch. Never overwrites ids
+ * already populated this process (e.g. by an earlier fetch).
+ */
+export async function hydrateOpenRouterCatalog(): Promise<string[]> {
+  if (cachedOpenRouterIds.length) return cachedOpenRouterIds;
+  const ids = await loadOpenRouterModels();
+  if (ids.length) setOpenRouterCatalogIds(ids);
+  return cachedOpenRouterIds;
+}
 
 /**
  * Enrich a synthetic (custom id) entry from the last-fetched OpenRouter /
@@ -138,11 +212,15 @@ export const allModels = providerRegistry.flatMap((provider) => provider.models)
  * Codex catalog will be generated; it is applied globally because Codex can
  * enumerate multiple providers through the local proxy. Each source tolerates
  * independent failure and mutations stay in place for existing references.
+ * The OpenRouter id cache is always hydrated from disk first (no network), so
+ * callers get accurate offline screening even when neither refresh runs —
+ * e.g. a plain launch bound to OpenRouter with no `metadata` request.
  */
 export async function refreshProviderCatalog(
   options: { provider?: string; metadata?: boolean } = {},
   fetcher: typeof fetch = fetch,
 ): Promise<{ list: boolean; metadata: boolean }> {
+  await hydrateOpenRouterCatalog();
   const needList = !options.provider || options.provider === "opencode";
   const needMetadata = Boolean(options.metadata);
   if (!needList && !needMetadata) return { list: false, metadata: false };
@@ -171,6 +249,12 @@ export async function refreshProviderCatalog(
     if (sections.size || openRouter.size) {
       applyMetadataToRegistry(sections, openRouter);
       refreshedMetadata = true;
+    }
+    // Persist the catalog ids so the launcher / doctor can screen stale
+    // remembered models even before a fresh fetch this run.
+    if (openRouter.size) {
+      cachedOpenRouterIds = [...openRouter.keys()];
+      await saveOpenRouterModels(cachedOpenRouterIds);
     }
   }
 

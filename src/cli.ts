@@ -3,15 +3,15 @@ import { loadConfig, parseCliOptions as options } from "./config.js";
 import type { Config } from "./config.js";
 import { startAdapter, type Adapter } from "./server.js";
 import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, codexLaunchArgs } from "./process.js";
-import { runInteractiveLauncher, LaunchCancelledError } from "./ui.js";
-import { credentialEnvName, providerById, refreshProviderCatalog } from "./providers/registry.js";
+import { runInteractiveLauncher, runSavedModelManager, LaunchCancelledError } from "./ui.js";
+import { credentialEnvName, providerById, refreshProviderCatalog, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerDisplayName } from "./providers/registry.js";
 import type { ProviderDefinition } from "./providers/types.js";
 import { runDoctor, renderDoctor, executableExists } from "./doctor.js";
 import { credentialInstructions, credentialSource, promptCredential, resolveCredential } from "./credentials.js";
 import { queryProviderUsage, usageProvider } from "./quota.js";
 import { runUsageStats } from "./usage/cli.js";
 import { resolveRuntimeNonInteractive } from "./selection.js";
-import { loadLastSelection, saveLastModel } from "./runtime.js";
+import { loadLastSelection, remembererProviders, rememberedModelIds, saveLastModel, saveOpenRouterModels } from "./runtime.js";
 import { catalogModels, writeCodexCatalog } from "./codex-catalog.js";
 import { confirm, isCancel } from "@clack/prompts";
 
@@ -24,6 +24,7 @@ const HELP: Record<string, string> = {
   auth: "Manage stored provider credentials",
   usage: "Show token usage statistics or query provider quota",
   doctor: "Inspect the local environment and configuration",
+  forget: "Scrub saved model ids that upstream no longer offers",
   version: "Print the CLI version",
 };
 
@@ -196,6 +197,27 @@ async function launchClient(executable: string, args: string[], config: Config, 
   }
 }
 
+/**
+ * Non-interactive `forget`: print every saved model id that upstream no longer
+ * lists, without prompting. Perfect for `agentx forget` in scripts or before
+ * launch to learn which remembered ids went stale.
+ */
+async function printStaleSavedModels(): Promise<void> {
+  const catalog = openRouterCatalogIds();
+  const providers = await remembererProviders();
+  if (!providers.length) { console.log("No saved models recorded."); return; }
+  let stale = 0;
+  for (const { provider } of providers) {
+    const ids = await rememberedModelIds(provider);
+    const removed = ids.filter((model) => !catalog.includes(model));
+    if (!removed.length) continue;
+    console.log(`${providerDisplayName(provider)}:`);
+    for (const model of removed) console.log(`  ${model}  (no longer in the catalog)`);
+    stale += removed.length;
+  }
+  if (!stale) console.log("All saved models are still offered upstream.");
+}
+
 async function main() {
   const [command = "help", ...args] = process.argv.slice(2);
   if (command === "version") return console.log("1.0.0");
@@ -231,6 +253,22 @@ async function main() {
     });
     console.log(renderDoctor(result));
     if (result.issues.length) process.exitCode = 1;
+    return;
+  }
+
+  if (command === "forget") {
+    // Hydrate from disk first so a failed live fetch below still falls back
+    // to the last-known-good catalog instead of an empty in-memory one.
+    await hydrateOpenRouterCatalog();
+    // Screen saved ids against the live catalog so removed ones surface first.
+    // Failure still lets the manager run from the persisted catalog.
+    const catalog = await fetchOpenRouterModels().catch(() => openRouterCatalogIds());
+    await saveOpenRouterModels(catalog);
+    if (!isInteractive()) {
+      await printStaleSavedModels();
+      return;
+    }
+    await runSavedModelManager();
     return;
   }
 

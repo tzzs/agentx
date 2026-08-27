@@ -170,6 +170,22 @@ agentx doctor
 
 报告包含 Node.js、平台/WSL 状态、CPU 架构、API Key 是否存在、支持的模型，以及 Claude Code 是否可被发现。
 
+### `forget`
+
+清理上游已不再提供的已保存模型 id（例如 OpenRouter 的免费模型被改名为其真实厂商 id 时）：
+
+```bash
+agentx forget
+```
+
+该命令会刷新 OpenRouter 的实时目录，并把每一个已记住的模型 id 与它比对。交互式终端会打开「已保存模型」管理器，让你勾选要清理的模型；非交互终端则直接打印过期列表：
+
+```bash
+agentx forget    # 输出示例：DeepSeek:\n  deepseek-v4-pro  (no longer in the catalog)
+```
+
+清理会移除 `runtime.json` 中该 id 的所有痕迹——每个客户端的默认配置、每个 Provider 的最后使用模型、以及最近一次选择——这样被改名的 id 就不会在每次启动时继续被当作「当前」模型提供。
+
 ### `version`
 
 ```bash
@@ -253,7 +269,13 @@ agentx proxy --host 0.0.0.0
 
 接口返回的模型使用 Responses API（`gpt-5.6-luna`）或 Chat Completions API（其余模型）。本地 `/v1/models` 端点始终反映当前目录；请求必须能解析到具体已配置的模型。
 
-OpenRouter Provider 接受任意模型 id（默认使用 `OPENROUTER_MODEL` 或 `openai/gpt-4o-mini`）。交互式启动器的模型选择列表中包含 "Enter a custom model id…" 选项，可以直接输入任意 OpenRouter 模型 id（例如 `anthropic/claude-sonnet-4.5`）。
+OpenRouter Provider 接受任意模型 id（默认使用 `OPENROUTER_MODEL` 或 `openai/gpt-4o-mini`）。交互式启动器的模型选择列表额外提供三个选项：
+
+- **Search / enter any model id…** — 直接输入任意 OpenRouter 模型 id（例如 `anthropic/claude-sonnet-4.5`）。
+- **Browse OpenRouter catalog…** — 浏览从 `https://openrouter.ai/api/v1/models` 拉取的全量实时目录（约 400 个模型），可以搜索到真实存在的厂商前缀 id（例如 `deepseek/deepseek-v4-pro`），无需盲打。目录会持久化到 `runtime.json`，供离线比对。
+- **Forget a saved model…** — 打开限定在当前 Provider 的「已保存模型」管理器，直接在当前选择器里清掉被改名/下架的自定义模型 id，无需退出选择流程。
+
+由于 OpenRouter 接受自由输入的模型 id，一次启动可能保存了上游后来改名或下架的模型（比如免费模型被改名为真实厂商 id）。你可以在模型选择器内部直接清理这些过期 id，也可以运行 `agentx forget` 进入完整的管理流程（见上文 [`forget`](#forget)）。
 
 显式选择具体模型：
 
