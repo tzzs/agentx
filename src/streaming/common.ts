@@ -1,5 +1,6 @@
 import type { ServerResponse } from "node:http";
 import type { TokenUsage } from "../usage/types.js";
+import type { ProviderProtocol } from "../providers/types.js";
 
 export const SSE_HEADERS = { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" };
 
@@ -13,7 +14,7 @@ export const REASONING_OUTPUT_INDEX = 1000;
 export interface StreamUsageOptions {
   provider: string;
   model: string;
-  protocol: "responses" | "chat-completions";
+  protocol: ProviderProtocol;
   sessionId?: string;
   onUsage?: (usage: TokenUsage) => void;
   onDiagnostic?: (message: string) => void;
@@ -72,7 +73,7 @@ export async function drain(reader: ReadableStreamDefaultReader<Uint8Array>, con
   }
 }
 
-/** Cache-token fields shared by chat-completions and Responses usage payloads. */
+/** Cache-token fields shared by chat-completions, Responses, and Anthropic usage payloads. */
 export function cacheTokensOf(usage: any): { cached?: number; reasoning?: number } {
   const cached = usage?.prompt_tokens_details?.cached_tokens
     ?? usage?.input_tokens_details?.cached_tokens
