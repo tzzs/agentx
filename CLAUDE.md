@@ -11,7 +11,7 @@
 ```bash
 npm ci            # 按 package-lock.json 安装精确依赖
 npm run build     # 编译 TypeScript 到 dist/（使用 tsc）
-npm test          # 先构建，再执行 node --test dist/test/*.test.js
+npm test          # 先构建，再执行 node --test（在 dist/ 下自动发现测试文件；Windows 的 cmd.exe 不做 glob 展开，故用目录自动发现而非 dist/test/*.test.js）
 ```
 
 运行单个测试文件：`npm run build && node --test dist/test/catalog.test.js`

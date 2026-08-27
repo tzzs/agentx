@@ -1,16 +1,17 @@
 #!/usr/bin/env node
+import { fileURLToPath } from "node:url";
 import { loadConfig, parseCliOptions as options } from "./config.js";
 import { startAdapter } from "./server.js";
 import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, clientEnvironment, codexLaunchArgs, nativeClientEnvironment } from "./process.js";
 import { runInteractiveLauncher, runSavedModelManager, LaunchCancelledError } from "./ui.js";
-import { credentialEnvName, providerById, refreshProviderCatalog, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerDisplayName } from "./providers/registry.js";
-import type { ProviderDefinition } from "./providers/types.js";
+import { credentialEnvName, providerById, refreshProviderCatalog, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerDisplayName, registerCustomProvider, unregisterCustomProvider } from "./providers/registry.js";
+import type { ProviderDefinition, ProviderProtocol } from "./providers/types.js";
 import { runDoctor, renderDoctor, executableExists } from "./doctor.js";
 import { credentialInstructions, credentialSource, promptCredential, resolveCredential } from "./credentials.js";
-import { queryProviderUsage, usageProvider } from "./quota.js";
+import { runQuotaCommand } from "./quota.js";
 import { runUsageStats } from "./usage/cli.js";
 import { resolveRuntimeNonInteractive } from "./selection.js";
-import { loadLastSelection, remembererProviders, rememberedModelIds, saveLastModel, saveOpenRouterModels } from "./runtime.js";
+import { forgetCustomProvider, loadCustomProviders, loadLastSelection, remembererProviders, rememberedModelIds, saveCustomProvider, saveLastModel, saveOpenRouterModels } from "./runtime.js";
 import { catalogModels, writeCodexCatalog } from "./codex-catalog.js";
 import { confirm, isCancel } from "@clack/prompts";
 
@@ -21,7 +22,8 @@ const HELP: Record<string, string> = {
   proxy: "Start only the local adapter",
   exec: "Run any command with the temporary Anthropic environment",
   auth: "Manage stored provider credentials",
-  usage: "Show token usage statistics or query provider quota",
+  usage: "Show token usage statistics",
+  quota: "Query provider quota (remote account balance/limit)",
   doctor: "Inspect the local environment and configuration",
   forget: "Scrub saved model ids that upstream no longer offers",
   version: "Print the CLI version",
@@ -35,6 +37,10 @@ const OPTION_LINES = [
   "  --port <port>       Preferred local port (default 8787)",
   "  --host <host>       Local bind address (default 127.0.0.1)",
   "  --api-key <key>     Upstream API key",
+  "  --retry <n>         Retry attempts on upstream 429/5xx (default 3, 0 disables)",
+  "  --client-protocol <anthropic|openai>  exec only: env vars to inject for the launched program (default anthropic)",
+  "  --base-url <url>    Define (and persist) a custom provider at this endpoint; --provider names it",
+  "  --protocol <responses|chat-completions|anthropic>  Upstream protocol for --base-url (default chat-completions)",
   "  --verbose           Verbose logging",
   "  --native            claude/codex only: launch the real client directly, no adapter or env overrides",
 ];
@@ -48,10 +54,14 @@ function helpText(command?: string): string {
       lines.push("Usage: agentx auth <login|status|logout> --provider <provider>");
     } else if (command === "usage") {
       lines.push("Usage: agentx usage [--period today|week|month|all]");
-      lines.push("       agentx usage --provider <provider>");
       lines.push("Options:");
       lines.push("  --period <range>    Time range for token statistics (default all)");
-      lines.push("  --provider <id>     Query provider quota instead of token statistics");
+      lines.push("  --provider <id>     Deprecated: use `agentx quota --provider <id>` instead");
+      return lines.join("\n");
+    } else if (command === "quota") {
+      lines.push("Usage: agentx quota --provider <provider>");
+      lines.push("Options:");
+      lines.push("  --provider <id>     Provider to query (default: opencode or AGENTX_PROVIDER)");
       return lines.join("\n");
     } else if (command === "doctor") {
       lines.push("Usage: agentx doctor [options]");
@@ -62,6 +72,13 @@ function helpText(command?: string): string {
       return lines.join("\n");
     } else if (command === "exec") {
       lines.push("Usage: agentx exec [options] -- <command> [args...]");
+    } else if (command === "forget") {
+      lines.push("Usage: agentx forget");
+      lines.push("       agentx forget --provider <custom-id> --remove-provider");
+      lines.push("Options:");
+      lines.push("  --provider <id>     Scope to one provider (with --remove-provider, the custom provider to remove entirely)");
+      lines.push("  --remove-provider   Remove the named custom provider instead of scrubbing stale model ids");
+      return lines.join("\n");
     } else {
       lines.push(`Usage: agentx ${command} [options]`);
     }
@@ -93,7 +110,7 @@ function isInteractive(): boolean {
 }
 
 /** Flags the adapter consumes itself; never forwarded to the launched client. */
-const ADAPTER_FLAGS = new Set(["--model", "--background-model", "--provider", "--port", "--host", "--api-key", "--verbose", "--native"]);
+const ADAPTER_FLAGS = new Set(["--model", "--background-model", "--provider", "--port", "--host", "--api-key", "--retry", "--client-protocol", "--base-url", "--protocol", "--verbose", "--native"]);
 /** Boolean-ish adapter flags that never consume the following argument as a value. */
 const BOOLEAN_ADAPTER_FLAGS = new Set(["--verbose", "--native"]);
 
@@ -115,10 +132,11 @@ function isNativeRequested(opts: Record<string, string | undefined>): boolean {
 }
 
 /** Prompt for a missing provider credential. Returns the key when obtained. */
-async function configureMissingProvider(provider: ProviderDefinition): Promise<string | undefined> {
+export async function configureMissingProvider(provider: ProviderDefinition, deps: { promptCredential?: typeof promptCredential } = {}): Promise<string | undefined> {
+  const prompt = deps.promptCredential ?? promptCredential;
   console.error(`${provider.name} is not configured.\n\nAPI key required.`);
   try {
-    const key = await promptCredential(provider);
+    const key = await prompt(provider);
     console.error(`✓ ${provider.name} connected`);
     return key;
   } catch {
@@ -173,6 +191,14 @@ function reportMissingClient(executable: string): void {
   }
 }
 
+/** Injectable side effects for {@link launchClient}, so tests can exercise the install-recovery flow without a real terminal, shell, or spawned process. */
+export interface ClientLaunchDeps {
+  runCommand?: typeof runCommand;
+  confirm?: typeof confirm;
+  runShellCommand?: typeof runShellCommand;
+  executableExists?: typeof executableExists;
+}
+
 /**
  * Launch a client, with a recovery path for a missing executable: explain the
  * problem, and — interactively only — offer to run the known install command.
@@ -180,29 +206,33 @@ function reportMissingClient(executable: string): void {
  * retry the launch; otherwise exit with a clear message. The adapter stays up
  * throughout so a successful install flows straight into the client session.
  */
-async function launchClient(executable: string, args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+export async function launchClient(executable: string, args: string[], env: NodeJS.ProcessEnv, deps: ClientLaunchDeps = {}): Promise<number> {
+  const run = deps.runCommand ?? runCommand;
+  const confirmFn = deps.confirm ?? confirm;
+  const runShell = deps.runShellCommand ?? runShellCommand;
+  const exists = deps.executableExists ?? executableExists;
   try {
-    return await runCommand(executable, args, env);
+    return await run(executable, args, env);
   } catch (error) {
     if (!(error instanceof ClientNotFoundError)) throw error;
     reportMissingClient(executable);
     const installCommand = CLIENT_INSTALL_COMMANDS[executable];
     if (!isInteractive() || !installCommand) { process.exitCode = 1; return 1; }
-    const proceed = await confirm({ message: `Run \`${installCommand}\` now?`, initialValue: false });
+    const proceed = await confirmFn({ message: `Run \`${installCommand}\` now?`, initialValue: false });
     if (isCancel(proceed) || !proceed) {
       console.error(`Skipped installation. Re-run agentx ${executable} once installed.`);
       process.exitCode = 1;
       return 1;
     }
     console.error(`Running: ${installCommand}`);
-    const code = await runShellCommand(installCommand);
-    if (code !== 0 || !(await executableExists(executable))) {
+    const code = await runShell(installCommand);
+    if (code !== 0 || !(await exists(executable))) {
       console.error("✗ Installation did not complete or the executable is still missing.\n  Install it manually, then re-run this command.");
       process.exitCode = 1;
       return 1;
     }
     console.error(`✓ ${CLIENT_LABELS[executable] ?? executable} installed`);
-    return runCommand(executable, args, env);
+    return run(executable, args, env);
   }
 }
 
@@ -227,61 +257,95 @@ async function printStaleSavedModels(): Promise<void> {
   if (!stale) console.log("All saved models are still offered upstream.");
 }
 
-async function main() {
-  const [command = "help", ...args] = process.argv.slice(2);
-  if (command === "version") return console.log("1.0.0");
-  if (command === "help" || command === "--help" || command === "-h") return console.log(helpText(args[0]));
+export async function runAuthCommand(args: string[]): Promise<void> {
+  const action = args[0] ?? "status";
+  const provider = providerById(options(args).provider ?? process.env.AGENTX_PROVIDER ?? "opencode");
+  if (action === "login") { console.log(credentialInstructions(provider)); return; }
+  if (action === "logout") { console.log(`AgentX keeps provider API keys in environment variables and stores nothing itself.\nRemove ${credentialEnvName(provider)} (or ${provider.apiKeyEnv}) from your shell profile to sign out.`); return; }
+  if (action === "status") { const source = credentialSource(provider); console.log(`Provider: ${provider.name}\nCredential: ${source ? `configured via ${source}` : "missing"}\nPreferred variable: ${credentialEnvName(provider)} (${provider.apiKeyEnv} also accepted)`); return; }
+  throw new Error("Usage: agentx auth <login|status|logout> --provider <provider>");
+}
 
-  if (command === "auth") {
-    const action = args[0] ?? "status";
-    const provider = providerById(options(args).provider ?? process.env.AGENTX_PROVIDER ?? "opencode");
-    if (action === "login") { console.log(credentialInstructions(provider)); return; }
-    if (action === "logout") { console.log(`AgentX keeps provider API keys in environment variables and stores nothing itself.\nRemove ${credentialEnvName(provider)} (or ${provider.apiKeyEnv}) from your shell profile to sign out.`); return; }
-    if (action === "status") { const source = credentialSource(provider); console.log(`Provider: ${provider.name}\nCredential: ${source ? `configured via ${source}` : "missing"}\nPreferred variable: ${credentialEnvName(provider)} (${provider.apiKeyEnv} also accepted)`); return; }
-    throw new Error("Usage: agentx auth <login|status|logout> --provider <provider>");
-  }
-
-  if (command === "usage") {
-    const opts = options(args);
-    if (!opts.provider && !process.env.AGENTX_PROVIDER) {
-      const period = opts.period === "today" || opts.period === "week" || opts.period === "month" || opts.period === "all" ? opts.period : "all";
-      console.log(await runUsageStats(period));
-      return;
-    }
-    const provider = usageProvider(opts.provider); const key = provider.id === "opencode" ? "" : await resolveCredential(provider);
-    const result = await queryProviderUsage(provider.id, key); console.log(JSON.stringify(result, null, 2)); if (!result.success && result.supported) process.exitCode = 1; return;
-  }
-
-  if (command === "doctor") {
-    const doctorOptions = options(args);
-    await refreshProviderCatalog({ provider: doctorOptions.provider ?? process.env.AGENTX_PROVIDER });
-    const result = await runDoctor({
-      ...doctorOptions,
-      client: doctorOptions.client === "claude" || doctorOptions.client === "codex" || doctorOptions.client === "all" ? doctorOptions.client : undefined,
-      offline: doctorOptions.offline === "true" || doctorOptions.offline === "" ? true : undefined,
-    });
-    console.log(renderDoctor(result));
-    if (result.issues.length) process.exitCode = 1;
-    return;
-  }
-
-  if (command === "forget") {
-    // Hydrate from disk first so a failed live fetch below still falls back
-    // to the last-known-good catalog instead of an empty in-memory one.
-    await hydrateOpenRouterCatalog();
-    // Screen saved ids against the live catalog so removed ones surface first.
-    // Failure still lets the manager run from the persisted catalog.
-    const catalog = await fetchOpenRouterModels().catch(() => openRouterCatalogIds());
-    await saveOpenRouterModels(catalog);
-    if (!isInteractive()) {
-      await printStaleSavedModels();
-      return;
-    }
-    await runSavedModelManager();
-    return;
-  }
-
+export async function runUsageCommand(args: string[]): Promise<void> {
   const opts = options(args);
+  if (!opts.provider && !process.env.AGENTX_PROVIDER) {
+    const period = opts.period === "today" || opts.period === "week" || opts.period === "month" || opts.period === "all" ? opts.period : "all";
+    console.log(await runUsageStats(period));
+    return;
+  }
+  console.error("Deprecated: use `agentx quota --provider <id>` instead.");
+  const { output, exitCode } = await runQuotaCommand(opts.provider);
+  console.log(output);
+  process.exitCode = exitCode;
+}
+
+export async function runQuotaCliCommand(args: string[]): Promise<void> {
+  const { output, exitCode } = await runQuotaCommand(options(args).provider);
+  console.log(output);
+  process.exitCode = exitCode;
+}
+
+export async function runDoctorCommand(args: string[]): Promise<void> {
+  const doctorOptions = options(args);
+  await refreshProviderCatalog({ provider: doctorOptions.provider ?? process.env.AGENTX_PROVIDER });
+  const result = await runDoctor({
+    ...doctorOptions,
+    client: doctorOptions.client === "claude" || doctorOptions.client === "codex" || doctorOptions.client === "all" ? doctorOptions.client : undefined,
+    offline: doctorOptions.offline === "true" || doctorOptions.offline === "" ? true : undefined,
+  });
+  console.log(renderDoctor(result));
+  if (result.issues.length) process.exitCode = 1;
+}
+
+export async function runForgetCommand(args: string[]): Promise<void> {
+  const opts = options(args);
+  if (opts["remove-provider"]) {
+    const id = opts.provider;
+    if (!id) throw new Error("Usage: agentx forget --provider <custom-id> --remove-provider");
+    // unregisterCustomProvider only touches custom entries — built-in
+    // providers (and unknown ids) are refused rather than silently no-op'd.
+    if (!unregisterCustomProvider(id)) {
+      console.error(`"${id}" is not a custom provider; built-in providers cannot be removed.`);
+      process.exitCode = 1;
+      return;
+    }
+    await forgetCustomProvider(id);
+    console.log(`Removed custom provider "${id}".`);
+    return;
+  }
+  // Hydrate from disk first so a failed live fetch below still falls back
+  // to the last-known-good catalog instead of an empty in-memory one.
+  await hydrateOpenRouterCatalog();
+  // Screen saved ids against the live catalog so removed ones surface first.
+  // Failure still lets the manager run from the persisted catalog.
+  const catalog = await fetchOpenRouterModels().catch(() => openRouterCatalogIds());
+  await saveOpenRouterModels(catalog);
+  if (!isInteractive()) {
+    await printStaleSavedModels();
+    return;
+  }
+  await runSavedModelManager();
+}
+
+/**
+ * Shared launch path for `claude`/`codex`/`pi`/`proxy`/`exec`: runtime
+ * resolution (interactive or not), native-launch bypass, credential
+ * resolution with a missing-key recovery flow, adapter startup, and finally
+ * handing off to {@link launchClient}. `deps` only affects the final
+ * `launchClient` call, so tests can exercise the install-recovery flow.
+ */
+export async function runClientLaunch(command: string, args: string[], deps: ClientLaunchDeps = {}): Promise<void> {
+  const opts = options(args);
+  // --base-url defines (and persists) a custom provider ad hoc, without going
+  // through the TUI's "Add custom provider…" flow — the non-interactive path
+  // for exec/scripts/CI, but not restricted to exec: it works the same way
+  // for claude/codex/pi. --provider doubles as the display name here.
+  if (opts["base-url"]) {
+    const protocol: ProviderProtocol = opts.protocol === "responses" || opts.protocol === "anthropic" ? opts.protocol : "chat-completions";
+    const definition = registerCustomProvider({ name: opts.provider ?? "custom", baseUrl: opts["base-url"], protocol, model: opts.model });
+    await saveCustomProvider(definition.id, { name: definition.name, baseUrl: opts["base-url"], protocol, model: definition.models[0].model });
+    opts.provider = definition.id;
+  }
   // Native launch is only meaningful for claude/codex: they have their own
   // login/billing outside AgentX. It can come from an explicit `--native`
   // flag (checked here, before any catalog/adapter work) or from the
@@ -316,7 +380,7 @@ async function main() {
     const separator = args.indexOf("--");
     const commandArgs = separator >= 0 ? args.slice(separator + 1) : clientArguments(args);
     console.error(`AgentX\n✓ Client: ${CLIENT_LABELS[command]} (native — adapter skipped)`);
-    process.exitCode = await launchClient(command, commandArgs, nativeClientEnvironment(process.env));
+    process.exitCode = await launchClient(command, commandArgs, nativeClientEnvironment(process.env), deps);
     return;
   }
 
@@ -371,7 +435,12 @@ async function main() {
           : undefined;
   if (!executable) throw new Error("Usage: agentx exec [options] -- <command>");
 
-  const client = command === "codex" || executable === "codex" || command === "pi" || executable === "pi" ? "openai" : "anthropic";
+  // exec launches an arbitrary program, so it cannot infer which env-var shape
+  // the target expects from its name the way claude/codex/pi can; --client-protocol
+  // lets the caller say so explicitly (default anthropic, matching prior behavior).
+  const client = command === "exec"
+    ? (opts["client-protocol"] === "openai" ? "openai" : "anthropic")
+    : command === "codex" || executable === "codex" || command === "pi" || executable === "pi" ? "openai" : "anthropic";
   let codexCatalogFile: string | undefined;
   if (executable === "codex") {
     // Codex needs external context/output limits only now; other launch paths
@@ -384,15 +453,46 @@ async function main() {
       : commandArgs;
 
   try {
-    process.exitCode = await launchClient(executable, launchArgs, clientEnvironment(config, adapter, client));
+    process.exitCode = await launchClient(executable, launchArgs, clientEnvironment(config, adapter, client), deps);
   } finally {
     await adapter.close();
   }
 }
 
-main().catch((error) => {
-  if (error instanceof LaunchCancelledError) { process.exitCode = error.exitCode; return; }
-  const message = error instanceof Error ? error.message : error;
-  console.error(message);
-  process.exitCode = 1;
-});
+/**
+ * Re-register every custom provider persisted in runtime.json into the
+ * in-memory registry. `registerCustomProvider` is idempotent by id, so this
+ * is safe to call once at the top of every invocation — a fresh process
+ * otherwise has no memory of custom providers added in a previous run.
+ */
+async function hydrateCustomProviders(): Promise<void> {
+  const saved = await loadCustomProviders();
+  for (const [, definition] of Object.entries(saved)) {
+    registerCustomProvider({ name: definition.name, baseUrl: definition.baseUrl, protocol: definition.protocol as ProviderProtocol, model: definition.model });
+  }
+}
+
+async function main() {
+  await hydrateCustomProviders();
+  const [command = "help", ...args] = process.argv.slice(2);
+  if (command === "version") return console.log("1.0.0");
+  if (command === "help" || command === "--help" || command === "-h") return console.log(helpText(args[0]));
+  if (command === "auth") return runAuthCommand(args);
+  if (command === "usage") return runUsageCommand(args);
+  if (command === "quota") return runQuotaCliCommand(args);
+  if (command === "doctor") return runDoctorCommand(args);
+  if (command === "forget") return runForgetCommand(args);
+  return runClientLaunch(command, args);
+}
+
+// Only run when executed directly (`node dist/src/cli.js ...`, i.e. the real
+// CLI entry point) — not when this module is imported, e.g. by tests that
+// exercise the exported command handlers directly with their own arguments.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    if (error instanceof LaunchCancelledError) { process.exitCode = error.exitCode; return; }
+    const message = error instanceof Error ? error.message : error;
+    console.error(message);
+    process.exitCode = 1;
+  });
+}
