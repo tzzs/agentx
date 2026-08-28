@@ -2,6 +2,10 @@
   "name": "@tanzz/agentx",
   "version": "2.0.0",
   "description": "Local Anthropic-compatible adapter for OpenCode",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tzzs/agentx.git"
+  },
   "license": "MIT",
   "type": "module",
   "bin": {
