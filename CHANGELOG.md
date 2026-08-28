@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.1](https://github.com/tzzs/agentx/compare/v2.0.0...v2.0.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* add repository field to package.json for npm provenance verification ([be73ba3](https://github.com/tzzs/agentx/commit/be73ba3ce3447c038987fbcb7ab2f62071e12d5c))
+* add repository field to package.json for npm provenance verification ([f4cb9de](https://github.com/tzzs/agentx/commit/f4cb9de3f5c40979981533558944f321657551d4))
+
 ## [2.0.0](https://github.com/tzzs/agentx/compare/v1.0.0...v2.0.0) (2026-08-28)
 
 
