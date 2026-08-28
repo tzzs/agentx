@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { access } from "node:fs/promises";
+import { delimiter, join } from "node:path";
 import type { Adapter } from "./server.js";
 import type { Config } from "./config.js";
 import { providerFor } from "./providers/registry.js";
@@ -145,9 +147,33 @@ export function runShellCommand(command: string): Promise<number> {
   });
 }
 
+/**
+ * Windows-only: runCommand spawns with shell:true so npm's .cmd shims resolve
+ * (plain spawn() without a shell can't find them by extension-less name), but
+ * that means a missing command never reaches spawn()'s own ENOENT handling —
+ * cmd.exe itself launches fine, then exits with a plain non-zero code after
+ * printing "not recognized" to stderr. Resolve PATH/PATHEXT ourselves first,
+ * the same way cmd.exe would, so a missing client still surfaces as
+ * ClientNotFoundError instead of being indistinguishable from the real client
+ * having run and failed.
+ */
+async function isMissingOnWindowsPath(command: string, env: NodeJS.ProcessEnv): Promise<boolean> {
+  const dirs = (env.PATH ?? "").split(delimiter).filter(Boolean);
+  const exts = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      try { await access(join(dir, command + ext)); return false; } catch { /* keep looking */ }
+    }
+  }
+  return true;
+}
+
 /** Spawns `command` with `env` verbatim — the caller decides whether that is
  * the adapter-injected environment or an untouched passthrough (native mode). */
 export async function runCommand(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  if (process.platform === "win32" && (await isMissingOnWindowsPath(command, env))) {
+    throw new ClientNotFoundError(command);
+  }
   const child = spawn(command, args, { stdio: "inherit", env, shell: process.platform === "win32" });
   // The child shares the terminal process group (stdio: "inherit", not detached),
   // so a terminal Ctrl+C / SIGINT already reaches both the child and this process.
