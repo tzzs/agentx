@@ -59,12 +59,6 @@ export interface ModelUsageStat {
   requests: number;
 }
 
-export type { ProviderCapabilities } from "../providers/types.js";
-
-export interface PricingProvider {
-  calculate(model: string, usage: TokenUsage): number;
-}
-
 export interface UsageStore {
   record(row: TokenUsageRow): Promise<void>;
   sessionTotals(sessionId: string): Promise<UsageTotals>;

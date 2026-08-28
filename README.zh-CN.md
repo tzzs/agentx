@@ -1,7 +1,7 @@
 # agentx
 
 [![CI](https://github.com/tzzs/agentx/actions/workflows/ci.yml/badge.svg)](https://github.com/tzzs/agentx/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@tzzs%2fagentx)](https://www.npmjs.com/package/@tzzs/agentx)
+[![npm](https://img.shields.io/npm/v/@tanzz%2fagentx)](https://www.npmjs.com/package/@tanzz/agentx)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 [English](README.md) | 简体中文
@@ -61,9 +61,9 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## 凭据与 Provider Profile
 
-凭据完全通过环境变量提供：AgentX 专用的变量统一带 `AGENTX_` 前缀（如 `AGENTX_OPENCODE_API_KEY`），避免与用户为其他工具设置的同名变量冲突；运行时解析后按原始 Key 注入上游请求，前缀只存在于变量命名空间中。如果已经设置了不带前缀的旧变量（如 `OPENCODE_API_KEY`），也会被直接使用。凭据查找优先级为：`--api-key`、`AGENTX_<PROVIDER>_API_KEY`、旧的 `<PROVIDER>_API_KEY`、交互式输入。交互式输入 Key 后，AgentX 会询问（默认是）是否将 `AGENTX_<PROVIDER>_API_KEY` 保存到你的 shell profile；选择否则该 Key 仅当前会话有效，并打印手动持久化的指引。
+凭据完全通过环境变量提供：AgentX 专用的变量统一带 `AGENTX_` 前缀（如 `AGENTX_OPENCODE_API_KEY`），避免与用户为其他工具设置的同名变量冲突；运行时解析后按原始 Key 注入上游请求，前缀只存在于变量命名空间中。如果已经设置了不带前缀的旧变量（如 `OPENCODE_API_KEY`），也会被直接使用。凭据查找优先级为：`--api-key`、`AGENTX_<PROVIDER>_API_KEY`、旧的 `<PROVIDER>_API_KEY`、交互式输入。交互式输入的 Key 仅当前会话有效，AgentX 会打印可粘贴到 shell profile 的 `export …` 行；AgentX 不会自行修改你的 shell profile。
 
-非敏感的 Provider Profile 和模型映射保存在 `~/.config/agentx/profiles.json`，API Key 不会写入该文件或任何由 AgentX 管理的存储；仅在用户明确同意后追加到 shell profile。
+非敏感运行时状态统一保存在 `~/.config/agentx/runtime.json`：包含每个客户端的默认模型、每个 Provider 最近使用的模型和最近一次选择。API Key 不会写入该文件或任何由 AgentX 管理的存储；AgentX 也不会修改你的 shell profile。
 
 ## Provider 架构
 
@@ -76,6 +76,34 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 | OpenCode | `AGENTX_OPENCODE_API_KEY` | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
 | DeepSeek | `AGENTX_DEEPSEEK_API_KEY` | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
 | OpenRouter | `AGENTX_OPENROUTER_API_KEY` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
+
+### 自定义 Provider
+
+除了三个内置 Provider，你还可以注册任意 OpenAI 或 Anthropic 兼容的端点——本地模型服务（Ollama、vLLM、LM Studio）、内部网关，或其他任何兼容 API。在交互式启动器的「Change Provider」列表里选择 **Add custom provider…**，依次填入名称、Base URL 和协议；已经有自定义 Provider 时,同一个列表还会提供 **Remove custom provider…**。
+
+对于脚本和非交互场景，`--base-url` 可以在不打开启动器的情况下定义(并持久化)一个自定义 Provider——`--provider` 作为它的显示名，`--protocol` 选择上游协议形状(默认 `chat-completions`，也可以是 `responses`/`anthropic`)：
+
+```bash
+# 本地 OpenAI 兼容服务(例如 Ollama)
+agentx exec --provider "My Local LLM" --base-url http://localhost:11434 --protocol chat-completions --model llama3 -- claude
+
+# 说原生 Anthropic Messages API 协议的 Provider
+agentx exec --provider "Internal Anthropic Gateway" --base-url https://gateway.internal --protocol anthropic --model claude-x -- claude
+```
+
+注册之后,直接用它的 id(名称转小写、空格转连字符)复用,不用再重复 `--base-url`：
+
+```bash
+agentx claude --provider my-local-llm
+```
+
+凭据的处理方式和内置 Provider 完全一样——在环境变量里设置 `AGENTX_<ID>_API_KEY`(大写、下划线分隔),或者在提示时手动输入；连接元数据会持久化到 `runtime.json`,但 API Key 绝不会。要把一个自定义 Provider 彻底移除(定义本身连同所有保存的记忆,而不只是某个过期的 model id)：
+
+```bash
+agentx forget --provider my-local-llm --remove-provider
+```
+
+内置 Provider 不能用这种方式移除。无论自定义 Provider 说的是哪种协议，Claude Code 和 Codex 都能访问它——Codex 通过和访问 Chat Completions 上游相同的本地转换层，也能访问协议为 `anthropic` 的自定义 Provider(见 [API 转换](#api-转换))。
 
 当模型名可能重复时，可以显式选择 Provider：
 
@@ -90,7 +118,20 @@ agentx codex --provider openrouter --model anthropic/claude-sonnet-4
 
 Claude Code 的所有模型档位（主模型、opus/sonnet/haiku 别名、子代理）都会固定为所选模型——用户的选择对所有流量生效，包括 Claude Code 通过 haiku 档位发起的小型后台请求（权限检查、主题检测、摘要等）。可选地，通过 `--background-model <id>`（或环境变量 `AGENTX_BACKGROUND_MODEL`）可以仅将这一后台通道路由到同一 Provider 下的其他模型——当主模型是重量级推理模型、其非流式辅助调用超过客户端超时时间时会很实用。凡是指定了目标 Provider 实际提供的模型的请求都会按原样转发；未知模型 id 则回退到配置的模型。
 
-如果在交互式终端启动 `claude`、`codex` 或 `pi` 时没有指定 `--provider`/`--model`，且没有设置 `AGENTX_PROVIDER`/`AGENTX_MODEL`，适配器会显示交互式运行时启动器：先选择 Provider，再选择模型，最后选择「立即启动」或「设为默认并启动」。切换 Provider 会自动为该 Provider 解析模型，并记住每个 Provider 最近使用的模型。临时切换不会覆盖已保存的默认运行时，除非选择「设为默认并启动」。非交互场景会自动使用目录中的默认模型。
+如果在交互式终端启动 `claude`、`codex` 或 `pi` 时没有指定 `--provider`/`--model`，且没有设置 `AGENTX_PROVIDER`/`AGENTX_MODEL`，适配器会显示交互式运行时启动器：存在已保存默认时先显示快捷菜单，可直接启动，或进入「Change provider / model」重新选择。模型选择支持搜索：输入文字即可按模型 id 过滤列表，↑/↓ 选择、Enter 确认。切换 Provider 会自动为该 Provider 解析模型，并记住每个 Provider 最近使用的模型。完成选择后会自动保存为该客户端的默认运行时，下次启动直接从该默认值开始。非交互场景会自动使用目录中的默认模型。
+
+### 原生启动
+
+Claude Code 和 Codex 在 AgentX 之外都有自己的登录与计费方式，因此两者都支持原生启动——完全绕开 AgentX：不做 Provider/模型解析、不启动本地 Adapter、不注入任何 `ANTHROPIC_*`/`OPENAI_*` 环境变量，客户端的运行方式与你直接手动启动它完全一致。两种方式都可以触发：
+
+```bash
+agentx claude --native
+agentx codex --native
+```
+
+或者在已保存默认值时弹出的快捷菜单中选择「Launch native (skip AgentX)」。`--native` 与 `--provider`/`--model` 同时出现时会静默忽略后者，因为此时已经没有需要 AgentX 配置的内容。`pi` 没有原生模式——它始终依赖一个 OpenAI 兼容后端，因此没有「原生」可以回退。
+
+如果 `--native` 是嵌套运行在 AgentX 自己启动的客户端内部——例如在由 `agentx claude` 启动的 Claude Code 会话中再次输入 `agentx claude --native`——继承到的环境仍然带着外层启动注入的 `ANTHROPIC_*`/`OPENAI_*` 覆盖值。AgentX 会检测到这种情况（依据它在每个自建环境中都会设置的一个内部标记），并在启动子进程前只清除自己注入的那些变量，使嵌套的客户端仍然以原生方式启动，而不是悄悄指回本该被跳过的 Adapter。一个从未经过 AgentX 的、纯手工配置的环境——即便其中恰好使用了相同的变量名——则完全不会被改动。
 
 ## Codex 支持
 
@@ -101,7 +142,9 @@ npx agentx codex
 npx agentx codex --model gpt-5.6-luna
 ```
 
-启动器通过 `-c` 参数定义一个内联的 `agentx` 模型 Provider，指向 `http://127.0.0.1:<port>/v1`，其 Bearer Token 是以 `OPENAI_API_KEY` 注入的临时本地 Token。启动时还会生成一份模型目录（`~/.config/agentx/codex-models.json`，经 `model_catalog_json` 传入），让目录中的模型以真实元数据加载，而不是触发 Codex 的 fallback 元数据警告：上下文窗口与输出上限对所有 Provider 生效，在可用时取自公开注册表 models.dev，否则使用保守默认值。新版 Codex 已不再读取那些环境变量，该方式可以正常工作，并完全绕过 Codex 的登录页——无需 ChatGPT 登录或 `~/.codex/auth.json`，也不会修改你已有的 `~/.codex/config.toml`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
+启动器通过 `-c` 参数定义一个内联的 `agentx` 模型 Provider，指向 `http://127.0.0.1:<port>/v1`，其 Bearer Token 是以 `OPENAI_API_KEY` 注入的临时本地 Token。启动时还会生成一份模型目录（`~/.config/agentx/codex-models.json`，经 `model_catalog_json` 传入），让目录中的模型——包括你在启动器中输入的自定义 OpenRouter 模型 id——以真实元数据加载，而不是触发 Codex 的 fallback 元数据警告：上下文窗口与输出上限对所有 Provider 生效，在可用时取自公开注册表 models.dev，models.dev 缺失的模型回退到 OpenRouter 公开目录，否则使用保守默认值。DeepSeek 的 `deepseek-v4-pro`/`deepseek-v4-flash` 是个例外：它们是 OpenCode 自己的品牌命名（同时通过 OpenCode 网关和直连的 DeepSeek Provider 提供），两个公开注册表都没有对应词条，因此目录会显式声明它们约 1M 的真实上下文窗口，而不是回退到保守的 128k——否则 Codex 会比必要时机早得多地对长时间 DeepSeek 会话做自动压缩，这与 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 为 Claude Code 修复的是同一类问题（见[模型和路由](#模型和路由)）。新版 Codex 已不再读取那些环境变量，该方式可以正常工作，并完全绕过 Codex 的登录页——无需 ChatGPT 登录或 `~/.codex/auth.json`，也不会修改你已有的 `~/.codex/config.toml`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
+
+Pi Agent 通过与 Codex 相同的 OpenAI 兼容环境启动（`OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL`），其请求也经过同一个本地 Responses 边界转换，因此可以获得与 Codex 相同的 DeepSeek reasoning/tool_choice/错误处理转换。但它不会收到生成的模型目录，所以 AgentX 目前没有渠道像对 Claude Code 或 Codex 那样向它声明模型的上下文窗口。
 
 ## 安装
 
@@ -114,7 +157,7 @@ npx agentx claude
 全局安装：
 
 ```bash
-npm install --global @tzzs/agentx
+npm install --global @tanzz/agentx
 agentx claude
 ```
 
@@ -128,6 +171,7 @@ agentx claude
 agentx claude
 agentx claude --model deepseek-v4-flash
 agentx claude --port 9000 --host 127.0.0.1
+agentx claude --native   # 跳过适配器，直接以你自己的环境运行真正的 `claude`
 ```
 
 ### `codex`
@@ -136,6 +180,7 @@ agentx claude --port 9000 --host 127.0.0.1
 
 ```bash
 agentx codex
+agentx codex --native   # 跳过适配器，直接以你自己的环境运行真正的 `codex`
 ```
 
 ### `proxy`
@@ -150,7 +195,7 @@ agentx proxy
 
 ### `exec`
 
-使用临时 Anthropic 环境变量执行任意命令：
+通过本地适配器执行任意命令。和 `claude`/`codex`/`pi` 不同,`exec` 永远不会弹出交互式运行时选择器——它总是按"CLI 参数 → 环境变量 → 最近一次选择 → 内置默认值"非交互式解析,因此可以安全用于脚本和 CI:
 
 ```bash
 agentx exec -- claude
@@ -158,7 +203,13 @@ agentx exec -- opencode
 agentx exec -- my-command --argument
 ```
 
-在当前平台支持的范围内，命令的 stdin、stdout、stderr、退出码和终止信号都会被转发。
+默认情况下 `exec` 注入 Anthropic 形状的环境变量(`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_MODEL`),适用于任何接受 Anthropic 兼容端点配置的工具。如果目标工具只认 `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL`,加上 `--client-protocol openai`:
+
+```bash
+agentx exec --client-protocol openai -- my-openai-compatible-tool
+```
+
+在当前平台支持的范围内,命令的 stdin、stdout、stderr、退出码和终止信号都会被转发。
 
 ### `doctor`
 
@@ -169,6 +220,22 @@ agentx doctor
 ```
 
 报告包含 Node.js、平台/WSL 状态、CPU 架构、API Key 是否存在、支持的模型，以及 Claude Code 是否可被发现。
+
+### `forget`
+
+清理上游已不再提供的已保存模型 id（例如 OpenRouter 的免费模型被改名为其真实厂商 id 时）：
+
+```bash
+agentx forget
+```
+
+该命令会刷新 OpenRouter 的实时目录，并把每一个已记住的模型 id 与它比对。交互式终端会打开「已保存模型」管理器，让你勾选要清理的模型；非交互终端则直接打印过期列表：
+
+```bash
+agentx forget    # 输出示例：DeepSeek:\n  deepseek-v4-pro  (no longer in the catalog)
+```
+
+清理会移除 `runtime.json` 中该 id 的所有痕迹——每个客户端的默认配置、每个 Provider 的最后使用模型、以及最近一次选择——这样被改名的 id 就不会在每次启动时继续被当作「当前」模型提供。
 
 ### `version`
 
@@ -195,14 +262,17 @@ agentx usage                 # 全部时间
 agentx usage --period today  # today / week / month / all
 ```
 
-报告按 Provider 和模型分组显示 Token 数，包含输入/输出/总量，以及基于
-Provider 定价估算的成本。统计按适配器运行保存；`--period` 可按时间范围过滤。
+报告按 Provider 和模型分组显示 Token 数，包含输入/输出/总量。统计按适配器运行保存；`--period` 可按时间范围过滤。
 
-带 `--provider` 时，该命令改为查询已公开额度接口的 Provider 额度：
+`agentx usage --provider <id>` 是 `agentx quota --provider <id>`（见下文）的过渡期别名，仍然可用，但会打印一行弃用提示。
+
+### `quota`
+
+查询 Provider 的远程额度(账户余额/限额)，仅当上游公开了额度接口时可用：
 
 ```bash
-agentx usage --provider deepseek
-agentx usage --provider openrouter
+agentx quota --provider deepseek
+agentx quota --provider openrouter
 ```
 
 OpenCode 当前会返回明确的不支持结果，因为它没有公开、文档化的额度接口。
@@ -217,15 +287,19 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## 配置
 
-CLI 参数优先于环境变量。默认模型为 `gpt-5.6-luna`。
+客户端运行时按以下顺序解析：显式 CLI 参数 → 客户端已保存默认值（`runtime.json`）→ `AGENTX_PROVIDER` / `AGENTX_MODEL` → 交互式启动器选择（自动保存为默认值）→ 最近一次选择，最后回退到内置值（`opencode` / `gpt-5.6-luna`）。
+
+对于 `claude`/`codex`，`--native`（或在启动器中选择「Launch native (skip AgentX)」）会完全跳过这条解析链——参见[原生启动](#原生启动)。
 
 | CLI 参数 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `--api-key <key>` | `AGENTX_OPENCODE_API_KEY`（兼容 `OPENCODE_API_KEY`） | 无 | OpenCode 凭据 |
 | `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | 本地监听地址 |
 | `--port <port>` | `AGENTX_PORT` | `8787` | 首选本地端口 |
-| `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | 模型名或 `auto` |
+| `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | 具体上游模型 ID |
 | `--provider <id>` | `AGENTX_PROVIDER` | 无 | 上游 Provider（`opencode`、`deepseek`、`openrouter`） |
+| `--retry <n>` | `AGENTX_RETRY` | `3` | 上游 429/502/503/504 的重试次数(0 表示禁用) |
+| `--client-protocol <anthropic\|openai>` | | `anthropic` | 仅 `exec`:决定给被启动程序注入哪种形状的环境变量 |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | 预留的详细日志选项 |
 | | `AGENTX_USAGE_DIR` | `~/.config/agentx` | Token 用量统计存储目录 |
 
@@ -235,9 +309,11 @@ CLI 参数优先于环境变量。默认模型为 `gpt-5.6-luna`。
 agentx proxy --host 0.0.0.0
 ```
 
+`agentx doctor` 支持 `--client <claude|codex|all>`（默认 `all`）只检查指定客户端，并支持 `--offline` 跳过依赖网络的检查；跳过的项会在报告中标出。
+
 ## 模型和路由
 
-启动时从 `https://opencode.ai/zen/go/v1/models` 拉取 OpenCode 模型目录。当无法访问该接口时，使用内置的回退目录：
+只有在未指定 Provider 或选择的 Provider 为 `opencode` 时，才会拉取 OpenCode 模型目录。当无法访问该接口时，使用内置的回退目录：
 
 | 模型 | 上游协议 |
 | --- | --- |
@@ -249,17 +325,25 @@ agentx proxy --host 0.0.0.0
 | `glm-5.3`、`glm-5.2`、`glm-5.1`、`glm-5` | Chat Completions API |
 | `mimo-v2.5-pro`、`mimo-v2.5`、`hy3` | Chat Completions API |
 
-接口返回的模型使用 Responses API（`gpt-5.6-luna`）或 Chat Completions API（其余模型）。`--model auto` 仍然在一小部分已知模型之间路由，本地 `/v1/models` 端点始终反映当前目录。
+接口返回的模型使用 Responses API（`gpt-5.6-luna`）或 Chat Completions API（其余模型）。本地 `/v1/models` 端点始终反映当前目录；请求必须能解析到具体已配置的模型。
 
-OpenRouter Provider 接受任意模型 id（默认使用 `OPENROUTER_MODEL` 或 `openai/gpt-4o-mini`）。
+OpenRouter Provider 接受任意模型 id（默认使用 `OPENROUTER_MODEL` 或 `openai/gpt-4o-mini`）。交互式启动器的模型选择列表额外提供三个选项：
 
-显式选择模型：
+- **Search / enter any model id…** — 直接输入任意 OpenRouter 模型 id（例如 `anthropic/claude-sonnet-4.5`）。
+- **Browse OpenRouter catalog…** — 浏览从 `https://openrouter.ai/api/v1/models` 拉取的全量实时目录（约 400 个模型），可以搜索到真实存在的厂商前缀 id（例如 `deepseek/deepseek-v4-pro`），无需盲打。目录会持久化到 `runtime.json`，供离线比对。
+- **Forget a saved model…** — 打开限定在当前 Provider 的「已保存模型」管理器，直接在当前选择器里清掉被改名/下架的自定义模型 id，无需退出选择流程。
+
+由于 OpenRouter 接受自由输入的模型 id，一次启动可能保存了上游后来改名或下架的模型（比如免费模型被改名为真实厂商 id）。你可以在模型选择器内部直接清理这些过期 id，也可以运行 `agentx forget` 进入完整的管理流程（见上文 [`forget`](#forget)）。
+
+显式选择具体模型：
 
 ```bash
 agentx claude --model gpt-5.6-luna
 ```
 
-使用 `--model auto` 时，短请求使用 `deepseek-v4-flash`，较大请求使用 `deepseek-v4-pro`，包含工具或较大上下文的请求使用 `gpt-5.6-luna`。这是一个简单的初版路由器，不是基于基准测试的模型推荐系统。
+基于请求大小或工具数量的隐式路由已移除。如果 Claude 后台通道需要同 Provider 的其他模型，请显式配置 `--background-model`。
+
+Claude Code 遇到不认识的模型时，会假定它使用默认的约 200k token 上下文窗口，并早早触发自动压缩。DeepSeek 的 `deepseek-v4-flash`/`deepseek-v4-pro`（以及它们的 `[1m]` 变体）实际拥有大得多的上下文窗口，因此 `claude` 启动器会为这些模型自动声明 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 与 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`（除非你已自行设置过这两个环境变量）。如果没有这一步，长时间的 DeepSeek 会话会被过早自动压缩，悄无声息地丢弃相当大一部分对话内容。
 
 ## API 转换
 
@@ -272,7 +356,12 @@ agentx claude --model gpt-5.6-luna
 - Anthropic 文本消息与响应文本
 - Anthropic 流式事件与上游 SSE 事件转换
 - Anthropic `tools`、`tool_use`、`tool_result` 与 function tool、function call output 转换
+- Anthropic `thinking` / `output_config.effort` 转换为上游的思考控制参数（Chat Completions 上是 DeepSeek 的 `thinking`/`reasoning_effort`，Responses API 上是 `reasoning.effort`）
+- Anthropic `tool_choice` 转换为上游 Chat Completions 或 Responses 对应的 tool-choice 结构
 - Responses 和 Chat Completions usage 字段转换为 Anthropic usage 字段
+- Responses 请求/响应与原生 Anthropic Messages API 上游之间的双向转换(针对协议为 `anthropic` 的自定义 Provider),包括流式响应——这是唯一一条 Codex 也会用到、而不仅限于 Claude Code 的转换方向,因为 Codex 只会看到本地的 Responses 端点
+
+DeepSeek 的思考模式要求每个 assistant 回合的 `reasoning_content` 必须回传，并且要挂在它所引出的那个 tool call 所在的同一条消息上；适配器会把一条 assistant 消息的文本、reasoning 与 tool call 保持在同一条消息里，而不是拆分成多条，并且只对 DeepSeek 转发 `reasoning_content`（其它 Chat Completions 上游并不期望这个字段）。当上游以异常方式结束——`content_filter`、`insufficient_system_resource`，或者流结束时既没有 `finish_reason` 也没有 `[DONE]`——都会转换为错误返回，而不是被悄悄当成正常的 `end_turn`。
 
 适配器只负责工具协议转换，不会执行工具，也不会持久化 prompt、工具参数或对话状态。
 
@@ -305,11 +394,6 @@ agentx claude --model gpt-5.6-luna
 `period` 接受 `today`、`week`、`month` 或 `all`。不传 `period` 时统计全部记录。
 会话端点也支持路径形式 `GET /usage/session/<id>`。
 
-### 成本估算
-
-定价层（`src/usage/pricing/`）把 Token 数量转换为每个 Provider 的估算成本。
-用量收集与成本计算相互独立；CLI 报告仅用定价层做展示。
-
 ### 存储与数据
 
 - 统计保存在 `~/.config/agentx/usage.db`（或 `usage.json` 回退）。
@@ -341,7 +425,7 @@ npm run build
 
 项目使用 TypeScript、Node.js 原生 `fetch`、Node.js ESM 和内置 `node:test` 测试运行器。测试会先编译到 `dist/test`，再执行编译后的测试。
 
-测试覆盖请求/响应转换、system instructions、流式事件、工具调用、模型路由、Chat Completions 转换，以及 Token 用量适配器、存储、定价和用量查询 API。测试不需要 API Key，也不依赖网络。
+测试覆盖请求/响应转换、system instructions、流式事件、工具调用、Provider 路由、Chat Completions 转换，以及 Token 用量适配器、存储和用量查询 API。测试不需要 API Key，也不依赖网络。
 
 ## CI 与发布
 

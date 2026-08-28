@@ -1,8 +1,9 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { atomicWriteFile } from "./fsutil.js";
-import { allModels } from "./providers/registry.js";
+import { allModels, providerFor, withExternalMetadata } from "./providers/registry.js";
 import type { ProviderModel } from "./providers/types.js";
+import type { Config } from "./config.js";
 
 /** Location of the generated Codex model catalog (overridable for tests). */
 export function codexCatalogPath(): string {
@@ -76,6 +77,21 @@ export function buildCodexCatalog(models: ProviderModel[] = allModels): string {
   const unique = models.filter((model, index) => models.findIndex((other) => other.model === model.model) === index);
   const catalog = { models: unique.map(catalogEntry) };
   return `${JSON.stringify(catalog, null, 2)}\n`;
+}
+
+/**
+ * Catalog input for one bound provider. The selected custom id is appended so
+ * Codex can resolve it; models owned by other providers are intentionally
+ * omitted because request routing rejects cross-provider ids.
+ */
+export function catalogModels(selected: Pick<Config, "provider"> & { model: string }, base: ProviderModel[] = allModels): ProviderModel[] {
+  const scoped = base.filter((model) => !selected.provider || model.provider === selected.provider);
+  if (!selected.model || scoped.some((model) => model.model === selected.model)) return scoped;
+  try {
+    return [...scoped, withExternalMetadata(providerFor(selected.model, selected.provider))];
+  } catch {
+    return scoped;
+  }
 }
 
 /**

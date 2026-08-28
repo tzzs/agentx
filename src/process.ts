@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { access } from "node:fs/promises";
+import { delimiter, join } from "node:path";
 import type { Adapter } from "./server.js";
 import type { Config } from "./config.js";
 import { providerFor } from "./providers/registry.js";
@@ -19,6 +21,48 @@ export function backgroundModel(config: Config): string {
   } catch { return config.model; }
 }
 
+function supportsDeepSeekLongContext(model: string): boolean {
+  return /(?:^|\/)deepseek-v4-(?:flash|pro)(?:\[1m\])?$/.test(model);
+}
+
+/** Claude Code does not know custom DeepSeek ids, so declare their real window. */
+function claudeContextEnvironment(config: Config, inherited: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const models = [config.model, backgroundModel(config)];
+  if (!models.some(supportsDeepSeekLongContext)) return {};
+  return {
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS: inherited.CLAUDE_CODE_MAX_CONTEXT_TOKENS ?? "1000000",
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: inherited.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "786432",
+  };
+}
+
+/**
+ * Set on every environment AgentX constructs for a launched client — the only
+ * variable whose sole purpose is marking "AgentX built this environment", as
+ * opposed to `AGENTX_MODEL` etc. which users also set by hand as automation
+ * input. Lets `nativeClientEnvironment` tell an ancestor AgentX launch apart
+ * from a genuinely hand-configured environment.
+ */
+const AGENTX_ACTIVE = "AGENTX_ACTIVE";
+
+/** Every variable AgentX itself ever injects into a launched client, across both protocols. */
+const AGENTX_MANAGED_ENV_KEYS = [
+  AGENTX_ACTIVE,
+  "AGENTX_MODEL",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_SMALL_FAST_MODEL",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+  "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+  "OPENAI_BASE_URL",
+  "OPENAI_API_KEY",
+  "OPENAI_MODEL",
+];
+
 export function clientEnvironment(config: Config, adapter: Adapter, client: "anthropic" | "openai"): NodeJS.ProcessEnv {
   const baseUrl = `http://${config.host}:${adapter.port}`;
   const inherited = { ...process.env };
@@ -26,8 +70,27 @@ export function clientEnvironment(config: Config, adapter: Adapter, client: "ant
   delete inherited.ANTHROPIC_AUTH_TOKEN;
   const auxModel = client === "anthropic" ? backgroundModel(config) : config.model;
   return client === "openai"
-    ? { ...inherited, OPENAI_BASE_URL: `${baseUrl}/v1`, OPENAI_API_KEY: adapter.token, OPENAI_MODEL: config.model }
-    : { ...inherited, AGENTX_MODEL: config.model, ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: adapter.token, ANTHROPIC_MODEL: config.model, ANTHROPIC_DEFAULT_OPUS_MODEL: config.model, ANTHROPIC_DEFAULT_SONNET_MODEL: config.model, ANTHROPIC_DEFAULT_HAIKU_MODEL: auxModel, ANTHROPIC_SMALL_FAST_MODEL: auxModel, CLAUDE_CODE_SUBAGENT_MODEL: config.model };
+    ? { ...inherited, [AGENTX_ACTIVE]: "1", OPENAI_BASE_URL: `${baseUrl}/v1`, OPENAI_API_KEY: adapter.token, OPENAI_MODEL: config.model }
+    : { ...inherited, ...claudeContextEnvironment(config, inherited), [AGENTX_ACTIVE]: "1", AGENTX_MODEL: config.model, ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: adapter.token, ANTHROPIC_MODEL: config.model, ANTHROPIC_DEFAULT_OPUS_MODEL: config.model, ANTHROPIC_DEFAULT_SONNET_MODEL: config.model, ANTHROPIC_DEFAULT_HAIKU_MODEL: auxModel, ANTHROPIC_SMALL_FAST_MODEL: auxModel, CLAUDE_CODE_SUBAGENT_MODEL: config.model };
+}
+
+/**
+ * Environment for a `--native` launch. Normally the inherited environment is
+ * handed through untouched, matching "runs exactly as if you had invoked it
+ * yourself". But `--native` can itself run nested inside a client AgentX
+ * already launched (e.g. `agentx claude --native` typed inside a Claude Code
+ * session that `agentx claude` started) — in that case the inherited
+ * environment still carries AgentX's own ANTHROPIC_ and OPENAI_ overrides from
+ * the outer launch, which would silently point the "native" client right
+ * back at the adapter it's supposed to bypass. `AGENTX_ACTIVE` marks exactly
+ * that case, so it's scrubbed only when actually present — a hand-configured
+ * environment that never went through AgentX is left completely alone.
+ */
+export function nativeClientEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (!env[AGENTX_ACTIVE]) return env;
+  const cleaned = { ...env };
+  for (const key of AGENTX_MANAGED_ENV_KEYS) delete cleaned[key];
+  return cleaned;
 }
 
 /**
@@ -47,7 +110,7 @@ export function codexLaunchArgs(config: Config, adapter: Adapter, catalogPath?: 
     "-c", "model_providers.agentx.wire_api='responses'",
     "-c", "model_providers.agentx.env_key='OPENAI_API_KEY'",
     ...(catalogPath ? ["-c", `model_catalog_json='${catalogPath}'`] : []),
-    ...(config.model === "auto" ? [] : ["-m", config.model]),
+    "-m", config.model,
   ];
 }
 
@@ -84,8 +147,34 @@ export function runShellCommand(command: string): Promise<number> {
   });
 }
 
-export async function runCommand(command: string, args: string[], config: Config, adapter: Adapter, client: "anthropic" | "openai" = "anthropic"): Promise<number> {
-  const child = spawn(command, args, { stdio: "inherit", env: clientEnvironment(config, adapter, client), shell: process.platform === "win32" });
+/**
+ * Windows-only: runCommand spawns with shell:true so npm's .cmd shims resolve
+ * (plain spawn() without a shell can't find them by extension-less name), but
+ * that means a missing command never reaches spawn()'s own ENOENT handling —
+ * cmd.exe itself launches fine, then exits with a plain non-zero code after
+ * printing "not recognized" to stderr. Resolve PATH/PATHEXT ourselves first,
+ * the same way cmd.exe would, so a missing client still surfaces as
+ * ClientNotFoundError instead of being indistinguishable from the real client
+ * having run and failed.
+ */
+async function isMissingOnWindowsPath(command: string, env: NodeJS.ProcessEnv): Promise<boolean> {
+  const dirs = (env.PATH ?? "").split(delimiter).filter(Boolean);
+  const exts = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      try { await access(join(dir, command + ext)); return false; } catch { /* keep looking */ }
+    }
+  }
+  return true;
+}
+
+/** Spawns `command` with `env` verbatim — the caller decides whether that is
+ * the adapter-injected environment or an untouched passthrough (native mode). */
+export async function runCommand(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  if (process.platform === "win32" && (await isMissingOnWindowsPath(command, env))) {
+    throw new ClientNotFoundError(command);
+  }
+  const child = spawn(command, args, { stdio: "inherit", env, shell: process.platform === "win32" });
   // The child shares the terminal process group (stdio: "inherit", not detached),
   // so a terminal Ctrl+C / SIGINT already reaches both the child and this process.
   // Forwarding SIGINT would deliver a second signal to the child, which it may

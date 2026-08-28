@@ -11,9 +11,11 @@ const base: DoctorResult = {
   apiKey: "secret",
   apiKeyFound: true,
   models: [{ provider: "opencode", model: "gpt-5.6-luna" }],
+  clientsChecked: ["all"],
   claudeFound: true,
   codexFound: false,
   portAvailable: true,
+  networkChecksSkipped: false,
   issues: [],
 };
 
@@ -33,4 +35,16 @@ test("marks missing API key and clients with a cross", () => {
   const output = renderDoctor({ ...base, apiKeyFound: false, codexFound: false });
   assert.match(output, /✗ API key\s+missing/);
   assert.match(output, /✗ Codex\s+not found/);
+});
+
+test("omits unselected clients from the report", () => {
+  const output = renderDoctor({ ...base, clientsChecked: ["claude"], codexFound: false });
+  assert.match(output, /Claude Code\s+found/);
+  assert.doesNotMatch(output, /Codex\s+not found/);
+  assert.doesNotMatch(output, /Codex\s+found/);
+});
+
+test("flags when network checks are skipped", () => {
+  const output = renderDoctor({ ...base, networkChecksSkipped: true });
+  assert.match(output, /network checks skipped/);
 });

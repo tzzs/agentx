@@ -1,5 +1,6 @@
-import { allModels, providerById, providerRegistry } from "./providers/registry.js";
 import { loadDefaultRuntime, loadLastModel } from "./runtime.js";
+
+import { allModels, providerById } from "./providers/registry.js";
 
 export type RuntimeSource = "cli" | "env" | "default" | "interactive" | "builtin";
 
@@ -29,17 +30,23 @@ export function defaultModelFor(providerId: string): string {
   return provider.models[0]?.model ?? "";
 }
 
+/** True when the provider accepts arbitrary model ids beyond its registry list. */
+export function providerAcceptsCustomModels(providerId: string): boolean {
+  // OpenRouter proxies every upstream model and is not enumerated exhaustively.
+  if (providerId === "openrouter") return true;
+  // A runtime-registered custom provider has no known model catalog either.
+  try { return Boolean(providerById(providerId).custom); } catch { return false; }
+}
+
 /** True when the model id is usable against the provider (or is the auto marker). */
 export function modelAvailable(providerId: string, model: string): boolean {
-  if (model === "auto") return true;
-  // OpenRouter accepts arbitrary model ids and is not enumerated exhaustively.
-  if (providerId === "openrouter") return true;
+  if (providerAcceptsCustomModels(providerId)) return true;
   return allModels.some((item) => item.provider === providerId && item.model === model);
 }
 
 /**
  * Resolve the model to use with a provider. Preferences, in order:
- *   1. an explicitly preferred model that belongs to the provider ("auto" passes through)
+ *   1. an explicitly preferred model that belongs to the provider
  *   2. the provider's remembered last model
  *   3. the provider's default model
  */

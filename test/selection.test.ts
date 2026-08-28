@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaultModelFor, modelAvailable, resolveModelForProvider, resolveRuntimeNonInteractive } from "../src/selection.js";
+import { defaultModelFor, modelAvailable, providerAcceptsCustomModels, resolveModelForProvider, resolveRuntimeNonInteractive } from "../src/selection.js";
+import { registerCustomProvider, unregisterCustomProvider } from "../src/providers/registry.js";
 import { runtimeFile, saveDefaultRuntime, saveLastModel } from "../src/runtime.js";
 
 let dir: string;
@@ -35,9 +36,20 @@ test("model availability respects the provider namespace", () => {
   assert.equal(modelAvailable("openrouter", "auto"), true);
 });
 
-test("auto is always available", () => {
-  assert.equal(modelAvailable("deepseek", "auto"), true);
-  assert.equal(modelAvailable("opencode", "auto"), true);
+test("auto is not an available concrete model", () => {
+  assert.equal(modelAvailable("deepseek", "auto"), false);
+  assert.equal(modelAvailable("opencode", "auto"), false);
+});
+
+test("openrouter and registered custom providers accept custom model ids; other built-ins do not", () => {
+  assert.equal(providerAcceptsCustomModels("openrouter"), true);
+  assert.equal(providerAcceptsCustomModels("deepseek"), false);
+  assert.equal(providerAcceptsCustomModels("opencode"), false);
+  assert.equal(providerAcceptsCustomModels("not-a-real-provider"), false);
+  try {
+    registerCustomProvider({ name: "Selection Test Provider", baseUrl: "http://x", protocol: "chat-completions" });
+    assert.equal(providerAcceptsCustomModels("selection-test-provider"), true);
+  } finally { unregisterCustomProvider("selection-test-provider"); }
 });
 
 test("default model is the provider's first model", () => {
@@ -60,9 +72,9 @@ test("keeps a preferred model when it belongs to the provider", async () => {
   assert.equal(await resolveModelForProvider("deepseek", "deepseek-v4-pro"), "deepseek-v4-pro");
 });
 
-test("auto model preference is preserved through resolution", async () => {
+test("auto preference resolves to a concrete provider model", async () => {
   await saveLastModel("deepseek", "deepseek-v4-pro");
-  assert.equal(await resolveModelForProvider("deepseek", "auto"), "auto");
+  assert.equal(await resolveModelForProvider("deepseek", "auto"), "deepseek-v4-pro");
 });
 
 test("provider switch to an unavailable model re-selects automatically", async () => {

@@ -1,4 +1,3 @@
-import { loadLastProfile } from "./profiles.js";
 import { defaultModelFor } from "./selection.js";
 
 export interface Config {
@@ -10,6 +9,8 @@ export interface Config {
   backgroundModel?: string;
   apiKey: string;
   logLevel: string;
+  /** Retry attempts on upstream network failure or 429/502/503/504; 0 disables retry. */
+  retry: number;
 }
 
 /**
@@ -31,21 +32,43 @@ export function parseCliOptions(args: string[]): Record<string, string | undefin
   return out;
 }
 
-export function loadConfig(options: Record<string, string | undefined> = {}): Config {
+interface RememberedModel {
+  provider?: string;
+  model?: string;
+}
+
+/**
+ * Resolve the effective model. A deprecated `auto` value falls back to the
+ * provider default rather than breaking an old shell profile; new interfaces
+ * no longer advertise implicit routing.
+ */
+function configuredModel(value: string | undefined, remembered: string | undefined, provider: string | undefined): string {
+  const explicit = value === "auto" ? undefined : value;
+  return explicit ?? remembered ?? defaultModelFor(provider ?? "opencode");
+}
+
+export function loadConfig(
+  options: Record<string, string | undefined> = {},
+  remembered: RememberedModel = {},
+): Config {
   const apiKey = options.apiKey ?? options["api-key"] ?? "";
   const provider = options.provider ?? process.env.AGENTX_PROVIDER;
-  const defaultModel = provider ? defaultModelFor(provider) : "gpt-5.6-luna";
   const port = Number(options.port ?? process.env.AGENTX_PORT ?? 8787);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid port");
-  const remembered = loadLastProfile();
-  const rememberedModel = remembered && (!provider || remembered.provider === provider) ? remembered.model : undefined;
+  const retry = Number(options.retry ?? process.env.AGENTX_RETRY ?? 3);
+  if (!Number.isInteger(retry) || retry < 0) throw new Error("Invalid retry count");
+  const envModel = process.env.AGENTX_MODEL === "auto" ? undefined : process.env.AGENTX_MODEL;
+  const rememberedModel = remembered.provider && provider && remembered.provider !== provider
+    ? undefined
+    : remembered.model;
   return {
     host: options.host ?? process.env.AGENTX_HOST ?? "127.0.0.1",
     port,
-    model: options.model ?? process.env.AGENTX_MODEL ?? rememberedModel ?? defaultModel,
+    model: configuredModel(options.model ?? envModel, rememberedModel, provider),
     provider,
     backgroundModel: options["background-model"] ?? process.env.AGENTX_BACKGROUND_MODEL,
     apiKey,
-    logLevel: options.verbose ? "debug" : process.env.AGENTX_LOG_LEVEL ?? "info"
+    logLevel: options.verbose ? "debug" : process.env.AGENTX_LOG_LEVEL ?? "info",
+    retry,
   };
 }

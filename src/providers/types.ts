@@ -1,10 +1,4 @@
-export type ProviderProtocol = "responses" | "chat-completions";
-
-export interface ProviderCapabilities {
-  supportsUsage: boolean;
-  supportsStreamingUsage: boolean;
-  supportsCacheTokens: boolean;
-}
+export type ProviderProtocol = "responses" | "chat-completions" | "anthropic";
 
 export interface ProviderModel {
   provider: string;
@@ -22,6 +16,7 @@ export interface ProviderDefinition {
   id: string;
   name: string;
   apiKeyEnv: string;
-  capabilities?: ProviderCapabilities;
   models: ProviderModel[];
+  /** True for a provider registered at runtime (custom OpenAI/Anthropic-compatible endpoint) rather than built into the registry. */
+  custom?: boolean;
 }

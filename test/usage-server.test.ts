@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { startAdapter } from "../src/server.js";
 import { createUsageStore } from "../src/usage/storage.js";
 
-const config = { host: "127.0.0.1", port: 0, model: "gpt-5.6-luna", provider: "opencode", apiKey: "test-key", logLevel: "info" };
+const config = { host: "127.0.0.1", port: 0, model: "gpt-5.6-luna", provider: "opencode", apiKey: "test-key", logLevel: "info", retry: 0 };
 
 async function call(adapter: Awaited<ReturnType<typeof startAdapter>>, path: string, method = "GET", body?: any, headers: Record<string, string> = {}) {
   const response = await fetch(`http://127.0.0.1:${adapter.port}${path}`, {
@@ -91,7 +91,7 @@ test("usage endpoints require no auth and return empty aggregates for no records
   } finally { await adapter.close(); }
 });
 
-test("resolves model auto on /v1/responses against the pinned provider", async () => {
+test("honors only provider-compatible requested models", async () => {
   const store = await createUsageStore({ backend: "memory" });
   const originalFetch = globalThis.fetch;
   let upstreamModel: string | undefined;
@@ -99,17 +99,63 @@ test("resolves model auto on /v1/responses against the pinned provider", async (
     const path = typeof input === "string" ? input : input.url;
     if (path.includes("127.0.0.1") || !path.includes("/responses")) return originalFetch(input, init);
     upstreamModel = JSON.parse(init.body).model;
-    return new Response(JSON.stringify({ id: "r1", output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ id: "r1", output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }), { status: 200 });
   }) as typeof fetch;
-  const autoConfig = { ...config, model: "auto" };
-  const adapter = await startAdapter(autoConfig, { store });
+  const adapter = await startAdapter(config, { store });
   try {
-    // tools present routes auto to ranked[0]; a small tool-less body would
-    // legitimately pick deepseek-v4-flash instead.
-    const result = await call(adapter, "/v1/responses", "POST", { model: "auto", input: "Hi", tools: [{ type: "function", name: "ping", description: "reply", parameters: { type: "object", properties: {} } }] }, { authorization: `Bearer ${adapter.token}` });
+    const result = await call(adapter, "/v1/responses", "POST", { model: "auto", input: "Hi" }, { authorization: `Bearer ${adapter.token}` });
     assert.equal(result.status, 200);
-    // auto must resolve to a model the pinned provider actually serves
     assert.equal(upstreamModel, "gpt-5.6-luna");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await adapter.close();
+  }
+});
+
+test("surfaces a DeepSeek insufficient_system_resource stop as a 502, not a 200 end_turn", async () => {
+  const store = await createUsageStore({ backend: "memory" });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const path = typeof input === "string" ? input : input.url;
+    if (!path.includes("api.deepseek.com")) return originalFetch(input, init);
+    return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "Next I will edit the file" }, finish_reason: "insufficient_system_resource" }] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  const deepSeekConfig = { ...config, provider: "deepseek", model: "deepseek-v4-flash" };
+  const adapter = await startAdapter(deepSeekConfig, { store });
+  try {
+    const message = await call(adapter, "/v1/messages", "POST", { model: "deepseek-v4-flash", messages: [{ role: "user", content: "Hi" }] }, { authorization: `Bearer ${adapter.token}`, "x-api-key": adapter.token });
+    assert.equal(message.status, 502);
+    assert.match(message.body.error.message, /insufficient/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await adapter.close();
+  }
+});
+
+test("surfaces a DeepSeek stream that drops mid-turn as an error event, not a 200 end_turn", async () => {
+  const store = await createUsageStore({ backend: "memory" });
+  const originalFetch = globalThis.fetch;
+  const stream = new ReadableStream({
+    start(controller) {
+      // The upstream stops after partial content with neither a finish_reason
+      // chunk nor [DONE] — a dropped connection, not a completed turn.
+      controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Next I will edit the file"}}]}\n\n'));
+      controller.close();
+    }
+  });
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const path = typeof input === "string" ? input : input.url;
+    if (!path.includes("api.deepseek.com")) return originalFetch(input, init);
+    return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+  }) as typeof fetch;
+  const deepSeekConfig = { ...config, provider: "deepseek", model: "deepseek-v4-flash" };
+  const adapter = await startAdapter(deepSeekConfig, { store });
+  try {
+    const message = await call(adapter, "/v1/messages", "POST", { model: "deepseek-v4-flash", messages: [{ role: "user", content: "Hi" }], stream: true }, { authorization: `Bearer ${adapter.token}`, "x-api-key": adapter.token });
+    assert.equal(message.status, 200);
+    assert.match(message.text, /event: error/);
+    assert.doesNotMatch(message.text, /"stop_reason":"end_turn"/);
+    assert.doesNotMatch(message.text, /event: message_stop/);
   } finally {
     globalThis.fetch = originalFetch;
     await adapter.close();

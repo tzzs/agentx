@@ -1,7 +1,8 @@
 {
-  "name": "@tzzs/agentx",
+  "name": "@tanzz/agentx",
   "version": "1.0.0",
   "description": "Local Anthropic-compatible adapter for OpenCode",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "agentx": "dist/src/cli.js"
@@ -15,7 +16,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test dist/test/*.test.js"
+    "test": "npm run build && cd dist && node --test"
   },
   "files": [
     "dist/src",

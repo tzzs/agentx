@@ -2,9 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { extractResponsesUsage, extractChatUsage } from "../src/providers/usage/openai.js";
 import { extractAnthropicUsage } from "../src/providers/usage/anthropic.js";
-import { extractGeminiUsage } from "../src/providers/usage/google.js";
-import { extractUsage, usageFormatFor } from "../src/providers/usage/index.js";
-import { capabilitiesFor } from "../src/usage/capabilities.js";
+import { extractUsage } from "../src/providers/usage/index.js";
 
 const ctx = { provider: "openai", model: "gpt-4o" };
 
@@ -22,7 +20,6 @@ test("returns null when the response has no usage", () => {
   assert.equal(extractResponsesUsage({ output: [] }, ctx), null);
   assert.equal(extractChatUsage({ choices: [] }, ctx), null);
   assert.equal(extractAnthropicUsage({ content: [] }, ctx), null);
-  assert.equal(extractGeminiUsage({ candidates: [] }, ctx), null);
 });
 
 test("defaults missing token fields to zero and computes totals", () => {
@@ -43,23 +40,7 @@ test("maps Anthropic cache_creation tokens to cacheWrite, not cachedInput", () =
   assert.equal(usage!.cacheWriteTokens, 30);
 });
 
-test("maps Google Gemini usageMetadata", () => {
-  const usage = extractGeminiUsage({ usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50, totalTokenCount: 150, cachedContentTokenCount: 10, thoughtsTokenCount: 5 } }, { provider: "google", model: "gemini-2.5-pro" });
-  assert.equal(usage!.inputTokens, 100); assert.equal(usage!.outputTokens, 50);
-  assert.equal(usage!.cachedInputTokens, 10); assert.equal(usage!.reasoningTokens, 5);
-});
-
 test("dispatches by provider protocol", () => {
-  assert.equal(usageFormatFor({ provider: "opencode", model: "gpt-5.6-luna", protocol: "responses", endpoint: "x" }), "responses");
-  assert.equal(usageFormatFor({ provider: "deepseek", model: "deepseek-v4-pro", protocol: "chat-completions", endpoint: "x" }), "chat-completions");
   assert.equal(extractUsage({ usage: { input_tokens: 10, output_tokens: 2 } }, { provider: "opencode", model: "gpt-5.6-luna", protocol: "responses", endpoint: "x" }, {})!.inputTokens, 10);
   assert.equal(extractUsage({ usage: { prompt_tokens: 10, completion_tokens: 2 } }, { provider: "deepseek", model: "deepseek-v4-pro", protocol: "chat-completions", endpoint: "x" }, {})!.inputTokens, 10);
-});
-
-test("reports provider capabilities", () => {
-  assert.equal(capabilitiesFor("opencode").supportsUsage, true);
-  assert.equal(capabilitiesFor("opencode").supportsStreamingUsage, true);
-  assert.equal(capabilitiesFor("deepseek").supportsCacheTokens, true);
-  assert.equal(capabilitiesFor("openrouter").supportsCacheTokens, false);
-  assert.deepEqual(capabilitiesFor("unknown-provider"), { supportsUsage: true, supportsStreamingUsage: true, supportsCacheTokens: false });
 });

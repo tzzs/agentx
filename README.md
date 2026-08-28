@@ -1,7 +1,7 @@
 # agentx
 
 [![CI](https://github.com/tzzs/agentx/actions/workflows/ci.yml/badge.svg)](https://github.com/tzzs/agentx/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@tzzs%2fagentx)](https://www.npmjs.com/package/@tzzs/agentx)
+[![npm](https://img.shields.io/npm/v/@tanzz%2fagentx)](https://www.npmjs.com/package/@tanzz/agentx)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 English | [简体中文](README.zh-CN.md)
@@ -61,9 +61,9 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## Credentials and Profiles
 
-Credentials come exclusively from environment variables: AgentX-specific variables are namespaced with the `AGENTX_` prefix (e.g. `AGENTX_OPENCODE_API_KEY`) so they never clash with same-named variables set for other tools; at runtime the value is injected into upstream requests as the plain key — the prefix exists only in the variable name. A legacy unprefixed variable (such as `OPENCODE_API_KEY`) is still picked up directly if it is already set. Resolution order: `--api-key`, `AGENTX_<PROVIDER>_API_KEY`, legacy `<PROVIDER>_API_KEY`, then an interactive prompt. When you type a key interactively, AgentX asks (default: yes) whether to save it as `AGENTX_<PROVIDER>_API_KEY` in your shell profile; declining keeps it valid for the current session only and prints instructions on how to persist it manually.
+Credentials come exclusively from environment variables: AgentX-specific variables are namespaced with the `AGENTX_` prefix (e.g. `AGENTX_OPENCODE_API_KEY`) so they never clash with same-named variables set for other tools; at runtime the value is injected into upstream requests as the plain key — the prefix exists only in the variable name. A legacy unprefixed variable (such as `OPENCODE_API_KEY`) is still picked up directly if it is already set. Resolution order: `--api-key`, `AGENTX_<PROVIDER>_API_KEY`, legacy `<PROVIDER>_API_KEY`, then an interactive prompt. When you type a key interactively, AgentX keeps it for the current session only and prints the manual `export …` line you can add to your shell profile; AgentX never writes to your shell profile itself.
 
-Non-secret provider profiles and model mappings are stored in `~/.config/agentx/profiles.json`; the default runtime per client and the last model per provider are stored in `~/.config/agentx/runtime.json`. API keys are never written to either file or to any AgentX-managed storage; with explicit consent they are appended to your shell profile.
+Non-secret runtime selection is stored in a single `~/.config/agentx/runtime.json` file: per-client defaults, the last model per provider, and the most recent selection. API keys are never written to this file or to any AgentX-managed storage, and AgentX does not modify your shell profile.
 
 ## Providers
 
@@ -76,6 +76,34 @@ Supported upstream providers:
 | OpenCode | `AGENTX_OPENCODE_API_KEY` | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
 | DeepSeek | `AGENTX_DEEPSEEK_API_KEY` | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
 | OpenRouter | `AGENTX_OPENROUTER_API_KEY` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
+
+### Custom providers
+
+Beyond the three built-in providers, you can register an arbitrary OpenAI- or Anthropic-compatible endpoint — a local model server (Ollama, vLLM, LM Studio), an internal gateway, or any other compatible API. In the interactive launcher's "Change Provider" list, choose **Add custom provider…** and enter a name, base URL, and protocol; the same picker also offers **Remove custom provider…** once one exists.
+
+For scripts and non-interactive use, `--base-url` defines (and persists) a custom provider without opening the launcher — `--provider` becomes its display name, and `--protocol` selects the upstream shape (`chat-completions` by default, or `responses`/`anthropic`):
+
+```bash
+# A local OpenAI-compatible server (e.g. Ollama)
+agentx exec --provider "My Local LLM" --base-url http://localhost:11434 --protocol chat-completions --model llama3 -- claude
+
+# A provider that speaks the native Anthropic Messages API
+agentx exec --provider "Internal Anthropic Gateway" --base-url https://gateway.internal --protocol anthropic --model claude-x -- claude
+```
+
+Once registered, reuse it by id (the name, lowercased and hyphenated) without repeating `--base-url`:
+
+```bash
+agentx claude --provider my-local-llm
+```
+
+The credential works exactly like a built-in provider's — set `AGENTX_<ID>_API_KEY` (uppercased, underscored) in your environment, or answer the prompt when asked; the connection metadata is persisted in `runtime.json`, but the API key never is. Remove a custom provider entirely (definition and all saved memory of it, not just a stale model id) with:
+
+```bash
+agentx forget --provider my-local-llm --remove-provider
+```
+
+Built-in providers cannot be removed this way. Both Claude Code and Codex can reach a custom provider regardless of which protocol it speaks — Codex talks to an `anthropic`-protocol custom provider through the same local translation layer that lets it reach Chat Completions upstreams (see [API Translation](#api-translation)).
 
 For scripts and advanced usage, `--provider`/`--model` override the configured runtime for a single invocation:
 
@@ -103,7 +131,20 @@ When `claude`, `codex`, or `pi` is started on an interactive terminal without `-
 └
 ```
 
-The current runtime is loaded from the saved default. Pick a provider, then a model, then choose to start now or to set the selection as the default. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Temporary switches never overwrite the saved default unless you choose "Set as default and start". Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
+The current runtime is loaded from the saved default: a quick-start menu lets you launch immediately or reopen the pickers to change provider / model. The model picker is searchable: type to filter the list by model id, with ↑/↓ to select and Enter to confirm. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Completing the pickers always saves the selection as the client's default, so the next launch starts from it. Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
+
+#### Native launch
+
+Claude Code and Codex have their own login/billing outside AgentX, so both support a native launch that bypasses AgentX entirely: no provider/model resolution, no local adapter, no `ANTHROPIC_*`/`OPENAI_*` environment injection — the client runs exactly as if you had invoked it yourself. Reach it either way:
+
+```bash
+agentx claude --native
+agentx codex --native
+```
+
+or, on the quick-start menu shown when a saved default exists, choose **Launch native (skip AgentX)**. `--native` combined with `--provider`/`--model` silently ignores them, since there is nothing left for AgentX to configure. `pi` has no native mode — it always depends on an OpenAI-compatible backend, so there is nothing "native" to fall back to.
+
+If `--native` runs nested inside a client AgentX itself launched — for example, typing `agentx claude --native` inside a Claude Code session started by `agentx claude` — the inherited environment still carries the outer launch's `ANTHROPIC_*`/`OPENAI_*` overrides. AgentX detects this (via an internal marker set on every environment it constructs) and strips exactly its own variables before spawning, so the nested client still starts native instead of silently pointing back at the adapter it's meant to skip. A hand-configured environment that never went through AgentX — including one that happens to set the same variable names for your own purposes — is left completely untouched.
 
 ## Codex
 
@@ -114,7 +155,9 @@ npx agentx codex
 npx agentx codex --model gpt-5.6-luna
 ```
 
-The launcher passes `-c` overrides that define an inline `agentx` model provider pointing at `http://127.0.0.1:<port>/v1`, whose bearer token is the temporary local token injected as `OPENAI_API_KEY`. It also generates a model catalog (`~/.config/agentx/codex-models.json`, passed via `model_catalog_json`) so registry models resolve with real metadata instead of Codex's fallback-metadata warning: context windows and output limits for every provider come from the public models.dev registry when available, with conservative defaults otherwise. This works with current Codex releases (which no longer honor those environment variables) and skips Codex's sign-in screen entirely — no ChatGPT login or `~/.codex/auth.json` required, and your existing `~/.codex/config.toml` stays untouched. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.
+The launcher passes `-c` overrides that define an inline `agentx` model provider pointing at `http://127.0.0.1:<port>/v1`, whose bearer token is the temporary local token injected as `OPENAI_API_KEY`. It also generates a model catalog (`~/.config/agentx/codex-models.json`, passed via `model_catalog_json`) so registry models — and any custom OpenRouter model id you enter in the launcher — resolve with real metadata instead of Codex's fallback-metadata warning: context windows and output limits for every provider come from the public models.dev registry when available, fall back to OpenRouter's public catalog for models models.dev lacks, and use conservative defaults otherwise. DeepSeek's `deepseek-v4-pro`/`deepseek-v4-flash` are an exception: they are OpenCode's own branding (served both through the OpenCode gateway and the direct DeepSeek provider), so neither public registry has a matching entry, and the catalog declares their real ~1M context window explicitly instead of falling back to a conservative 128k — otherwise Codex would auto-compact long DeepSeek sessions far earlier than necessary, the same class of issue `CLAUDE_CODE_MAX_CONTEXT_TOKENS` fixes for Claude Code (see [Models and Routing](#models-and-routing)). This works with current Codex releases (which no longer honor those environment variables) and skips Codex's sign-in screen entirely — no ChatGPT login or `~/.codex/auth.json` required, and your existing `~/.codex/config.toml` stays untouched. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.
+
+Pi Agent is launched through the same OpenAI-compatible environment as Codex (`OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL`) and its requests are translated through the same local Responses boundary, so it gets the same DeepSeek reasoning/tool-choice/error-surfacing translation as Codex. It does not receive a generated model catalog, so AgentX has no channel to declare a model's context window to it the way it does for Claude Code or Codex.
 
 ## Installation
 
@@ -127,7 +170,7 @@ npx agentx claude
 Install globally:
 
 ```bash
-npm install --global @tzzs/agentx
+npm install --global @tanzz/agentx
 agentx claude
 ```
 
@@ -141,6 +184,7 @@ Start the adapter and Claude Code together:
 agentx claude
 agentx claude --model deepseek-v4-flash
 agentx claude --port 9000 --host 127.0.0.1
+agentx claude --native   # skip the adapter; run the real `claude` with your own environment
 ```
 
 ### `codex`
@@ -149,6 +193,7 @@ Start the adapter and Codex together. Codex is launched with `-c` overrides that
 
 ```bash
 agentx codex
+agentx codex --native   # skip the adapter; run the real `codex` with your own environment
 ```
 
 ### `proxy`
@@ -163,12 +208,18 @@ The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`
 
 ### `exec`
 
-Run any command with the temporary Anthropic environment:
+Run any command through the local adapter. Unlike `claude`/`codex`/`pi`, `exec` never shows the interactive runtime picker — it always resolves provider/model non-interactively (CLI flags → env vars → the most recent selection → built-in defaults), so it is safe to use in scripts and CI:
 
 ```bash
 agentx exec -- claude
 agentx exec -- opencode
 agentx exec -- my-command --argument
+```
+
+By default `exec` injects Anthropic-shaped environment variables (`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_MODEL`), matching any tool that accepts an Anthropic-compatible endpoint. For a tool that only understands `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL`, pass `--client-protocol openai`:
+
+```bash
+agentx exec --client-protocol openai -- my-openai-compatible-tool
 ```
 
 The command's stdin, stdout, stderr, exit code, and termination signals are forwarded where supported by the host platform.
@@ -182,6 +233,27 @@ agentx doctor
 ```
 
 The report includes Node.js, platform/WSL status, architecture, API key presence, supported models, and Claude Code discovery.
+
+### `forget`
+
+Scrub saved model ids that upstream no longer offers (for example an OpenRouter
+free launch that was renamed to its real vendor id):
+
+```bash
+agentx forget
+```
+
+The command refreshes OpenRouter's live catalog and screens every remembered
+model id against it. Interactive terminals open the "saved models" manager so
+you can pick ids to forget; non-interactive terminals print the stale list:
+
+```bash
+agentx forget    # output: DeepSeek:\n  deepseek-v4-pro  (no longer in the catalog)
+```
+
+Forgetting removes every trace of the id from `runtime.json` — per-client
+defaults, per-provider last model, and the most recent selection — so the
+renamed id stops being offered as "current" on every launch.
 
 ### `version`
 
@@ -208,16 +280,20 @@ agentx usage                 # all time
 agentx usage --period today  # today / week / month / all
 ```
 
-The report groups tokens by provider and model, shows input/output/total
-counts, and includes an estimated cost based on provider pricing. Statistics
-are stored per adapter run; the optional `--period` flag filters by time range.
+The report groups tokens by provider and model and shows input/output/total
+counts. Statistics are stored per adapter run; the optional `--period` flag
+filters by time range.
 
-With `--provider`, the command instead queries provider quota where the
-upstream exposes a quota endpoint:
+`agentx usage --provider <id>` is a deprecated alias for `agentx quota
+--provider <id>` (below); it still works but prints a deprecation notice.
+
+### `quota`
+
+Query provider quota (remote account balance/limit) where the upstream exposes one:
 
 ```bash
-agentx usage --provider deepseek
-agentx usage --provider openrouter
+agentx quota --provider deepseek
+agentx quota --provider openrouter
 ```
 
 OpenCode currently reports an explicit unsupported result because it does not expose a documented public quota endpoint.
@@ -232,23 +308,27 @@ agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 
 ## Configuration
 
-Config is resolved in this order:
+Runtime resolution for agent clients follows this order:
 
 1. Explicit CLI options (`--provider`, `--model`, `--api-key`, …)
-2. Interactive temporary selection (only when no CLI/env override is present)
-3. Saved default runtime for the client (from `runtime.json`)
-4. Environment variables (`AGENTX_PROVIDER`, `AGENTX_MODEL`)
-5. Built-in defaults (`opencode` / `gpt-5.6-luna`)
+2. Saved default runtime for the client (from `runtime.json`)
+3. Environment variables (`AGENTX_PROVIDER`, `AGENTX_MODEL`)
+4. Interactive selection in the launcher (when no CLI/env/model override is present)
+5. The most recent selection, then built-in defaults (`opencode` / `gpt-5.6-luna`)
 
-Only choosing "Set as default and start" in the interactive launcher persists a runtime change; a temporary switch affects the current invocation only.
+Every selection made in the interactive launcher is persisted as the client's default, so the next launch starts from it.
+
+For `claude`/`codex`, `--native` (or **Launch native (skip AgentX)** in the launcher) skips this resolution chain entirely — see [Native launch](#native-launch).
 
 | CLI option | Environment variable | Default | Description |
 | --- | --- | --- | --- |
 | `--api-key <key>` | `AGENTX_OPENCODE_API_KEY` (legacy `OPENCODE_API_KEY` also accepted) | none | OpenCode credential |
 | `--host <host>` | `AGENTX_HOST` | `127.0.0.1` | Local bind address |
 | `--port <port>` | `AGENTX_PORT` | `8787` | Preferred local port |
-| `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Model or `auto` |
+| `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Concrete upstream model id |
 | `--provider <id>` | `AGENTX_PROVIDER` | none | Upstream provider (`opencode`, `deepseek`, `openrouter`) |
+| `--retry <n>` | `AGENTX_RETRY` | `3` | Retry attempts on upstream 429/502/503/504 (0 disables) |
+| `--client-protocol <anthropic\|openai>` | | `anthropic` | `exec` only: env vars to inject for the launched program |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | Reserved for verbose logging |
 | | `AGENTX_USAGE_DIR` | `~/.config/agentx` | Directory for token usage statistics |
 
@@ -258,9 +338,11 @@ If the preferred port is already in use, the adapter tries subsequent ports. A n
 agentx proxy --host 0.0.0.0
 ```
 
+`agentx doctor` accepts `--client <claude|codex|all>` (default `all`) to limit checks to one client, and `--offline` to skip network-dependent checks. Skipped checks are noted in the report.
+
 ## Models and Routing
 
-The OpenCode model catalog is fetched from `https://opencode.ai/zen/go/v1/models` on startup. When the endpoint cannot be reached, the built-in fallback catalog is used:
+The OpenCode model catalog is fetched only when no provider is selected or the selected provider is `opencode`. When the endpoint cannot be reached, the built-in fallback catalog is used:
 
 | Model | Upstream protocol |
 | --- | --- |
@@ -272,17 +354,25 @@ The OpenCode model catalog is fetched from `https://opencode.ai/zen/go/v1/models
 | `glm-5.3`, `glm-5.2`, `glm-5.1`, `glm-5` | Chat Completions API |
 | `mimo-v2.5-pro`, `mimo-v2.5`, `hy3` | Chat Completions API |
 
-Models returned by the API use the Responses API (`gpt-5.6-luna`) or the Chat Completions API (everything else). `--model auto` still routes between a small set of known models, and the local `/v1/models` endpoint always reflects the current catalog.
+Models returned by the API use the Responses API (`gpt-5.6-luna`) or the Chat Completions API (everything else). The local `/v1/models` endpoint always reflects the current catalog; requests must resolve to a concrete configured model.
 
-The OpenRouter provider accepts any model id (defaulting to `OPENROUTER_MODEL` or `openai/gpt-4o-mini`).
+The OpenRouter provider accepts any model id (defaulting to `OPENROUTER_MODEL` or `openai/gpt-4o-mini`). In the interactive launcher its model picker includes two extra options:
 
-Select a model explicitly:
+- **Search / enter any model id…** — type any OpenRouter model id (e.g. `anthropic/claude-sonnet-4.5`) directly.
+- **Browse OpenRouter catalog…** — search the full live catalog (~400 models) fetched from `https://openrouter.ai/api/v1/models`, so you can find real vendor-prefixed ids (e.g. `deepseek/deepseek-v4-pro`) without typing them blind. The catalog is persisted in `runtime.json` for offline screening.
+- **Forget a saved model…** — open the saved-model manager scoped to OpenRouter, so a custom id that was renamed or pulled upstream can be scrubbed without leaving the picker.
+
+Because OpenRouter accepts free-form ids, a launch can save a model that later gets renamed or pulled upstream (e.g. a free tier renamed to its real vendor id). You can scrub such stale ids from inside the model picker itself, or run `agentx forget` for the full session (see [`forget`](#forget)).
+
+Select a concrete model explicitly:
 
 ```bash
 agentx claude --model gpt-5.6-luna
 ```
 
-With `--model auto`, short requests use `deepseek-v4-flash`, larger requests use `deepseek-v4-pro`, and requests containing tools or a large context use `gpt-5.6-luna`. This is a deliberately simple first-pass router, not a benchmark-based recommendation system.
+Implicit request-shape routing has been removed. Use an explicit background model when Claude Code's background lane should use another model from the same provider.
+
+Claude Code assumes an unrecognized model has its default ~200k-token context window and auto-compacts well before that. DeepSeek's `deepseek-v4-flash`/`deepseek-v4-pro` (and their `[1m]` variants) actually offer a much larger window, so the `claude` launcher declares `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for them automatically (unless you already set those variables yourself). Without this, long DeepSeek sessions were auto-compacted far earlier than necessary, silently dropping a large fraction of the conversation.
 
 ## API Translation
 
@@ -295,7 +385,12 @@ Supported translation areas include:
 - Anthropic text messages and response text
 - Anthropic streaming events to Anthropic SSE events
 - Anthropic `tools`, `tool_use`, and `tool_result` to function tools and function call outputs
+- Anthropic `thinking` / `output_config.effort` to the upstream's reasoning controls (DeepSeek's `thinking`/`reasoning_effort` over Chat Completions, or `reasoning.effort` over the Responses API)
+- Anthropic `tool_choice` to the upstream's Chat Completions or Responses tool-choice shape
 - Responses and Chat Completions usage data to Anthropic usage fields
+- Responses requests/responses to and from a native Anthropic Messages API upstream (for a custom provider whose protocol is `anthropic`), including streaming — this is the one direction that also runs for Codex, not just Claude Code, since Codex only ever sees the local Responses endpoint
+
+For DeepSeek specifically, its thinking mode requires every assistant turn's `reasoning_content` to be echoed back anchored to the same message as the tool call it led to; the adapter keeps an assistant message's text, reasoning, and tool calls together instead of splitting them across separate messages, and only forwards `reasoning_content` for DeepSeek (other Chat Completions upstreams do not expect that field). An abnormal upstream stop — `content_filter`, `insufficient_system_resource`, or a stream that ends without either a `finish_reason` or `[DONE]` — surfaces as an error instead of silently reading back as a normal `end_turn`.
 
 The adapter translates tool protocols only. It does not execute tools and does not persist prompts, tool arguments, or conversation state.
 
@@ -331,12 +426,6 @@ The adapter exposes read-only usage endpoints (no authentication):
 endpoints report all recorded usage. The session endpoint also accepts the
 path form `GET /usage/session/<id>`.
 
-### Cost Estimation
-
-A pricing layer (`src/usage/pricing/`) converts token counts into an estimated
-cost per provider. Collection and cost calculation are kept separate; the CLI
-report uses the pricing layer only for display.
-
 ### Storage and Data
 
 - Statistics live in `~/.config/agentx/usage.db` (or `usage.json` fallback).
@@ -369,7 +458,7 @@ npm run build
 
 The project uses TypeScript, native Node.js `fetch`, Node.js ESM, and the built-in `node:test` runner. Tests are compiled into `dist/test` before execution.
 
-The test suite covers request/response conversion, system instructions, streaming events, tool calls, model routing, chat-completion conversion, token usage adapters, storage, pricing, and the usage query API. Tests do not require an API key or network access.
+The test suite covers request/response conversion, system instructions, streaming events, tool calls, provider routing, chat-completion conversion, token usage adapters, storage, and the usage query API. Tests do not require an API key or network access.
 
 ## CI and Publishing
 

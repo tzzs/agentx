@@ -1,13 +1,12 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { fromResponsesResponse, toResponsesRequest } from "./providers.js";
-import { pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream, type StreamUsageOptions } from "./streaming.js";
+import { fromAnthropicResponse, fromResponsesResponse, responsesResponseFailure, toAnthropicRequest, toResponsesRequest } from "./providers.js";
+import { pipeAnthropicPassthrough, pipeAnthropicStreamToResponses, pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream, type StreamUsageOptions } from "./streaming/index.js";
 import type { ProviderModel } from "./providers/types.js";
 import type { TokenUsage } from "./usage/types.js";
-import { fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, providers, selectModel, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
+import { chatResponseFailure, fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, providers, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
 import { apiKeyFor, providerDisplayName } from "./providers/registry.js";
-import { defaultModelFor } from "./selection.js";
 import { extractUsage } from "./providers/usage/index.js";
 import { TokenUsageCollector } from "./usage/collector.js";
 import { defaultUsageStore } from "./usage/storage.js";
@@ -33,8 +32,8 @@ function parsePeriod(url: URL): UsagePeriod | undefined {
   const value = url.searchParams.get("period");
   return value === "today" || value === "week" || value === "month" || value === "all" ? value : undefined;
 }
-function streamOptions(provider: ProviderModel, sessionId: string, onUsage?: (usage: TokenUsage) => void): StreamUsageOptions {
-  return { provider: provider.provider, model: provider.model, protocol: provider.protocol, sessionId, onUsage };
+function streamOptions(config: Config, provider: ProviderModel, sessionId: string, onUsage?: (usage: TokenUsage) => void): StreamUsageOptions {
+  return { provider: provider.provider, model: provider.model, protocol: provider.protocol, sessionId, onUsage, onDiagnostic: (message) => debug(config, `stream diagnostic: ${message}`) };
 }
 async function upstreamError(response: ServerResponse, providerName: string, upstream: Response, status: number) {
   let message = `${providerName} returned HTTP ${status}`;
@@ -47,15 +46,79 @@ function respondError(response: ServerResponse, error: unknown) {
   const type = status >= 500 ? "upstream_error" : "invalid_request_error";
   json(response, status, { error: { message: error instanceof Error ? error.message : "Invalid request", type } });
 }
+/** Anthropic's Messages API authenticates via x-api-key + anthropic-version, not Authorization: Bearer. Both forms are sent for an "anthropic" upstream so a gateway that only accepts Bearer still works. */
+function authHeaders(provider: ProviderModel, apiKey: string): Record<string, string> {
+  const headers: Record<string, string> = { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
+  if (provider.protocol === "anthropic") { headers["x-api-key"] = apiKey; headers["anthropic-version"] = "2023-06-01"; }
+  return headers;
+}
 /** POST the converted payload upstream; network failures surface as HTTP 502. */
 async function forward(config: Config, provider: ProviderModel, apiKey: string, payload: unknown, signal: AbortSignal): Promise<Response> {
   try {
-    return await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(payload), signal });
+    return await fetch(provider.endpoint, { method: "POST", headers: authHeaders(provider, apiKey), body: JSON.stringify(payload), signal });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error";
     debug(config, `upstream unreachable=${reason}`);
     throw Object.assign(new Error(`${providerDisplayName(provider.provider)} is unreachable (${reason})`), { status: 502 });
   }
+}
+
+/** Base delay, growth factor, and ceiling for the retry backoff below. */
+const RETRY_BASE_MS = 300;
+const RETRY_MAX_DELAY_MS = 4_000;
+/** Upstream statuses worth a retry: rate-limited or transiently unavailable. Other 4xx are client/config errors that retrying cannot fix. */
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+
+/** Sleep that resolves early (no error) when `signal` aborts, so backoff never outlives a disconnected client or the idle watchdog. */
+function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const onAbort = () => { clearTimeout(timer); resolve(); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve(); }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** Exponential backoff with jitter, capped at RETRY_MAX_DELAY_MS; a numeric-seconds `Retry-After` raises the floor but never the cap. */
+function retryDelayMs(attempt: number, retryAfterHeader: string | null): number {
+  const backoff = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_MS * 2 ** (attempt - 1));
+  const jittered = backoff * (0.8 + Math.random() * 0.4);
+  const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
+  const retryAfterMs = Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 0;
+  return Math.min(RETRY_MAX_DELAY_MS, Math.max(jittered, retryAfterMs));
+}
+
+/**
+ * Wrap `forward()` with bounded retry for transient upstream failures: a
+ * network-level failure (surfaced by `forward()` as a status:502 Error) or a
+ * 429/502/503/504 response. Other statuses — including other 4xx — return
+ * immediately; retrying a client/config error wastes time without changing
+ * the outcome. This must be the only place that calls `forward()`: retries
+ * only ever happen before any response body reaches the client (this
+ * function resolves or throws before the caller starts streaming), so a
+ * retry can never corrupt bytes already forwarded downstream.
+ */
+export async function forwardWithRetry(
+  config: Config, provider: ProviderModel, apiKey: string, payload: unknown, signal: AbortSignal, retry: number,
+  sleep: (ms: number, signal: AbortSignal) => Promise<void> = abortableSleep,
+): Promise<Response> {
+  const attempts = retry + 1;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await forward(config, provider, apiKey, payload, signal);
+      if (response.ok || attempt === attempts || !RETRYABLE_STATUS.has(response.status)) return response;
+      const delay = retryDelayMs(attempt, response.headers.get("retry-after"));
+      debug(config, `retry attempt=${attempt}/${attempts} status=${response.status} delay=${Math.round(delay)}ms`);
+      await sleep(delay, signal);
+    } catch (error) {
+      if (attempt === attempts || signal.aborted) throw error;
+      const delay = retryDelayMs(attempt, null);
+      debug(config, `retry attempt=${attempt}/${attempts} status=network-error delay=${Math.round(delay)}ms`);
+      await sleep(delay, signal);
+    }
+  }
+  /* istanbul ignore next -- the loop always returns or throws by the final attempt. */
+  throw new Error("forwardWithRetry: unreachable");
 }
 
 /** Abort when the upstream sends nothing (headers or body) for this long. */
@@ -106,19 +169,19 @@ async function proxyRequest(
   request: IncomingMessage,
   response: ServerResponse,
   token: string,
-  route: { defaultModel: (input: any) => string; payload: (input: any, model: string) => unknown },
+  route: { fallbackModel: string; payload: (input: any, model: string) => unknown },
 ): Promise<{ input: any; model: string; watched: Response } | undefined> {
   if (!authorized(request, token)) { json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } }); return undefined; }
   try {
     const input = JSON.parse(await body(request));
     // The endpoint decides which model id counts as "configured" (/v1/responses
     // honors the client-echoed input.model; /v1/messages only config/env).
-    const model = selectModel(input, route.defaultModel(input), config.provider);
+    const model = honorRequestedModel(input.model, route.fallbackModel, config.provider);
     debug(config, `POST ${request.url} model=${model}`);
     const provider = providerFor(model, config.provider); const apiKey = apiKeyFor(provider, config.apiKey);
     const payload = route.payload(input, model);
     const session = upstreamSession(response, config);
-    const upstream = await forward(config, provider, apiKey, payload, session.signal);
+    const upstream = await forwardWithRetry(config, provider, apiKey, payload, session.signal, config.retry);
     session.progress();
     debug(config, `provider status=${upstream.status}`);
     if (!upstream.ok) { await upstreamError(response, providerDisplayName(provider.provider), upstream, upstream.status); return undefined; }
@@ -132,9 +195,7 @@ async function proxyRequest(
 }
 
 export async function startAdapter(config: Config, options: AdapterOptions = {}): Promise<Adapter> {
-  // "auto" defers model resolution to per-request routing; validate against
-  // the provider's default model instead so startup still verifies the key.
-  const initialModel = config.model === "auto" ? defaultModelFor(config.provider ?? "opencode") : config.model;
+  const initialModel = config.model;
   const initialProvider = providerFor(initialModel, config.provider); const initialApiKey = apiKeyFor(initialProvider, config.apiKey);
   if (!initialApiKey) throw new Error(`API key not found for provider "${initialProvider.provider}". Set the provider API key environment variable or use --api-key <key>.`);
   // Claude Code validates the key shape before sending a request. This is still
@@ -171,20 +232,25 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     if (pathname === "/v1/responses" && request.method === "POST") {
       // Honor auto routing here too: Codex echoes OPENAI_MODEL=auto back.
       const proxied = await proxyRequest(config, request, response, token, {
-        defaultModel: (input) => honorRequestedModel(input.model, config.model, config.provider),
+        fallbackModel: config.model,
         payload: (input, model) => {
           const provider = providerFor(model, config.provider);
-          return provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model);
+          if (provider.protocol === "anthropic") return toAnthropicRequest(input, model);
+          return provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model, provider.provider);
         },
       });
       if (!proxied) return;
       const { input, model, watched } = proxied;
       const provider = providerFor(model, config.provider);
-      const options = streamOptions(provider, sessionFor(input), safeRecord);
+      const options = streamOptions(config, provider, sessionFor(input), safeRecord);
       if (input.stream && provider.protocol === "chat-completions") return pipeChatStreamToResponses(watched, response, model, options);
+      if (input.stream && provider.protocol === "anthropic") return pipeAnthropicStreamToResponses(watched, response, model, options);
       if (input.stream) return pipeResponsesPassthrough(watched, response, model, options);
       if (!watched.body) return response.end();
       const value = await watched.json(); recordUsage(value, provider, sessionFor(input));
+      if (provider.protocol === "anthropic") return json(response, watched.status, fromAnthropicResponse(value, model));
+      const failure = provider.protocol === "chat-completions" ? chatResponseFailure(value) : responsesResponseFailure(value);
+      if (failure) return json(response, 502, { error: { message: failure, type: "upstream_error" } });
       return json(response, watched.status, provider.protocol === "chat-completions" ? fromChatResponseToResponses(value, model) : value);
     }
     if (pathname !== "/v1/messages" || request.method !== "POST") return json(response, 404, { error: { message: "Not found", type: "not_found" } });
@@ -192,17 +258,23 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
       // Claude Code pins every tier to the configured model, but its haiku
       // background lane may carry a faster sibling (see clientEnvironment);
       // honor such requests instead of forcing the main model.
-      defaultModel: (input) => honorRequestedModel(input.model, config.model, config.provider),
+      fallbackModel: config.model,
       payload: (input, model) => {
         const provider = providerFor(model, config.provider);
-        return provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model);
+        if (provider.protocol === "anthropic") return { ...input, model }; // already Anthropic-shaped; zero conversion
+        return provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model, provider.provider);
       },
     });
     if (!proxied) return;
     const { input, model, watched } = proxied;
     const provider = providerFor(model, config.provider);
-    if (input.stream) return pipeResponsesStream(watched, response, model, streamOptions(provider, sessionFor(input), safeRecord));
+    const messagesOptions = streamOptions(config, provider, sessionFor(input), safeRecord);
+    if (input.stream && provider.protocol === "anthropic") return pipeAnthropicPassthrough(watched, response, model, messagesOptions);
+    if (input.stream) return pipeResponsesStream(watched, response, model, messagesOptions);
     const value = await watched.json(); recordUsage(value, provider, sessionFor(input));
+    if (provider.protocol === "anthropic") return json(response, watched.status, value); // already Anthropic-shaped
+    const failure = provider.protocol === "chat-completions" ? chatResponseFailure(value) : responsesResponseFailure(value);
+    if (failure) return json(response, 502, { error: { message: failure, type: "upstream_error" } });
     return json(response, watched.status, provider.protocol === "responses" ? fromResponsesResponse(value, model) : fromChatResponse(value, model));
   });
   let port = config.port;
