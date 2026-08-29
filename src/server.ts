@@ -208,7 +208,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
   /** Record one usage row, swallowing persistence errors into debug logs. */
   const safeRecord = (usage: TokenUsage) => { void collector.record(usage).catch((error) => debug(config, `usage record error=${error instanceof Error ? error.message : "unknown"}`)); };
   const recordUsage = (value: any, provider: ProviderModel, session: string) => { const usage = extractUsage(value, provider, { sessionId: session }); if (usage) safeRecord(usage); };
-  const server = createServer(async (request, response) => {
+  const handleRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     debug(config, `${request.method} ${request.url}`);
     const url = new URL(request.url ?? "/", "http://localhost");
     const pathname = url.pathname;
@@ -246,7 +246,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
       if (input.stream && provider.protocol === "chat-completions") return pipeChatStreamToResponses(watched, response, model, options);
       if (input.stream && provider.protocol === "anthropic") return pipeAnthropicStreamToResponses(watched, response, model, options);
       if (input.stream) return pipeResponsesPassthrough(watched, response, model, options);
-      if (!watched.body) return response.end();
+      if (!watched.body) { response.end(); return; }
       const value = await watched.json(); recordUsage(value, provider, sessionFor(input));
       if (provider.protocol === "anthropic") return json(response, watched.status, fromAnthropicResponse(value, model));
       const failure = provider.protocol === "chat-completions" ? chatResponseFailure(value) : responsesResponseFailure(value);
@@ -276,6 +276,17 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     const failure = provider.protocol === "chat-completions" ? chatResponseFailure(value) : responsesResponseFailure(value);
     if (failure) return json(response, 502, { error: { message: failure, type: "upstream_error" } });
     return json(response, watched.status, provider.protocol === "responses" ? fromResponsesResponse(value, model) : fromChatResponse(value, model));
+  };
+  const server = createServer((request, response) => {
+    // Last-resort guard: a rejection escaping the per-route handling (an
+    // upstream 200 with a truncated JSON body, a failing usage store, …) must
+    // never surface as an unhandledRejection — Node would terminate the whole
+    // adapter mid-session.
+    handleRequest(request, response).catch((error) => {
+      debug(config, `handler error=${error instanceof Error ? error.message : "unknown"}`);
+      if (!response.headersSent) json(response, 500, { error: { message: "Internal adapter error", type: "api_error" } });
+      else response.end();
+    });
   });
   let port = config.port;
   const lastPort = Math.min(config.port + 100, 65535);

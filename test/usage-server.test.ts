@@ -112,6 +112,27 @@ test("honors only provider-compatible requested models", async () => {
   }
 });
 
+test("an upstream 200 with an unparseable body surfaces a 5xx and the adapter stays alive", async () => {
+  const store = await createUsageStore({ backend: "memory" });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const path = typeof input === "string" ? input : input.url;
+    if (path.includes("127.0.0.1")) return originalFetch(input, init);
+    return new Response("<html>gateway garbage</html>", { status: 200, headers: { "content-type": "text/html" } });
+  }) as typeof fetch;
+  const adapter = await startAdapter(config, { store });
+  try {
+    const message = await call(adapter, "/v1/messages", "POST", { model: "gpt-5.6-luna", messages: [{ role: "user", content: "Hi" }] }, { authorization: `Bearer ${adapter.token}`, "x-api-key": adapter.token });
+    assert.equal(message.status, 500);
+    assert.match(message.body.error.message, /Internal adapter error/);
+    // The rejected handler must not take the adapter process down with it.
+    assert.equal((await call(adapter, "/health")).status, 200);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await adapter.close();
+  }
+});
+
 test("surfaces a DeepSeek insufficient_system_resource stop as a 502, not a 200 end_turn", async () => {
   const store = await createUsageStore({ backend: "memory" });
   const originalFetch = globalThis.fetch;
