@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fromResponsesResponse, toResponsesRequest } from "../src/providers.js";
+import { fromResponsesResponse, toResponsesRequest } from "../src/convert/index.js";
 
 test("converts tools and tool results", () => {
   const result = toResponsesRequest({ tools: [{ name: "bash", description: "Run a command", input_schema: { type: "object" } }], messages: [{ role: "assistant", content: [{ type: "tool_use", id: "call-1", name: "bash", input: { command: "pwd" } }] }, { role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", content: "/tmp" }] }] }, "gpt-5.6-luna");

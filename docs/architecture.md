@@ -48,7 +48,7 @@ cli.ts (claude/codex/pi/proxy/exec)
 
 `--native`（claude/codex 专属）完全跳过上述解析链——不做 Provider/Model 解析、不启动 Adapter、不注入环境变量，直接以继承环境启动真实客户端；详见 README「Native launch」。
 
-## 本地 Adapter 协议转换（server.ts + providers/catalog + streaming）
+## 本地 Adapter 协议转换（server.ts + catalog.ts + convert/ + streaming/）
 
 ```
 Claude Code (Anthropic Messages API)
@@ -56,24 +56,26 @@ Claude Code (Anthropic Messages API)
       ▼
   server.ts  (校验本地 token，不转发给上游；按 config.retry 对 429/502/503/504 做指数退避重试)
       │
-      ├─ catalog.ts  providerFor（按 model 选路由）
+      ├─ catalog.ts  providerFor（按 model 选路由；纯路由模块，不含转换函数）
       │
       ├── provider.protocol === "responses"
-      │       └─ providers.ts  toResponsesRequest / fromResponsesResponse
+      │       └─ convert/responses.ts  toResponsesRequest / fromResponsesResponse
       │                            Anthropic ↔ Responses 转换
       │
       ├── provider.protocol === "chat-completions"
-      │       └─ catalog.ts  toChatRequest / fromChatResponse（Anthropic ↔ Chat 转换）
+      │       └─ convert/chat.ts  toChatRequest / fromChatResponse（Anthropic ↔ Chat 转换）
       │       └─ 流式: streaming/chat-to-responses.ts, streaming/to-anthropic.ts
       │                            (Anthropic SSE ↔ OpenAI SSE)
       │
       └── provider.protocol === "anthropic"（自定义 Provider 专属，见下）
               └─ /v1/messages 侧零转换直接透传（两边协议一致）
-              └─ /v1/responses 侧 providers.ts  toAnthropicRequest / fromAnthropicResponse
+              └─ /v1/responses 侧 convert/anthropic.ts  toAnthropicRequest / fromAnthropicResponse
               └─ 流式: streaming/anthropic-passthrough.ts, streaming/anthropic-to-responses.ts
 ```
 
-`src/streaming/` 是拆分后的模块化目录（`common.ts` 收敛公共 SSE 写入/heartbeat/usage capture 逻辑，每条协议转换路径各占一个文件），不再是单一的 `streaming.ts`。
+`src/convert/` 是转换函数所在的模块化目录：`shared.ts`（跨方向 helper：图片/effort/thinking/tool-choice 映射、采样参数、JSON 解析）、`chat.ts`（上游 = Chat Completions 的全部方向）、`responses.ts`（上游 = Responses）、`anthropic.ts`（上游 = Anthropic，自定义 Provider 专属）、`index.ts`（barrel 导出，公共函数名不变）。`src/catalog.ts` 只保留 `providers`/`providerFor`/`honorRequestedModel` 路由函数。
+
+`src/streaming/` 同样是拆分后的模块化目录（`common.ts` 收敛公共 SSE 写入/heartbeat/usage capture 逻辑，每条协议转换路径各占一个文件），不是单一的 `streaming.ts`。
 
 ## Provider 层（providers/registry.ts + types.ts）
 
@@ -115,8 +117,8 @@ Claude Code (Anthropic Messages API)
 | `src/cli.ts` | 命令分发、参数解析、编排（`runAuthCommand`/`runDoctorCommand`/`runClientLaunch` 等具名函数） |
 | `src/config.ts` | 配置加载与优先级 |
 | `src/server.ts` | HTTP Adapter、认证、路由、重试、端口回退 |
-| `src/providers.ts` | Anthropic ↔ Responses 转换、Responses ↔ Anthropic 转换（自定义 Provider 专属） |
-| `src/catalog.ts` | Anthropic ↔ Chat Completions / Responses ↔ Chat Completions 转换 |
+| `src/catalog.ts` | 模型路由（`providers`/`providerFor`/`honorRequestedModel`），不含转换函数 |
+| `src/convert/` | 协议转换函数，按上游协议拆分：`shared.ts`（跨方向 helper）、`chat.ts`（上游 = Chat Completions）、`responses.ts`（上游 = Responses）、`anthropic.ts`（上游 = Anthropic，自定义 Provider 专属）、`index.ts`（barrel） |
 | `src/streaming/` | SSE 流式协议转换（按上游协议拆分成多个文件） |
 | `src/providers/registry.ts` + `types.ts` | Provider 目录、模型注册表、自定义 Provider 注册/移除 |
 | `src/process.ts` | 子进程启动/环境注入/stdio 转发/清理/`--native` 环境清洗 |
@@ -125,4 +127,4 @@ Claude Code (Anthropic Messages API)
 | `src/quota.ts` | Provider 远程额度查询（`agentx quota`） |
 | `src/doctor.ts` / `src/ui.ts` | 诊断 / 交互式启动器（含自定义 Provider 的 Add/Remove 流程） |
 
-> 注：相比 agentx.md 中建议的 `src/commands/`、`src/proxy/`、`src/runtime/` 目录结构，实际实现是扁平化的 `src/*.ts`（server.ts 取代了 proxy/anthropic/responses/chat-completions/auth 分层，转换逻辑集中在 providers.ts + catalog.ts）。
+> 注：相比 agentx.md 中建议的 `src/commands/`、`src/proxy/`、`src/runtime/` 目录结构，实际实现是扁平化的 `src/*.ts`（server.ts 取代了 proxy/anthropic/responses/chat-completions/auth 分层，转换逻辑集中在 `src/convert/`，按上游协议而非方向拆分）。

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chatThinking, chatToolChoice, fromAnthropicResponse, fromResponsesResponse, reasoningEffort, responsesResponseFailure, responsesToolChoice, toAnthropicRequest, toResponsesRequest } from "../src/providers.js";
+import { chatThinking, chatToolChoice, fromAnthropicResponse, fromResponsesResponse, reasoningEffort, responsesResponseFailure, responsesToolChoice, toAnthropicRequest, toResponsesRequest } from "../src/convert/index.js";
 
 test("converts Anthropic request to Responses request", () => {
   assert.deepEqual(toResponsesRequest({ system: "Be concise", max_tokens: 10, messages: [{ role: "user", content: "Hi" }] }, "gpt-5.6-luna"), { model: "gpt-5.6-luna", input: [{ role: "user", content: "Hi" }], instructions: "Be concise", max_output_tokens: 10 });

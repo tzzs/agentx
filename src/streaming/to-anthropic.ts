@@ -1,5 +1,5 @@
 import type { ServerResponse } from "node:http";
-import { chatResponseFailure } from "../catalog.js";
+import { chatResponseFailure } from "../convert/index.js";
 import { cacheTokensOf, cancelOnDisconnect, drain, errorMessage, event, failureMessage, reasoningDeltaOf, reportUsage, SSE_HEADERS, startHeartbeat, UpstreamFailure, type StreamUsageOptions } from "./common.js";
 
 /**

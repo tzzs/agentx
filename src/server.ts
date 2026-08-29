@@ -1,11 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { fromAnthropicResponse, fromResponsesResponse, responsesResponseFailure, toAnthropicRequest, toResponsesRequest } from "./providers.js";
+import { chatResponseFailure, fromAnthropicResponse, fromChatResponse, fromChatResponseToResponses, fromResponsesResponse, responsesResponseFailure, toAnthropicRequest, toChatCompletionsRequest, toChatRequest, toResponsesRequest } from "./convert/index.js";
 import { pipeAnthropicPassthrough, pipeAnthropicStreamToResponses, pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream, type StreamUsageOptions } from "./streaming/index.js";
 import type { ProviderModel } from "./providers/types.js";
 import type { TokenUsage } from "./usage/types.js";
-import { chatResponseFailure, fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, providers, toChatCompletionsRequest, toChatRequest } from "./catalog.js";
+import { honorRequestedModel, providerFor, providers } from "./catalog.js";
 import { apiKeyFor, providerDisplayName } from "./providers/registry.js";
 import { extractUsage } from "./providers/usage/index.js";
 import { TokenUsageCollector } from "./usage/collector.js";
