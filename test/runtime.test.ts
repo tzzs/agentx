@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -58,6 +58,16 @@ test("persists and reloads the OpenRouter catalog id cache", async () => {
   await saveOpenRouterModels(["vendor/gamma"]);
   assert.deepEqual(await loadOpenRouterModels(), ["vendor/gamma"]);
   await saveOpenRouterModels(["vendor/alpha", "vendor/beta"]);
+});
+
+test("saveOpenRouterModels skips the write when the id list is unchanged", async () => {
+  await saveOpenRouterModels(["vendor/delta", "vendor/epsilon"]);
+  const before = (await stat(runtimeFile())).mtimeMs;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await saveOpenRouterModels(["vendor/delta", "vendor/epsilon"]);
+  assert.equal((await stat(runtimeFile())).mtimeMs, before, "identical content must not rewrite the file");
+  await saveOpenRouterModels(["vendor/zeta"]);
+  assert.notEqual((await stat(runtimeFile())).mtimeMs, before, "a changed list must still write");
 });
 
 test("forgetRuntime scrubs a renamed model id from defaults, last models, and last selection", async () => {

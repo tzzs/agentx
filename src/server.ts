@@ -187,9 +187,9 @@ async function proxyRequest(
   request: IncomingMessage,
   response: ServerResponse,
   token: string,
-  route: { fallbackModel: string; payload: (input: any, model: string) => unknown },
+  route: { fallbackModel: string; payload: (input: any, model: string, provider: ProviderModel) => unknown },
   maxBodyBytes = MAX_BODY_BYTES,
-): Promise<{ input: any; model: string; watched: Response } | undefined> {
+): Promise<{ input: any; model: string; provider: ProviderModel; watched: Response } | undefined> {
   if (!authorized(request, token)) { json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } }); return undefined; }
   try {
     const input = JSON.parse(await body(request, maxBodyBytes));
@@ -198,14 +198,14 @@ async function proxyRequest(
     const model = honorRequestedModel(input.model, route.fallbackModel, config.provider);
     debug(config, `POST ${request.url} model=${model}`);
     const provider = providerFor(model, config.provider); const apiKey = apiKeyFor(provider, config.apiKey);
-    const payload = route.payload(input, model);
+    const payload = route.payload(input, model, provider);
     const session = upstreamSession(response, config);
     const upstream = await forwardWithRetry(config, provider, apiKey, payload, session.signal, config.retry);
     session.progress();
     debug(config, `provider status=${upstream.status}`);
     if (!upstream.ok) { await upstreamError(response, providerDisplayName(provider.provider), upstream, upstream.status); return undefined; }
     const watched = new Response(watchedBody(upstream.body, session.progress), { status: upstream.status });
-    return { input, model, watched };
+    return { input, model, provider, watched };
   } catch (error) {
     debug(config, `proxy error=${error instanceof Error ? error.message : "unknown"}`);
     respondError(response, error);
@@ -244,15 +244,13 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
       // Honor auto routing here too: Codex echoes OPENAI_MODEL=auto back.
       const proxied = await proxyRequest(config, request, response, token, {
         fallbackModel: config.model,
-        payload: (input, model) => {
-          const provider = providerFor(model, config.provider);
+        payload: (input, model, provider) => {
           if (provider.protocol === "anthropic") return toAnthropicRequest(input, model);
           return provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model, provider.provider);
         },
       }, maxBodyBytes);
       if (!proxied) return;
-      const { input, model, watched } = proxied;
-      const provider = providerFor(model, config.provider);
+      const { input, model, provider, watched } = proxied;
       const options = streamOptions(config, provider, sessionFor(input), safeRecord);
       if (input.stream && provider.protocol === "chat-completions") return pipeChatStreamToResponses(watched, response, model, options);
       if (input.stream && provider.protocol === "anthropic") return pipeAnthropicStreamToResponses(watched, response, model, options);
@@ -270,15 +268,13 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
       // background lane may carry a faster sibling (see clientEnvironment);
       // honor such requests instead of forcing the main model.
       fallbackModel: config.model,
-      payload: (input, model) => {
-        const provider = providerFor(model, config.provider);
+      payload: (input, model, provider) => {
         if (provider.protocol === "anthropic") return { ...input, model }; // already Anthropic-shaped; zero conversion
         return provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model, provider.provider);
       },
     }, maxBodyBytes);
     if (!proxied) return;
-    const { input, model, watched } = proxied;
-    const provider = providerFor(model, config.provider);
+    const { input, model, provider, watched } = proxied;
     const messagesOptions = streamOptions(config, provider, sessionFor(input), safeRecord);
     if (input.stream && provider.protocol === "anthropic") return pipeAnthropicPassthrough(watched, response, model, messagesOptions);
     if (input.stream) return pipeResponsesStream(watched, response, model, messagesOptions);

@@ -5,15 +5,12 @@
  */
 import type { AnthropicMessage, AnthropicRequest } from "./shared.js";
 import { chatControlParams, imageDataUri, parse, samplingParams } from "./shared.js";
-
-function isDeepSeekModel(model: string): boolean {
-  return /(?:^|\/)deepseek-v4-(?:flash|pro)(?:\[1m\])?$/.test(model);
-}
+import { isDeepSeekLongContextModel } from "../providers/registry.js";
 
 export function toChatRequest(input: AnthropicRequest, model: string, provider?: string) {
   const messages: any[] = [];
   if (input.system) messages.push({ role: "system", content: typeof input.system === "string" ? input.system : input.system.map((part) => part.text ?? "").join("\n") });
-  const deepSeek = provider === "deepseek" || isDeepSeekModel(model);
+  const deepSeek = provider === "deepseek" || isDeepSeekLongContextModel(model);
   for (const message of input.messages) messages.push(...toChatMessages(message, deepSeek));
   return { model, messages, ...(input.max_tokens === undefined ? {} : { max_tokens: input.max_tokens }), ...(input.stream ? { stream: true } : {}), ...samplingParams(input as any), ...chatControlParams(input, deepSeek), ...(input.tools ? { tools: input.tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })) } : {}) };
 }
@@ -118,7 +115,7 @@ export function toChatCompletionsRequest(input: any, model: string, provider?: s
   const items = typeof input.input === "string" ? [{ role: "user", content: input.input }] : input.input ?? [];
   // reasoning_content is a DeepSeek-specific extension; forwarding it to other
   // chat-completions upstreams risks a strict schema rejecting the request.
-  const deepSeek = provider === "deepseek" || isDeepSeekModel(model);
+  const deepSeek = provider === "deepseek" || isDeepSeekLongContextModel(model);
   let pendingReasoning = "";
   for (const item of items) {
     if (item.type === "reasoning") {

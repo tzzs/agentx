@@ -3,7 +3,7 @@ import { access } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import type { Adapter } from "./server.js";
 import type { Config } from "./config.js";
-import { providerFor } from "./providers/registry.js";
+import { isDeepSeekLongContextModel, providerFor } from "./providers/registry.js";
 
 /**
  * Model for Claude Code's background/haiku tier (permission checks, topic
@@ -21,14 +21,10 @@ export function backgroundModel(config: Config): string {
   } catch { return config.model; }
 }
 
-function supportsDeepSeekLongContext(model: string): boolean {
-  return /(?:^|\/)deepseek-v4-(?:flash|pro)(?:\[1m\])?$/.test(model);
-}
-
 /** Claude Code does not know custom DeepSeek ids, so declare their real window. */
 function claudeContextEnvironment(config: Config, inherited: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const models = [config.model, backgroundModel(config)];
-  if (!models.some(supportsDeepSeekLongContext)) return {};
+  if (!models.some(isDeepSeekLongContextModel)) return {};
   return {
     CLAUDE_CODE_MAX_CONTEXT_TOKENS: inherited.CLAUDE_CODE_MAX_CONTEXT_TOKENS ?? "1000000",
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: inherited.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "786432",

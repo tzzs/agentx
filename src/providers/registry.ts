@@ -22,12 +22,21 @@ const responsesModelIds = new Set(["gpt-5.6-luna"]);
  * listing. Without an explicit override Codex's generated catalog falls back
  * to a conservative 131072 (see codex-catalog.ts), auto-compacting long
  * DeepSeek sessions far earlier than necessary — the same under-declaration
- * CLAUDE_CODE_MAX_CONTEXT_TOKENS fixes for Claude Code in process.ts.
+ * CLAUDE_CODE_MAX_CONTEXT_TOKENS fixes for Claude Code in process.ts. This is
+ * also the single source of truth for "is this id DeepSeek's long-context
+ * model" elsewhere in the codebase (catalog.ts's chat-completions dialect
+ * check, process.ts's Claude Code context declaration) — both call
+ * `isDeepSeekLongContextModel` instead of keeping their own copy of the
+ * pattern, which used to also match a vendor-prefixed ("vendor/deepseek-v4-pro")
+ * or `[1m]`-suffixed id; the pattern preserves that.
  */
-const DEEPSEEK_LONG_CONTEXT_IDS = new Set(["deepseek-v4-pro", "deepseek-v4-flash"]);
+const DEEPSEEK_LONG_CONTEXT_PATTERN = /(?:^|\/)deepseek-v4-(?:flash|pro)(?:\[1m\])?$/;
 const DEEPSEEK_LONG_CONTEXT_WINDOW = 1_000_000;
+export function isDeepSeekLongContextModel(model: string): boolean {
+  return DEEPSEEK_LONG_CONTEXT_PATTERN.test(model);
+}
 function deepSeekLongContextWindow(model: string): number | undefined {
-  return DEEPSEEK_LONG_CONTEXT_IDS.has(model) ? DEEPSEEK_LONG_CONTEXT_WINDOW : undefined;
+  return isDeepSeekLongContextModel(model) ? DEEPSEEK_LONG_CONTEXT_WINDOW : undefined;
 }
 
 interface ModelMetadata { contextWindow?: number; maxOutputTokens?: number; modalities?: string[] }
@@ -122,7 +131,7 @@ export function setOpenRouterCatalogIds(ids: string[]): void {
   const current = provider.models[0]?.model;
   if (preferred && preferred !== current) {
     provider.models = [models("openrouter", `${openRouterBase}/chat/completions`, [preferred], "chat-completions")[0]];
-    allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+    rebuildAllModels();
   }
 }
 
@@ -198,7 +207,7 @@ function applyMetadataToRegistry(sections: MetadataSections, openRouter: Metadat
   for (const provider of providerRegistry) {
     provider.models = provider.models.map((model) => applyModelMetadata(model, sections.get(provider.id), openRouter));
   }
-  allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+  rebuildAllModels();
 }
 
 function models(provider: string, endpoint: string, ids: string[], protocol: "responses" | "chat-completions") { return ids.map((model) => ({ provider, model, protocol, endpoint })); }
@@ -216,11 +225,16 @@ function openCodeModels(ids: string[], devMetadata?: MetadataMap, routerMetadata
 
 export const providerRegistry: ProviderDefinition[] = [
   { id: "opencode", name: "OpenCode", apiKeyEnv: "OPENCODE_API_KEY", models: openCodeModels(fallbackOpenCodeIds) },
-  { id: "deepseek", name: "DeepSeek", apiKeyEnv: "DEEPSEEK_API_KEY", models: models("deepseek", `${deepSeekBase}/chat/completions`, ["deepseek-v4-pro", "deepseek-v4-flash"], "chat-completions").map((model) => ({ ...model, contextWindow: deepSeekLongContextWindow(model.model) })) },
-  { id: "openrouter", name: "OpenRouter", apiKeyEnv: "OPENROUTER_API_KEY", models: models("openrouter", `${openRouterBase}/chat/completions`, [process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini"], "chat-completions") }
+  { id: "deepseek", name: "DeepSeek", apiKeyEnv: "DEEPSEEK_API_KEY", models: models("deepseek", `${deepSeekBase}/chat/completions`, ["deepseek-v4-pro", "deepseek-v4-flash"], "chat-completions").map((model) => ({ ...model, contextWindow: deepSeekLongContextWindow(model.model) })), quota: { endpoint: "https://api.deepseek.com/user/balance" } },
+  { id: "openrouter", name: "OpenRouter", apiKeyEnv: "OPENROUTER_API_KEY", models: models("openrouter", `${openRouterBase}/chat/completions`, [process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini"], "chat-completions"), quota: { endpoint: "https://openrouter.ai/api/v1/key" } }
 ];
 
 export const allModels = providerRegistry.flatMap((provider) => provider.models);
+
+/** Rebuild `allModels` from the current `providerRegistry` contents in place (same array reference, callers already hold it). */
+function rebuildAllModels(): void {
+  allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+}
 
 /** Turn an arbitrary display name into a lowercase, hyphenated id segment. */
 function slugify(name: string): string {
@@ -272,7 +286,7 @@ export function registerCustomProvider(input: CustomProviderInput): ProviderDefi
   const index = providerRegistry.findIndex((entry) => entry.id === id);
   if (index >= 0) providerRegistry[index] = definition;
   else providerRegistry.push(definition);
-  allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+  rebuildAllModels();
   return definition;
 }
 
@@ -281,7 +295,7 @@ export function unregisterCustomProvider(id: string): boolean {
   const index = providerRegistry.findIndex((entry) => entry.id === id && entry.custom);
   if (index < 0) return false;
   providerRegistry.splice(index, 1);
-  allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+  rebuildAllModels();
   return true;
 }
 
@@ -344,7 +358,7 @@ export async function refreshProviderCatalog(
     const openCode = providerRegistry.find((provider) => provider.id === "opencode");
     if (openCode) {
       openCode.models = openCodeModels(ids, sections.get("opencode"), openRouter);
-      allModels.splice(0, allModels.length, ...providerRegistry.flatMap((provider) => provider.models));
+      rebuildAllModels();
       refreshedList = true;
     }
   }

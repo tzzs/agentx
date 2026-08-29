@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseDeepSeekBalance, parseOpenRouterKey, runQuotaCommand } from "../src/quota.js";
+import { parseDeepSeekBalance, parseOpenRouterKey, queryProviderUsage, runQuotaCommand } from "../src/quota.js";
+import { registerCustomProvider, unregisterCustomProvider } from "../src/providers/registry.js";
 
 test("parses DeepSeek balance", () => {
   const result = parseDeepSeekBalance({ balance_infos: [{ currency: "CNY", total_balance: "12.5" }] });
@@ -26,6 +27,19 @@ test("runQuotaCommand rejects when the provider credential is missing in non-int
   delete process.env.AGENTX_DEEPSEEK_API_KEY;
   delete process.env.DEEPSEEK_API_KEY;
   await assert.rejects(() => runQuotaCommand("deepseek"), /API key not found/i);
+});
+
+test("queryProviderUsage reports a provider without a quota endpoint as unsupported instead of throwing", async () => {
+  // Custom providers (and any other id without a registered `quota.endpoint`)
+  // used to fall through to a thrown Error; they now share opencode's
+  // "not exposed" branch instead of needing special-cased handling.
+  const { id } = registerCustomProvider({ name: "My LLM", baseUrl: "https://example.invalid", protocol: "chat-completions" });
+  try {
+    const result = await queryProviderUsage(id, "some-key");
+    assert.equal(result.supported, false);
+    assert.equal(result.success, false);
+    assert.match(result.message ?? "", /does not currently expose/);
+  } finally { unregisterCustomProvider(id); }
 });
 
 test("runQuotaCommand queries the provider and sets exitCode 1 on failure", async () => {

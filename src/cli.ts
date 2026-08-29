@@ -344,6 +344,28 @@ export async function runForgetCommand(args: string[]): Promise<void> {
 }
 
 /**
+ * Resolve the executable to spawn, which env-var shape it expects, and its
+ * positional arguments — for claude/codex/pi/exec. exec launches an arbitrary
+ * program, so it cannot infer which env-var shape the target expects from its
+ * name the way claude/codex/pi can; `--client-protocol` lets the caller say so
+ * explicitly (default anthropic, matching prior behavior).
+ */
+function resolveLaunchTarget(command: string, args: string[], opts: Record<string, string | undefined>): { executable: string; client: "anthropic" | "openai"; commandArgs: string[] } {
+  const separator = args.indexOf("--");
+  const commandArgs = separator >= 0 ? args.slice(separator + 1) : CLIENT_COMMANDS.has(command) ? clientArguments(args) : [];
+  let executable: string | undefined;
+  if (command === "claude") executable = "claude";
+  else if (command === "codex") executable = "codex";
+  else if (command === "pi") executable = "pi";
+  else if (command === "exec") executable = commandArgs.shift();
+  if (!executable) throw new Error("Usage: agentx exec [options] -- <command>");
+  const client: "anthropic" | "openai" = command === "exec"
+    ? (opts["client-protocol"] === "openai" ? "openai" : "anthropic")
+    : executable === "codex" || executable === "pi" ? "openai" : "anthropic";
+  return { executable, client, commandArgs };
+}
+
+/**
  * Shared launch path for `claude`/`codex`/`pi`/`proxy`/`exec`: runtime
  * resolution (interactive or not), native-launch bypass, credential
  * resolution with a missing-key recovery flow, adapter startup, and finally
@@ -437,26 +459,7 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
     return;
   }
 
-  const separator = args.indexOf("--");
-  const commandArgs = separator >= 0
-    ? args.slice(separator + 1)
-    : CLIENT_COMMANDS.has(command)
-      ? clientArguments(args)
-      : [];
-
-  const executable = command === "claude" ? "claude"
-    : command === "codex" ? "codex"
-      : command === "pi" ? "pi"
-        : command === "exec" ? commandArgs.shift()
-          : undefined;
-  if (!executable) throw new Error("Usage: agentx exec [options] -- <command>");
-
-  // exec launches an arbitrary program, so it cannot infer which env-var shape
-  // the target expects from its name the way claude/codex/pi can; --client-protocol
-  // lets the caller say so explicitly (default anthropic, matching prior behavior).
-  const client = command === "exec"
-    ? (opts["client-protocol"] === "openai" ? "openai" : "anthropic")
-    : command === "codex" || executable === "codex" || command === "pi" || executable === "pi" ? "openai" : "anthropic";
+  const { executable, client, commandArgs } = resolveLaunchTarget(command, args, opts);
   let codexCatalogFile: string | undefined;
   if (executable === "codex") {
     // Codex needs external context/output limits only now; other launch paths

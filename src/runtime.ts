@@ -204,9 +204,19 @@ export async function saveLastModel(provider: string, model: string): Promise<vo
   await writeRuntimeState(state);
 }
 
-/** Persist the last-seen OpenRouter catalog ids into the runtime state. */
+function sameIds(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+/**
+ * Persist the last-seen OpenRouter catalog ids into the runtime state.
+ * Skips the write when the list is unchanged — `agentx forget` and other
+ * screening paths call this on every run even when the catalog hasn't moved,
+ * and rewriting runtime.json for identical content is wasted disk I/O.
+ */
 export async function saveOpenRouterModels(ids: string[]): Promise<void> {
   const state = await loadRuntimeState();
+  if (sameIds(state.openrouterModels ?? [], ids)) return;
   state.openrouterModels = ids;
   await writeRuntimeState(state);
 }
