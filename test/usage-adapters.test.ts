@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractResponsesUsage, extractChatUsage } from "../src/providers/usage/openai.js";
-import { extractAnthropicUsage } from "../src/providers/usage/anthropic.js";
+import { extractResponsesUsage, extractChatUsage, mapResponsesUsage, mapChatUsage } from "../src/providers/usage/openai.js";
+import { extractAnthropicUsage, mapAnthropicUsage } from "../src/providers/usage/anthropic.js";
 import { extractUsage } from "../src/providers/usage/index.js";
 
 const ctx = { provider: "openai", model: "gpt-4o" };
@@ -38,6 +38,19 @@ test("maps Anthropic cache_creation tokens to cacheWrite, not cachedInput", () =
   const usage = extractAnthropicUsage({ usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 30 } }, { provider: "anthropic", model: "claude-sonnet-4" });
   assert.equal(usage!.cachedInputTokens, undefined);
   assert.equal(usage!.cacheWriteTokens, 30);
+});
+
+test("bare-usage-object mappers operate on the usage object directly, not a response envelope", () => {
+  // extract*Usage are thin wrappers around these that unwrap `response.usage`
+  // first; the mappers themselves must accept the bare usage object, since
+  // src/streaming/common.ts calls them directly on a raw usage chunk.
+  const responses = mapResponsesUsage({ input_tokens: 10, output_tokens: 5, input_tokens_details: { cached_tokens: 2 } }, ctx);
+  assert.deepEqual(responses, { provider: "openai", model: "gpt-4o", inputTokens: 10, outputTokens: 5, totalTokens: 15, cachedInputTokens: 2 });
+  const chat = mapChatUsage({ prompt_tokens: 10, completion_tokens: 5, completion_tokens_details: { reasoning_tokens: 3 } }, ctx);
+  assert.deepEqual(chat, { provider: "openai", model: "gpt-4o", inputTokens: 10, outputTokens: 5, totalTokens: 15, reasoningTokens: 3 });
+  const anthropic = mapAnthropicUsage({ input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 4 }, { provider: "anthropic", model: "claude-sonnet-4" });
+  assert.deepEqual(anthropic, { provider: "anthropic", model: "claude-sonnet-4", inputTokens: 10, outputTokens: 5, totalTokens: 15, cachedInputTokens: 4 });
+  assert.equal(mapResponsesUsage(undefined, ctx), null);
 });
 
 test("dispatches by provider protocol", () => {

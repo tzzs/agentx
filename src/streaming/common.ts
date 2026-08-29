@@ -1,6 +1,7 @@
 import type { ServerResponse } from "node:http";
 import type { TokenUsage } from "../usage/types.js";
 import type { ProviderProtocol } from "../providers/types.js";
+import { mapAnthropicUsage, mapChatUsage, mapResponsesUsage } from "../providers/usage/index.js";
 
 export const SSE_HEADERS = { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" };
 
@@ -73,16 +74,26 @@ export async function drain(reader: ReadableStreamDefaultReader<Uint8Array>, con
   }
 }
 
-/** Cache-token fields shared by chat-completions, Responses, and Anthropic usage payloads. */
+/**
+ * Cache-token fields shared by chat-completions, Responses, and Anthropic
+ * usage payloads. A stream pipe doesn't always know in advance which shape
+ * `usage` will turn out to be (pipeResponsesStream in to-anthropic.ts serves
+ * whichever of the two non-Anthropic upstream protocols is actually
+ * configured, and can even be called with no options at all — see its
+ * message_delta construction), so this tries every protocol's field mapper
+ * and keeps the first hit; each mapper's own field list is the single source
+ * of truth (providers/usage/*.ts), not duplicated here.
+ */
 export function cacheTokensOf(usage: any): { cached?: number; reasoning?: number } {
-  const cached = usage?.prompt_tokens_details?.cached_tokens
-    ?? usage?.input_tokens_details?.cached_tokens
-    ?? usage?.cache_read_input_tokens
-    ?? usage?.cached_tokens;
-  const reasoning = usage?.completion_tokens_details?.reasoning_tokens ?? usage?.output_tokens_details?.reasoning_tokens;
+  const chat = mapChatUsage(usage, {});
+  const responses = mapResponsesUsage(usage, {});
+  const anthropic = mapAnthropicUsage(usage, {});
+  const cached = chat?.cachedInputTokens ?? responses?.cachedInputTokens ?? anthropic?.cachedInputTokens
+    ?? (usage?.cached_tokens === undefined || usage?.cached_tokens === null ? undefined : Number(usage.cached_tokens));
+  const reasoning = chat?.reasoningTokens ?? responses?.reasoningTokens;
   return {
-    ...(cached === undefined || cached === null ? {} : { cached: Number(cached) }),
-    ...(reasoning === undefined || reasoning === null ? {} : { reasoning: Number(reasoning) }),
+    ...(cached === undefined ? {} : { cached }),
+    ...(reasoning === undefined ? {} : { reasoning }),
   };
 }
 
