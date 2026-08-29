@@ -283,8 +283,9 @@ async function selectModel(provider: string, current: string): Promise<string | 
   // pulled id (e.g. a free launch that became its real vendor id) is visible
   // without opening the forget manager.
   if (custom && !options.some((option) => option.value === current)) {
-    const catalog = openRouterCatalogIds();
-    const stale = catalog.length > 0 && !catalog.includes(current);
+    // Staleness is only judgeable against OpenRouter's public catalog; custom
+    // endpoints have no comparable listing, so their ids are offered as-is.
+    const stale = provider === "openrouter" && openRouterCatalogIds().length > 0 && !openRouterCatalogIds().includes(current);
     options.unshift({
       value: current,
       label: `${current} · current`,
@@ -442,8 +443,11 @@ export async function runSavedModelManager(provider?: string): Promise<void> {
     note("Nothing is saved for this provider.", "Saved models", stdio());
     return;
   }
+  // Staleness is only judgeable for OpenRouter, whose public catalog is the
+  // one machine-checkable upstream listing (and is vendor-prefixed, so bare
+  // ids from other providers must never be compared against it).
   const catalog = openRouterCatalogIds();
-  const known = (model: string) => catalog.includes(model);
+  const known = (model: string) => chosenProvider !== "openrouter" || catalog.includes(model);
   const modelOptions = ids.map((model) => ({
     value: model,
     label: model,
