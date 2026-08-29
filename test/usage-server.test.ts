@@ -17,7 +17,7 @@ async function call(adapter: Awaited<ReturnType<typeof startAdapter>>, path: str
   return { status: response.status, body: parsed, text };
 }
 
-test("records usage from a successful non-streaming request and exposes the query API", async () => {
+test("records usage from a successful non-streaming request, readable through the store", async () => {
   const store = await createUsageStore({ backend: "memory" });
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: any, init?: any) => {
@@ -34,13 +34,11 @@ test("records usage from a successful non-streaming request and exposes the quer
     const message = await call(adapter, "/v1/messages", "POST", { model: "gpt-5.6-luna", session_id: sessionId, messages: [{ role: "user", content: "Hi" }] }, { authorization: `Bearer ${adapter.token}`, "x-api-key": adapter.token });
     assert.equal(message.status, 200);
     assert.equal(message.body.usage.input_tokens, 120);
-    const session = await call(adapter, "/usage/session?id=session-abc", "GET", undefined, {});
-    assert.equal(session.status, 200);
-    assert.deepEqual(session.body, { inputTokens: 120, outputTokens: 30, totalTokens: 150 });
-    const providers = await call(adapter, "/usage/providers", "GET");
-    assert.deepEqual(providers.body, [{ provider: "opencode", tokens: 150, requests: 1 }]);
-    const stats = await call(adapter, "/usage/stats?period=today", "GET");
-    assert.deepEqual(stats.body, { inputTokens: 120, outputTokens: 30, totalTokens: 150 });
+    // Statistics are consumed through `agentx usage` (direct storage reads);
+    // the unauthenticated /usage/* HTTP endpoints no longer exist.
+    assert.deepEqual(await store.sessionTotals(sessionId), { inputTokens: 120, outputTokens: 30, totalTokens: 150 });
+    assert.deepEqual(await store.providerStats("all"), [{ provider: "opencode", tokens: 150, requests: 1 }]);
+    assert.deepEqual(await store.totals("today"), { inputTokens: 120, outputTokens: 30, totalTokens: 150 });
   } finally {
     globalThis.fetch = originalFetch;
     await adapter.close();
@@ -70,25 +68,48 @@ test("records usage from a streaming request using the final chunk", async () =>
     const message = await call(adapter, "/v1/messages", "POST", { model: "gpt-5.6-luna", messages: [{ role: "user", content: "Hi" }], stream: true }, { authorization: `Bearer ${adapter.token}`, "x-api-key": adapter.token });
     assert.equal(message.status, 200);
     assert.match(message.text, /event: message_stop/);
-    const session = await call(adapter, "/usage/session", "GET");
-    assert.deepEqual(session.body, { inputTokens: 100, outputTokens: 20, totalTokens: 120 });
+    // No session_id in the request: usage falls back to the adapter's session id.
+    assert.deepEqual(await store.sessionTotals(adapter.sessionId), { inputTokens: 100, outputTokens: 20, totalTokens: 120 });
   } finally {
     globalThis.fetch = originalFetch;
     await adapter.close();
   }
 });
 
-test("usage endpoints require no auth and return empty aggregates for no records", async () => {
+test("the removed /usage/* HTTP endpoints answer 404", async () => {
   const store = await createUsageStore({ backend: "memory" });
   const adapter = await startAdapter(config, { store });
   try {
-    const session = await call(adapter, "/usage/session", "GET");
-    assert.deepEqual(session.body, { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
-    const providers = await call(adapter, "/usage/providers", "GET");
-    assert.deepEqual(providers.body, []);
-    const stats = await call(adapter, "/usage/stats", "GET");
-    assert.deepEqual(stats.body, { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
+    for (const path of ["/usage/session", "/usage/session/abc", "/usage/providers", "/usage/stats"]) {
+      assert.equal((await call(adapter, path)).status, 404, `${path} should be gone`);
+    }
   } finally { await adapter.close(); }
+});
+
+test("rejects a request body over the configured limit with 413", async () => {
+  const store = await createUsageStore({ backend: "memory" });
+  // Override the 64MB default down to a size the test can exceed cheaply.
+  const adapter = await startAdapter(config, { store, maxBodyBytes: 1024 });
+  try {
+    const oversized = { model: "gpt-5.6-luna", messages: [{ role: "user", content: "x".repeat(2048) }] };
+    const result = await call(adapter, "/v1/messages", "POST", oversized, { authorization: `Bearer ${adapter.token}`, "x-api-key": adapter.token });
+    assert.equal(result.status, 413);
+  } finally { await adapter.close(); }
+});
+
+test("close() force-closes a lingering connection instead of hanging", async () => {
+  const store = await createUsageStore({ backend: "memory" });
+  const adapter = await startAdapter(config, { store, closeGraceMs: 50 });
+  // Open a socket and leave it dangling (no request sent) to simulate a
+  // keep-alive connection that never calls back to let server.close() finish
+  // on its own; close() must still resolve via the grace-period fallback.
+  const { connect } = await import("node:net");
+  const socket = connect(adapter.port, "127.0.0.1");
+  await new Promise<void>((resolve) => socket.once("connect", () => resolve()));
+  const start = Date.now();
+  await adapter.close();
+  assert.ok(Date.now() - start < 1_000, "close() should resolve shortly after the grace period, not hang");
+  socket.destroy();
 });
 
 test("honors only provider-compatible requested models", async () => {

@@ -10,11 +10,13 @@ import { apiKeyFor, providerDisplayName } from "./providers/registry.js";
 import { extractUsage } from "./providers/usage/index.js";
 import { TokenUsageCollector } from "./usage/collector.js";
 import { defaultUsageStore } from "./usage/storage.js";
-import type { UsagePeriod, UsageStore } from "./usage/types.js";
+import type { UsageStore } from "./usage/types.js";
 
-export interface Adapter { server: ReturnType<typeof createServer>; token: string; port: number; sessionId: string; store: UsageStore; close(): Promise<void>; }
+export interface Adapter { server: ReturnType<typeof createServer>; token: string; port: number; sessionId: string; close(): Promise<void>; }
 
-export interface AdapterOptions { store?: UsageStore; }
+export interface AdapterOptions { store?: UsageStore; /** Request-body ceiling; overridable so the limit is testable without shipping 64MB through a socket. */
+  maxBodyBytes?: number; /** Grace period before close() force-closes lingering connections; overridable so the fallback path is testable without a multi-second wait. */
+  closeGraceMs?: number; }
 
 function authorized(request: IncomingMessage, token: string): boolean {
   const authorization = request.headers.authorization?.replace(/^Bearer\s+/i, "");
@@ -23,15 +25,31 @@ function authorized(request: IncomingMessage, token: string): boolean {
   const a = Buffer.from(value); const b = Buffer.from(token);
   return a.length === b.length && timingSafeEqual(a, b);
 }
-function body(request: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => { let data = ""; request.setEncoding("utf8"); request.on("data", (chunk) => data += chunk); request.on("end", () => resolve(data)); request.on("error", reject); });
+/** Reject request bodies above this size: a runaway client must not buffer unbounded memory in the adapter. */
+const MAX_BODY_BYTES = 64 * 1024 * 1024;
+function body(request: IncomingMessage, limit = MAX_BODY_BYTES): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = ""; let size = 0; let rejected = false;
+    request.setEncoding("utf8");
+    request.on("data", (chunk: string) => {
+      if (rejected) return;
+      size += chunk.length;
+      if (size > limit) {
+        // Reject without destroying the request: request and response share
+        // one socket, so destroying it here would drop the connection before
+        // the 413 response below could ever reach the client.
+        rejected = true;
+        reject(Object.assign(new Error("Request body exceeds 64MB limit"), { status: 413 }));
+        return;
+      }
+      data += chunk;
+    });
+    request.on("end", () => { if (!rejected) resolve(data); });
+    request.on("error", reject);
+  });
 }
 function json(response: ServerResponse, status: number, value: unknown) { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(value)); }
 function debug(config: Config, message: string) { if (config.logLevel === "debug") console.error(`[adapter] ${message}`); }
-function parsePeriod(url: URL): UsagePeriod | undefined {
-  const value = url.searchParams.get("period");
-  return value === "today" || value === "week" || value === "month" || value === "all" ? value : undefined;
-}
 function streamOptions(config: Config, provider: ProviderModel, sessionId: string, onUsage?: (usage: TokenUsage) => void): StreamUsageOptions {
   return { provider: provider.provider, model: provider.model, protocol: provider.protocol, sessionId, onUsage, onDiagnostic: (message) => debug(config, `stream diagnostic: ${message}`) };
 }
@@ -170,10 +188,11 @@ async function proxyRequest(
   response: ServerResponse,
   token: string,
   route: { fallbackModel: string; payload: (input: any, model: string) => unknown },
+  maxBodyBytes = MAX_BODY_BYTES,
 ): Promise<{ input: any; model: string; watched: Response } | undefined> {
   if (!authorized(request, token)) { json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } }); return undefined; }
   try {
-    const input = JSON.parse(await body(request));
+    const input = JSON.parse(await body(request, maxBodyBytes));
     // The endpoint decides which model id counts as "configured" (/v1/responses
     // honors the client-echoed input.model; /v1/messages only config/env).
     const model = honorRequestedModel(input.model, route.fallbackModel, config.provider);
@@ -203,6 +222,8 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
   const token = `sk-ant-api03-${randomBytes(32).toString("hex")}`;
   const store = options.store ?? await defaultUsageStore();
   const collector = new TokenUsageCollector(store);
+  const maxBodyBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
+  const closeGraceMs = options.closeGraceMs ?? 3_000;
   const sessionId = randomUUID();
   const sessionFor = (input: any) => typeof input?.session_id === "string" ? input.session_id : sessionId;
   /** Record one usage row, swallowing persistence errors into debug logs. */
@@ -213,19 +234,9 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     const url = new URL(request.url ?? "/", "http://localhost");
     const pathname = url.pathname;
     if (pathname === "/health" && request.method === "GET") return json(response, 200, { status: "ok" });
-    // /usage/session?id=… and /usage/session/<id> both resolve the session id.
-    if (request.method === "GET" && (pathname === "/usage/session" || pathname.startsWith("/usage/session/"))) {
-      const id = pathname === "/usage/session"
-        ? url.searchParams.get("id") ?? sessionId
-        : decodeURIComponent(pathname.slice("/usage/session/".length));
-      return json(response, 200, await store.sessionTotals(id));
-    }
-    if (pathname === "/usage/providers" && request.method === "GET") {
-      return json(response, 200, await store.providerStats(parsePeriod(url)));
-    }
-    if (pathname === "/usage/stats" && request.method === "GET") {
-      return json(response, 200, await store.totals(parsePeriod(url)));
-    }
+    // Usage statistics are read through `agentx usage` (direct storage access);
+    // the former unauthenticated /usage/* HTTP endpoints were removed — see
+    // docs/remaining-simplification-todos.md item B.
     if (pathname === "/v1/models" && request.method === "GET") return json(response, 200, {
       data: providers.filter((item) => !config.provider || item.provider === config.provider).map((item) => ({ id: item.model, object: "model", owned_by: item.provider }))
     });
@@ -238,7 +249,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
           if (provider.protocol === "anthropic") return toAnthropicRequest(input, model);
           return provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model, provider.provider);
         },
-      });
+      }, maxBodyBytes);
       if (!proxied) return;
       const { input, model, watched } = proxied;
       const provider = providerFor(model, config.provider);
@@ -264,7 +275,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
         if (provider.protocol === "anthropic") return { ...input, model }; // already Anthropic-shaped; zero conversion
         return provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model, provider.provider);
       },
-    });
+    }, maxBodyBytes);
     if (!proxied) return;
     const { input, model, watched } = proxied;
     const provider = providerFor(model, config.provider);
@@ -294,5 +305,15 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     const listen = () => { const onError = (error: NodeJS.ErrnoException) => { server.removeListener("listening", onListening); if (error.code === "EADDRINUSE" && port < lastPort) { port++; listen(); } else reject(error); }; const onListening = () => { const address = server.address(); if (address && typeof address === "object") port = address.port; server.removeListener("error", onError); resolve(); }; server.once("error", onError); server.once("listening", onListening); server.listen(port, config.host); };
     listen();
   });
-  return { server, token, port, sessionId, store, close: async () => { await collector.close(); await new Promise<void>((resolve) => server.close(() => resolve())); } };
+  return { server, token, port, sessionId, close: async () => {
+    await collector.close();
+    await new Promise<void>((resolve) => {
+      // Keep-alive or in-flight SSE connections would otherwise hold the
+      // callback-based close() open indefinitely; force them shut after a
+      // short grace period so CLI exit is never blocked by a lingering socket.
+      const force = setTimeout(() => server.closeAllConnections(), closeGraceMs);
+      force.unref();
+      server.close(() => { clearTimeout(force); resolve(); });
+    });
+  } };
 }

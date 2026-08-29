@@ -383,16 +383,8 @@ DeepSeek 的思考模式要求每个 assistant 回合的 `reasoning_content` 必
 
 ### 查询 API
 
-适配器提供只读的用量端点（无需认证）：
-
-| 端点 | 说明 |
-| --- | --- |
-| `GET /usage/session?id=<session>` | 单个会话的输入/输出/总 Token |
-| `GET /usage/providers?period=...` | 按 Provider 统计的 Token 与请求数 |
-| `GET /usage/stats?period=...` | 按时间范围统计的总量 |
-
-`period` 接受 `today`、`week`、`month` 或 `all`。不传 `period` 时统计全部记录。
-会话端点也支持路径形式 `GET /usage/session/<id>`。
+用量统计不通过 HTTP 暴露。适配器没有 `/usage/*` 端点；请使用
+[`agentx usage`](#usage) 命令读取数据，该命令直接读取存储后端。
 
 ### 存储与数据
 

@@ -1,6 +1,6 @@
 # AgentX 剩余精简待办
 
-> 更新时间：2026-08-28
+> 更新时间：2026-08-30
 > 背景：已完成 runtime/profile 状态合并、Codex catalog 收窄、移除 `--model auto` 隐式路由、模型目录按需刷新、凭据 shell profile 自动写入移除、`doctor` 按 client/`--offline` 范围控制、`streaming.ts` 拆分为模块化目录、cost estimation 删除、`agentx quota` 从 `usage` 拆分、未接入的 Google usage/pricing 及整个 capabilities 抽象删除。本文档记录后续建议继续执行的精简项——已完成的条目直接从列表移除，不在此保留变更记录（改动历史见 git log）。
 >
 > 同一批改造里还新增了自定义 Provider(含原生 Anthropic Messages API 协议支持)。这是功能增补，不是本文档要精简的对象；`Anthropic` 的 usage 适配器（`src/providers/usage/anthropic.ts`）因此从死代码变为活代码，不再适用于"未接入协议应删除"的判断。
@@ -9,34 +9,9 @@
 
 | 级别 | 待办 | 主要收益 |
 | --- | --- | --- |
-| B | 收缩或删除 `/usage/*` HTTP API | 减少无认证查询面 |
 | G | 删除客户端自动安装流程 | 缩小 launcher 职责 |
 | H | 重新评估 Pi 支持 | 减少未充分验证的客户端路径 |
 | K | 同账号多实例请求协调 | 减少并发排队造成的感知延迟 |
-
-## B. 收缩或删除 `/usage/*` HTTP API
-
-本地已经有 `agentx usage`，HTTP 查询端点不是 Claude Code / Codex 正常运行所必需。当前端点无需认证，虽然默认 loopback 风险较低，但绑定非回环地址时会扩大暴露面。
-
-### 当前涉及端点
-
-- `GET /usage/session?id=...`
-- `GET /usage/session/<id>`
-- `GET /usage/providers`
-- `GET /usage/stats`
-
-### 推荐方案
-
-直接删除全部 `/usage/*` HTTP 端点，只保留 CLI 从本地 SQLite / JSON 存储读取统计。
-
-如果确实要保留 HTTP 查询能力：
-
-- 至少要求 bearer token。
-- 默认只允许 loopback。
-- 文档明确说明非回环绑定时不要暴露查询接口。
-- 可以只保留一个聚合端点，例如 `/usage/stats`。
-
----
 
 ## G. 删除客户端自动安装流程
 
@@ -86,4 +61,4 @@ Pi 目前通过普通 OpenAI-compatible environment 启动，但文档对其兼�
 
 ## 建议下一批执行顺序
 
-B 是当前唯一纯粹的"缩小攻击面"精简项，优先级最高。G 和 H 都是需要用户拍板的方向性选择（是保留便利功能、收窄支持范围，还是移除），不建议在没有明确意见的情况下单方面执行。K 已经结论为"暂不实施"，除非诊断层面的轻量方案被明确需要。
+G 和 H 都是需要用户拍板的方向性选择（是保留便利功能、收窄支持范围，还是移除），不建议在没有明确意见的情况下单方面执行。K 已经结论为"暂不实施"，除非诊断层面的轻量方案被明确需要。

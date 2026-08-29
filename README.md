@@ -414,17 +414,9 @@ accumulates deltas and marks the record as `estimated`.
 
 ### Query API
 
-The adapter exposes read-only usage endpoints (no authentication):
-
-| Endpoint | Description |
-| --- | --- |
-| `GET /usage/session?id=<session>` | Input/output/total tokens for one session |
-| `GET /usage/providers?period=...` | Per-provider tokens and request counts |
-| `GET /usage/stats?period=...` | Totals over a time range |
-
-`period` accepts `today`, `week`, `month`, or `all`. Without a `period`, the
-endpoints report all recorded usage. The session endpoint also accepts the
-path form `GET /usage/session/<id>`.
+Usage statistics are not exposed over HTTP. The adapter has no `/usage/*`
+endpoints; read the data with the [`agentx usage`](#usage) CLI command, which
+reads the storage backend directly.
 
 ### Storage and Data
 
