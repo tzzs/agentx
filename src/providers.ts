@@ -258,7 +258,15 @@ export function toAnthropicRequest(input: any, model: string): Record<string, un
   }
   flushAssistant();
 
-  const thinking = anthropicThinking(input.reasoning?.effort);
+  // Anthropic requires max_tokens > thinking.budget_tokens (and budget_tokens
+  // >= 1024), so the tiered default budgets are capped to leave visible-output
+  // headroom; a request too small to think at all drops the block entirely.
+  const maxTokens = input.max_output_tokens ?? 4096;
+  let thinking = anthropicThinking(input.reasoning?.effort);
+  if (thinking?.type === "enabled") {
+    const budget = Math.min(thinking.budget_tokens ?? 0, Math.floor(maxTokens * 0.8));
+    thinking = budget >= 1024 ? { type: "enabled", budget_tokens: budget } : undefined;
+  }
   const toolChoice = anthropicToolChoice(input.tool_choice);
   const tools = Array.isArray(input.tools)
     ? input.tools.filter((tool: any) => typeof tool?.name === "string").map((tool: any) => ({ name: tool.name, ...(tool.description === undefined ? {} : { description: tool.description }), input_schema: tool.parameters ?? { type: "object", properties: {} } }))
@@ -267,7 +275,7 @@ export function toAnthropicRequest(input: any, model: string): Record<string, un
     model,
     messages,
     // Anthropic requires max_tokens; a Responses caller that omits max_output_tokens still needs a concrete value sent upstream.
-    max_tokens: input.max_output_tokens ?? 4096,
+    max_tokens: maxTokens,
     ...(input.instructions ? { system: input.instructions } : {}),
     ...(input.stream ? { stream: true } : {}),
     ...(input.temperature === undefined ? {} : { temperature: input.temperature }),

@@ -117,8 +117,21 @@ test("converts Responses tools and tool_choice to Anthropic shape", () => {
 
 test("maps Responses reasoning.effort to Anthropic thinking with a token budget", () => {
   assert.deepEqual((toAnthropicRequest({ input: "Hi", reasoning: { effort: "none" } }, "claude-x") as any).thinking, { type: "disabled" });
-  assert.deepEqual((toAnthropicRequest({ input: "Hi", reasoning: { effort: "high" } }, "claude-x") as any).thinking, { type: "enabled", budget_tokens: 16000 });
+  // With the default max_tokens of 4096 the tiered budget is capped below it —
+  // Anthropic rejects max_tokens <= thinking.budget_tokens.
+  assert.deepEqual((toAnthropicRequest({ input: "Hi", reasoning: { effort: "high" } }, "claude-x") as any).thinking, { type: "enabled", budget_tokens: 3276 });
   assert.equal((toAnthropicRequest({ input: "Hi" }, "claude-x") as any).thinking, undefined);
+});
+
+test("caps the thinking budget under an explicit max_output_tokens and drops thinking when too small", () => {
+  const capped = toAnthropicRequest({ input: "Hi", max_output_tokens: 20000, reasoning: { effort: "high" } }, "claude-x") as any;
+  assert.deepEqual(capped.thinking, { type: "enabled", budget_tokens: 16000 });
+  assert.equal(capped.max_tokens, 20000);
+  // max_tokens=1000 leaves no room for a >=1024 budget, so thinking is dropped
+  // instead of letting the upstream reject the whole request.
+  const dropped = toAnthropicRequest({ input: "Hi", max_output_tokens: 1000, reasoning: { effort: "high" } }, "claude-x") as any;
+  assert.equal(dropped.thinking, undefined);
+  assert.equal(dropped.max_tokens, 1000);
 });
 
 test("merges a Responses turn's separate function_call items back into one Anthropic assistant message", () => {
