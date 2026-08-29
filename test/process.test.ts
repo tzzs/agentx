@@ -117,9 +117,16 @@ test("native launch scrubs AgentX's own variables when nested inside an AgentX-l
   // (so its process env carries AgentX's overrides) runs `agentx claude
   // --native` from inside itself. The nested launch must not inherit the
   // outer adapter's ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN et al.
-  const contaminated = { ...clientEnvironment(config, adapter, "anthropic"), PATH: "/usr/bin", HOME: "/home/user" };
+  const contaminated = {
+    ...clientEnvironment(config, adapter, "anthropic"),
+    // AgentX's own config inputs ride along in the inherited environment too;
+    // they would silently re-pin the nested launch to the outer selection.
+    AGENTX_PROVIDER: "opencode", AGENTX_MODEL: "gpt-5.6-luna", AGENTX_HOST: "127.0.0.1", AGENTX_PORT: "8787",
+    AGENTX_RETRY: "3", AGENTX_BACKGROUND_MODEL: "gpt-5.6-luna", AGENTX_LOG_LEVEL: "debug",
+    PATH: "/usr/bin", HOME: "/home/user",
+  };
   const cleaned = nativeClientEnvironment(contaminated);
-  for (const key of ["AGENTX_ACTIVE", "AGENTX_MODEL", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"]) {
+  for (const key of ["AGENTX_ACTIVE", "AGENTX_MODEL", "AGENTX_PROVIDER", "AGENTX_HOST", "AGENTX_PORT", "AGENTX_RETRY", "AGENTX_BACKGROUND_MODEL", "AGENTX_LOG_LEVEL", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"]) {
     assert.equal(cleaned[key], undefined, `${key} should have been scrubbed`);
   }
   assert.equal(cleaned.PATH, "/usr/bin");

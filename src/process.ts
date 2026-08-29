@@ -44,6 +44,22 @@ function claudeContextEnvironment(config: Config, inherited: NodeJS.ProcessEnv):
  */
 const AGENTX_ACTIVE = "AGENTX_ACTIVE";
 
+/**
+ * AgentX's own configuration variables. These are never injected by
+ * clientEnvironment (users set them by hand as automation input), but they are
+ * still AgentX-managed state a nested `--native` launch must not inherit —
+ * otherwise the "native" client re-runs the outer launch's provider/model
+ * selection instead of the user's own environment.
+ */
+const AGENTX_INPUT_ENV_KEYS = [
+  "AGENTX_PROVIDER",
+  "AGENTX_HOST",
+  "AGENTX_PORT",
+  "AGENTX_RETRY",
+  "AGENTX_BACKGROUND_MODEL",
+  "AGENTX_LOG_LEVEL",
+];
+
 /** Every variable AgentX itself ever injects into a launched client, across both protocols. */
 const AGENTX_MANAGED_ENV_KEYS = [
   AGENTX_ACTIVE,
@@ -61,6 +77,7 @@ const AGENTX_MANAGED_ENV_KEYS = [
   "OPENAI_BASE_URL",
   "OPENAI_API_KEY",
   "OPENAI_MODEL",
+  ...AGENTX_INPUT_ENV_KEYS,
 ];
 
 export function clientEnvironment(config: Config, adapter: Adapter, client: "anthropic" | "openai"): NodeJS.ProcessEnv {
