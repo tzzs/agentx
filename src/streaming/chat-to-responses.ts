@@ -1,4 +1,4 @@
-import { chatResponseFailure } from "../catalog.js";
+import { chatResponseFailure } from "../convert/index.js";
 import { cancelOnDisconnect, drain, errorMessage, event, failureMessage, REASONING_OUTPUT_INDEX, reasoningDeltaOf, reportUsage, SSE_HEADERS, startHeartbeat, UpstreamFailure, type StreamUsageOptions } from "./common.js";
 
 /**

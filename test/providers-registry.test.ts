@@ -3,20 +3,27 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiKeyFor, credentialEnvName, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerById, providerFor, providerRegistry, refreshProviderCatalog, registerCustomProvider, setOpenRouterCatalogIds, unregisterCustomProvider, allModels, withExternalMetadata } from "../src/providers/registry.js";
-import { saveOpenRouterModels } from "../src/runtime.js";
+import { apiKeyFor, credentialEnvName, fetchOpenRouterModels, hydrateOpenCodeCatalog, hydrateOpenRouterCatalog, openRouterCatalogIds, providerById, providerFor, providerRegistry, refreshProviderCatalog, registerCustomProvider, resetOpenCodeCatalogCache, setOpenRouterCatalogIds, unregisterCustomProvider, allModels, withExternalMetadata } from "../src/providers/registry.js";
+import { loadOpenCodeModels, saveOpenCodeModels, saveOpenRouterModels } from "../src/runtime.js";
 
-// refreshProviderCatalog/hydrateOpenRouterCatalog read and write runtime.json;
-// redirect it to a throwaway directory so these tests never touch a real
-// user's ~/.config/agentx/runtime.json.
+// refreshProviderCatalog/hydrateOpenRouterCatalog/hydrateOpenCodeCatalog read
+// and write runtime.json; redirect it to a throwaway directory per test so
+// these tests never touch a real user's ~/.config/agentx/runtime.json and a
+// persisted OpenCode snapshot from one test can never leak into the next.
+// The in-memory OpenCode hydration/TTL guard (openCodeSnapshotFetchedAt) is
+// process-wide state that a fresh config dir alone doesn't reset, so it's
+// cleared explicitly too — otherwise a live fetch in one test would make
+// refreshProviderCatalog skip the fetch the next test expects.
 let configDir: string;
-test.before(async () => {
+test.beforeEach(async () => {
   configDir = await mkdtemp(join(tmpdir(), "agentx-registry-"));
   process.env.XDG_CONFIG_HOME = configDir;
+  resetOpenCodeCatalogCache();
 });
-test.after(async () => {
+test.afterEach(async () => {
   delete process.env.XDG_CONFIG_HOME;
   await rm(configDir, { recursive: true, force: true });
+  resetOpenCodeCatalogCache();
 });
 
 test("resolves OpenCode models through the provider registry", () => {
@@ -418,6 +425,53 @@ test("refreshProviderCatalog hydrates the OpenRouter cache from disk even when n
     const refreshed = await refreshProviderCatalog({ provider: "openrouter" }, fetcher);
     assert.deepEqual(refreshed, { list: false, metadata: false });
     assert.deepEqual(openRouterCatalogIds(), ["disk/only-vendor"]);
+  } finally {
+    restoreSnapshot(snapshot);
+  }
+});
+
+test("hydrateOpenCodeCatalog restores a persisted OpenCode catalog into a fresh process", async () => {
+  const snapshot = takeSnapshot();
+  await saveOpenCodeModels({ ids: ["disk-only-model"], fetchedAt: Date.now() });
+  try {
+    const ids = await hydrateOpenCodeCatalog();
+    assert.deepEqual(ids, ["disk-only-model"]);
+    assert.equal(providerFor("disk-only-model", "opencode").provider, "opencode");
+  } finally {
+    restoreSnapshot(snapshot);
+  }
+});
+
+test("refreshProviderCatalog skips the OpenCode network fetch when a persisted snapshot is still fresh", async () => {
+  const snapshot = takeSnapshot();
+  await saveOpenCodeModels({ ids: ["fresh-disk-model"], fetchedAt: Date.now() });
+  let calls = 0;
+  const fetcher = (async () => { calls++; throw new Error("must not fetch over the network"); }) as typeof fetch;
+  try {
+    const refreshed = await refreshProviderCatalog({ provider: "opencode" }, fetcher);
+    assert.equal(refreshed.list, false);
+    assert.equal(calls, 0);
+    assert.ok(providerRegistry.find((provider) => provider.id === "opencode")!.models.some((item) => item.model === "fresh-disk-model"));
+  } finally {
+    restoreSnapshot(snapshot);
+  }
+});
+
+test("refreshProviderCatalog re-fetches the OpenCode catalog once a persisted snapshot has expired", async () => {
+  const snapshot = takeSnapshot();
+  const staleFetchedAt = Date.now() - 25 * 60 * 60 * 1000; // 25h old, past the 24h TTL
+  await saveOpenCodeModels({ ids: ["stale-disk-model"], fetchedAt: staleFetchedAt });
+  let calls = 0;
+  const fetcher = (async (input: any) => {
+    if (/opencode\.ai\/zen\/go\/v1\/models/.test(String(input))) { calls++; return new Response(JSON.stringify({ data: [{ id: "refreshed-model" }] }), { status: 200 }); }
+    return new Response(JSON.stringify({}), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const refreshed = await refreshProviderCatalog({ provider: "opencode" }, fetcher);
+    assert.equal(refreshed.list, true);
+    assert.equal(calls, 1);
+    assert.deepEqual(providerRegistry.find((provider) => provider.id === "opencode")!.models.map((item) => item.model), ["refreshed-model"]);
+    assert.deepEqual((await loadOpenCodeModels())?.ids, ["refreshed-model"]);
   } finally {
     restoreSnapshot(snapshot);
   }

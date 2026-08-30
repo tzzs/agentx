@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { __resetTestIO, __setTestIO, providerEntries, runInteractiveLauncher, selectProvider, type ProviderEntry } from "../src/ui.js";
+import { __resetTestIO, __setTestIO, providerEntries, runInteractiveLauncher, runSavedModelManager, selectProvider, type ProviderEntry } from "../src/ui.js";
 import { defaultModelFor } from "../src/selection.js";
 import { providerById, providerRegistry, registerCustomProvider, unregisterCustomProvider } from "../src/providers/registry.js";
-import { loadCustomProviders, loadLastQuickAction, saveCustomProvider, saveDefaultRuntime, saveLastQuickAction } from "../src/runtime.js";
+import { loadCustomProviders, loadLastQuickAction, saveCustomProvider, saveDefaultRuntime, saveLastModel, saveLastQuickAction } from "../src/runtime.js";
 
 test("lists all configured providers from the registry", async () => {
   const entries = await providerEntries();
@@ -183,6 +183,19 @@ test("Remove custom provider: only offered once a custom provider exists, and re
   } finally {
     unregisterCustomProvider(definition.id);
   }
+});
+
+test("saved-model manager offers non-OpenRouter ids without staleness hints", async () => {
+  await saveLastModel("deepseek", "deepseek-v4-pro");
+  const tty = createFakeTTY();
+  __setTestIO({ input: tty.input, output: tty.output });
+  const manager = runSavedModelManager("deepseek");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await tty.pressEnter(); // submit the multiselect with nothing picked
+  await manager;
+  assert.match(tty.text, /deepseek-v4-pro/);
+  // The OpenRouter catalog cannot judge a DeepSeek bare id — no stale hint.
+  assert.doesNotMatch(tty.text, /no longer listed/);
 });
 
 test("quick-start menu remembers the last picked action ('native') as the next launch's default", async () => {

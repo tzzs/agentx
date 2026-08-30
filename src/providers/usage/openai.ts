@@ -14,10 +14,14 @@ function base(usage: any, ctx: UsageContext): TokenUsage | null {
 }
 
 /**
- * Shared extraction for both OpenAI wire formats; the Responses and Chat
- * Completions APIs differ only in their usage field names.
+ * Shared field mapping for both OpenAI wire formats; the Responses and Chat
+ * Completions APIs differ only in their usage field names. Operates on the
+ * bare `usage` object (not the response envelope) so the streaming pipes in
+ * src/streaming/common.ts can reuse the exact same field list to pull
+ * cache/reasoning tokens out of a raw usage chunk, instead of keeping a
+ * second, independently-maintained copy of these field names.
  */
-function extract(usage: any, ctx: UsageContext, names: {
+function mapUsage(usage: any, ctx: UsageContext, names: {
   input: string; output: string; cached: string; reasoning: string;
 }): TokenUsage | null {
   const result = base(usage, ctx);
@@ -32,12 +36,22 @@ function extract(usage: any, ctx: UsageContext, names: {
   return result;
 }
 
+/** OpenAI Responses API usage fields: { input_tokens, output_tokens, ... }. Takes the bare usage object, not a response envelope. */
+export function mapResponsesUsage(usage: any, ctx: UsageContext): TokenUsage | null {
+  return mapUsage(usage, ctx, { input: "input_tokens", output: "output_tokens", cached: "input_tokens_details", reasoning: "output_tokens_details" });
+}
+
+/** OpenAI Chat Completions usage fields: { prompt_tokens, completion_tokens, ... }. Takes the bare usage object, not a response envelope. */
+export function mapChatUsage(usage: any, ctx: UsageContext): TokenUsage | null {
+  return mapUsage(usage, ctx, { input: "prompt_tokens", output: "completion_tokens", cached: "prompt_tokens_details", reasoning: "completion_tokens_details" });
+}
+
 /** OpenAI Responses API usage: { input_tokens, output_tokens, ... } */
 export function extractResponsesUsage(response: any, ctx: UsageContext): TokenUsage | null {
-  return extract(response?.usage, ctx, { input: "input_tokens", output: "output_tokens", cached: "input_tokens_details", reasoning: "output_tokens_details" });
+  return mapResponsesUsage(response?.usage, ctx);
 }
 
 /** OpenAI Chat Completions usage: { prompt_tokens, completion_tokens, ... } */
 export function extractChatUsage(response: any, ctx: UsageContext): TokenUsage | null {
-  return extract(response?.usage, ctx, { input: "prompt_tokens", output: "completion_tokens", cached: "prompt_tokens_details", reasoning: "completion_tokens_details" });
+  return mapChatUsage(response?.usage, ctx);
 }

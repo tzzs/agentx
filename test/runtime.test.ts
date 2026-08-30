@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  forgetCustomProvider, forgetRuntime, loadCustomProviders, loadDefaultRuntime, loadLastModel, loadLastQuickAction, loadOpenRouterModels, remembererProviders, rememberedModelIds, runtimeFile, saveCustomProvider, saveDefaultRuntime, saveLastModel, saveLastQuickAction, saveOpenRouterModels,
+  forgetCustomProvider, forgetRuntime, loadCustomProviders, loadDefaultRuntime, loadLastModel, loadLastQuickAction, loadOpenCodeModels, loadOpenRouterModels, remembererProviders, rememberedModelIds, runtimeFile, saveCustomProvider, saveDefaultRuntime, saveLastModel, saveLastQuickAction, saveOpenCodeModels, saveOpenRouterModels,
 } from "../src/runtime.js";
 
 let dir: string;
@@ -69,6 +69,39 @@ test("persists and reloads the OpenRouter catalog id cache", async () => {
   await saveOpenRouterModels(["vendor/gamma"]);
   assert.deepEqual(await loadOpenRouterModels(), ["vendor/gamma"]);
   await saveOpenRouterModels(["vendor/alpha", "vendor/beta"]);
+});
+
+test("saveOpenRouterModels skips the write when the id list is unchanged", async () => {
+  await saveOpenRouterModels(["vendor/delta", "vendor/epsilon"]);
+  const before = (await stat(runtimeFile())).mtimeMs;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await saveOpenRouterModels(["vendor/delta", "vendor/epsilon"]);
+  assert.equal((await stat(runtimeFile())).mtimeMs, before, "identical content must not rewrite the file");
+  await saveOpenRouterModels(["vendor/zeta"]);
+  assert.notEqual((await stat(runtimeFile())).mtimeMs, before, "a changed list must still write");
+});
+
+test("persists and reloads the OpenCode catalog id cache with its fetch timestamp", async () => {
+  const first = { ids: ["gpt-5.6-luna", "kimi-k3"], fetchedAt: 1_700_000_000_000 };
+  await saveOpenCodeModels(first);
+  assert.deepEqual(await loadOpenCodeModels(), first);
+  assert.deepEqual(JSON.parse(await readFile(runtimeFile(), "utf8")).opencodeModels, first);
+  // Round-trips through the real runtime state file, and a later save replaces the whole snapshot.
+  const second = { ids: ["glm-5.2"], fetchedAt: 1_800_000_000_000 };
+  await saveOpenCodeModels(second);
+  assert.deepEqual(await loadOpenCodeModels(), second);
+});
+
+test("loadOpenCodeModels returns undefined before any snapshot has been saved", async () => {
+  const dedicated = await mkdtemp(join(tmpdir(), "agentx-runtime-opencode-"));
+  const previous = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = dedicated;
+  try {
+    assert.equal(await loadOpenCodeModels(), undefined);
+  } finally {
+    process.env.XDG_CONFIG_HOME = previous;
+    await rm(dedicated, { recursive: true, force: true });
+  }
 });
 
 test("forgetRuntime scrubs a renamed model id from defaults, last models, and last selection", async () => {

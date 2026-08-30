@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -6,11 +7,11 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  configureMissingProvider, launchClient, runAuthCommand, runClientLaunch, runDoctorCommand, runForgetCommand, runQuotaCliCommand, runUsageCommand,
+  configureMissingProvider, launchClient, runAuthCommand, runClientLaunch, runDoctorCommand, runForgetCommand, runQuotaCliCommand, runUsageCommand, versionText,
 } from "../src/cli.js";
 import { ClientNotFoundError } from "../src/process.js";
 import { providerById, providerRegistry, registerCustomProvider, unregisterCustomProvider } from "../src/providers/registry.js";
-import { loadCustomProviders } from "../src/runtime.js";
+import { forgetRuntime, loadCustomProviders, saveLastModel, saveOpenRouterModels } from "../src/runtime.js";
 
 // The compiled CLI's own module-scope entry-point guard (main() only runs
 // when this file is the one actually executed, not merely imported) can only
@@ -18,10 +19,13 @@ import { loadCustomProviders } from "../src/runtime.js";
 // test in this suite imports it, which by design never triggers that guard.
 const CLI_ENTRY_POINT = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 
+// dist/test/*.js sits two levels below the package root, same as dist/src.
+const PACKAGE_VERSION = String(JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version);
+
 test("the built CLI entry point runs when invoked directly with node", () => {
   const result = spawnSync(process.execPath, [CLI_ENTRY_POINT, "version"], { encoding: "utf8" });
   assert.equal(result.status, 0);
-  assert.equal(result.stdout.trim(), "1.0.0");
+  assert.equal(result.stdout.trim(), PACKAGE_VERSION);
 });
 
 test("regression: the built CLI entry point still runs when invoked through a symlink", async () => {
@@ -36,10 +40,14 @@ test("regression: the built CLI entry point still runs when invoked through a sy
     await symlink(CLI_ENTRY_POINT, linkPath);
     const result = spawnSync(process.execPath, [linkPath, "version"], { encoding: "utf8" });
     assert.equal(result.status, 0);
-    assert.equal(result.stdout.trim(), "1.0.0");
+    assert.equal(result.stdout.trim(), PACKAGE_VERSION);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("versionText matches package.json instead of a hardcoded constant", () => {
+  assert.equal(versionText(), PACKAGE_VERSION);
 });
 
 let configDir: string;
@@ -109,6 +117,26 @@ test("runForgetCommand prints the stale list in non-interactive mode even when t
     await runForgetCommand([]);
     assert.ok(logs.length > 0);
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test("runForgetCommand screens only OpenRouter ids against the catalog — other providers' bare ids are never flagged stale", async () => {
+  await saveLastModel("deepseek", "deepseek-v4-pro");
+  await saveLastModel("openrouter", "old-vendor/removed-model");
+  // Offline snapshot the hydrate path restores; the live fetch below fails and
+  // falls back to it, so the screening runs against a known catalog.
+  await saveOpenRouterModels(["openai/gpt-4o-mini"]);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new Error("offline"); }) as typeof fetch;
+  try {
+    await runForgetCommand([]);
+    const output = logs.join("\n");
+    assert.match(output, /old-vendor\/removed-model\s+\(no longer in the catalog\)/);
+    assert.doesNotMatch(output, /deepseek-v4-pro/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await forgetRuntime({ provider: "deepseek" });
+    await forgetRuntime({ provider: "openrouter" });
+  }
 });
 
 test("configureMissingProvider returns the key on success and undefined on cancellation", async () => {

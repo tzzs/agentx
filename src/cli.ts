@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadConfig, parseCliOptions as options } from "./config.js";
 import { startAdapter } from "./server.js";
@@ -105,6 +105,17 @@ function helpText(command?: string): string {
 }
 
 const CLIENT_COMMANDS = new Set(["claude", "codex", "pi"]);
+
+/**
+ * Version reported by `agentx version`, read from package.json at the package
+ * root. `import.meta.url` points at the compiled dist/src/cli.js, which sits
+ * exactly two levels below that root both in the repo and in an installed
+ * package, so the same relative URL resolves in both layouts.
+ */
+export function versionText(): string {
+  try { return String(JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version); }
+  catch { return "0.0.0"; }
+}
 
 function isInteractive(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
@@ -238,14 +249,18 @@ export async function launchClient(executable: string, args: string[], env: Node
 }
 
 /**
- * Non-interactive `forget`: print every saved model id that upstream no longer
- * lists, without prompting. Perfect for `agentx forget` in scripts or before
- * launch to learn which remembered ids went stale.
+ * Non-interactive `forget`: print every saved OpenRouter model id that the
+ * upstream no longer lists, without prompting. Perfect for `agentx forget` in
+ * scripts or before launch to learn which remembered ids went stale. Only
+ * OpenRouter ids are screened: its public catalog is the one machine-checkable
+ * upstream listing, and it is vendor-prefixed — judging other providers' bare
+ * ids (deepseek, opencode, custom endpoints) against it would report false
+ * staleness for perfectly valid models.
  */
 async function printStaleSavedModels(): Promise<void> {
   const catalog = openRouterCatalogIds();
-  const providers = await remembererProviders();
-  if (!providers.length) { console.log("No saved models recorded."); return; }
+  const providers = (await remembererProviders()).filter(({ provider }) => provider === "openrouter");
+  if (!providers.length) { console.log("No saved OpenRouter models recorded."); return; }
   let stale = 0;
   for (const { provider } of providers) {
     const ids = await rememberedModelIds(provider);
@@ -255,7 +270,7 @@ async function printStaleSavedModels(): Promise<void> {
     for (const model of removed) console.log(`  ${model}  (no longer in the catalog)`);
     stale += removed.length;
   }
-  if (!stale) console.log("All saved models are still offered upstream.");
+  if (!stale) console.log("All saved OpenRouter models are still offered upstream.");
 }
 
 export async function runAuthCommand(args: string[]): Promise<void> {
@@ -326,6 +341,28 @@ export async function runForgetCommand(args: string[]): Promise<void> {
     return;
   }
   await runSavedModelManager();
+}
+
+/**
+ * Resolve the executable to spawn, which env-var shape it expects, and its
+ * positional arguments — for claude/codex/pi/exec. exec launches an arbitrary
+ * program, so it cannot infer which env-var shape the target expects from its
+ * name the way claude/codex/pi can; `--client-protocol` lets the caller say so
+ * explicitly (default anthropic, matching prior behavior).
+ */
+function resolveLaunchTarget(command: string, args: string[], opts: Record<string, string | undefined>): { executable: string; client: "anthropic" | "openai"; commandArgs: string[] } {
+  const separator = args.indexOf("--");
+  const commandArgs = separator >= 0 ? args.slice(separator + 1) : CLIENT_COMMANDS.has(command) ? clientArguments(args) : [];
+  let executable: string | undefined;
+  if (command === "claude") executable = "claude";
+  else if (command === "codex") executable = "codex";
+  else if (command === "pi") executable = "pi";
+  else if (command === "exec") executable = commandArgs.shift();
+  if (!executable) throw new Error("Usage: agentx exec [options] -- <command>");
+  const client: "anthropic" | "openai" = command === "exec"
+    ? (opts["client-protocol"] === "openai" ? "openai" : "anthropic")
+    : executable === "codex" || executable === "pi" ? "openai" : "anthropic";
+  return { executable, client, commandArgs };
 }
 
 /**
@@ -422,26 +459,7 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
     return;
   }
 
-  const separator = args.indexOf("--");
-  const commandArgs = separator >= 0
-    ? args.slice(separator + 1)
-    : CLIENT_COMMANDS.has(command)
-      ? clientArguments(args)
-      : [];
-
-  const executable = command === "claude" ? "claude"
-    : command === "codex" ? "codex"
-      : command === "pi" ? "pi"
-        : command === "exec" ? commandArgs.shift()
-          : undefined;
-  if (!executable) throw new Error("Usage: agentx exec [options] -- <command>");
-
-  // exec launches an arbitrary program, so it cannot infer which env-var shape
-  // the target expects from its name the way claude/codex/pi can; --client-protocol
-  // lets the caller say so explicitly (default anthropic, matching prior behavior).
-  const client = command === "exec"
-    ? (opts["client-protocol"] === "openai" ? "openai" : "anthropic")
-    : command === "codex" || executable === "codex" || command === "pi" || executable === "pi" ? "openai" : "anthropic";
+  const { executable, client, commandArgs } = resolveLaunchTarget(command, args, opts);
   let codexCatalogFile: string | undefined;
   if (executable === "codex") {
     // Codex needs external context/output limits only now; other launch paths
@@ -476,7 +494,7 @@ async function hydrateCustomProviders(): Promise<void> {
 async function main() {
   await hydrateCustomProviders();
   const [command = "help", ...args] = process.argv.slice(2);
-  if (command === "version") return console.log("1.0.0");
+  if (command === "version") return console.log(versionText());
   if (command === "help" || command === "--help" || command === "-h") return console.log(helpText(args[0]));
   if (command === "auth") return runAuthCommand(args);
   if (command === "usage") return runUsageCommand(args);

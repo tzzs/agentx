@@ -19,4 +19,6 @@ export interface ProviderDefinition {
   models: ProviderModel[];
   /** True for a provider registered at runtime (custom OpenAI/Anthropic-compatible endpoint) rather than built into the registry. */
   custom?: boolean;
+  /** Documented public quota/balance endpoint, when the provider has one; absent means `agentx quota` reports it unsupported. */
+  quota?: { endpoint: string };
 }

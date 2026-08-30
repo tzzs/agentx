@@ -6,9 +6,28 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Run Claude Code or Codex with OpenCode models through a local API adapter. Claude Code uses the local Anthropic-compatible Messages API; Codex uses the local OpenAI-compatible Responses API. The adapter translates requests to the upstream API, injects temporary credentials into the child process, and cleans up the local server when the child exits.
+Run Claude Code, Codex, or Pi with OpenCode models through a local API adapter. Claude Code uses the local Anthropic-compatible Messages API; Codex and Pi use the local OpenAI-compatible Responses API. The adapter translates requests to the upstream API, injects temporary credentials into the child process, and cleans up the local server when the child exits.
 
 > **Status:** Early-stage release. The protocol conversion layer and test suite are available, but real upstream API compatibility should be validated with your OpenCode account before production use.
+
+## Contents
+
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Commands](#commands)
+- [Configuration](#configuration)
+- [Credentials and Profiles](#credentials-and-profiles)
+- [Providers](#providers)
+- [Codex](#codex)
+- [Models and Routing](#models-and-routing)
+- [API Translation](#api-translation)
+- [Token Usage Statistics](#token-usage-statistics)
+- [Security and Privacy](#security-and-privacy)
+- [Platform Support](#platform-support)
+- [Development](#development)
+- [CI and Publishing](#ci-and-publishing)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
 
 ## Quick Start
 
@@ -20,151 +39,23 @@ Requirements:
 - Codex installed and available as `codex` on `PATH` when using Codex
 
 ```bash
-export AGENTX_OPENCODE_API_KEY="your-api-key"
-npx agentx claude
+npx @tanzz/agentx claude
 ```
 
-The command starts a loopback-only adapter, waits for it to listen, launches Claude Code with temporary `ANTHROPIC_*` variables, forwards the terminal streams, and shuts the adapter down after Claude Code exits.
+On an interactive terminal, AgentX prompts for your OpenCode API key on first use and walks you through provider/model selection (see [Runtime configuration](#runtime-configuration)) — you don't set anything up yourself beforehand. The key is kept for the current session only, never written to disk or your shell profile, and is used to configure the adapter and inject the environment Claude Code needs. AgentX then starts a loopback-only adapter, waits for it to listen, launches Claude Code with temporary `ANTHROPIC_*` variables, forwards the terminal streams, and shuts the adapter down after Claude Code exits.
 
 The real OpenCode key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
 
-Show credential setup instructions and status:
+Running non-interactively (CI, scripts, no terminal to prompt on)? Set `AGENTX_OPENCODE_API_KEY` up front — see [Configuration](#configuration).
 
-```bash
-agentx auth login --provider deepseek
-agentx auth status --provider deepseek
-agentx auth logout --provider deepseek
-```
-
-Query provider quota where the upstream documents a quota endpoint:
-
-```bash
-agentx usage --provider deepseek
-agentx usage --provider openrouter
-```
-
-Without `--provider`, `agentx usage` prints token usage statistics collected from
-every request the adapter serves (see [Token Usage Statistics](#token-usage-statistics)):
-
-```bash
-agentx usage
-agentx usage --period today
-```
-
-OpenCode currently reports an explicit unsupported result because it does not expose a documented public quota endpoint.
-
-The `pi` client is also supported through the OpenAI-compatible environment:
-
-```bash
-agentx pi --provider openrouter --model anthropic/claude-sonnet-4
-```
-
-## Credentials and Profiles
-
-Credentials come exclusively from environment variables: AgentX-specific variables are namespaced with the `AGENTX_` prefix (e.g. `AGENTX_OPENCODE_API_KEY`) so they never clash with same-named variables set for other tools; at runtime the value is injected into upstream requests as the plain key — the prefix exists only in the variable name. A legacy unprefixed variable (such as `OPENCODE_API_KEY`) is still picked up directly if it is already set. Resolution order: `--api-key`, `AGENTX_<PROVIDER>_API_KEY`, legacy `<PROVIDER>_API_KEY`, then an interactive prompt. When you type a key interactively, AgentX keeps it for the current session only and prints the manual `export …` line you can add to your shell profile; AgentX never writes to your shell profile itself.
-
-Non-secret runtime selection is stored in a single `~/.config/agentx/runtime.json` file: per-client defaults, the last model per provider, and the most recent selection. API keys are never written to this file or to any AgentX-managed storage, and AgentX does not modify your shell profile.
-
-## Providers
-
-The adapter has three layers: a client layer for Claude Code/Codex, protocol adapters for Anthropic Messages and OpenAI Responses/Chat Completions, and a provider layer for upstream platforms.
-
-Supported upstream providers:
-
-| Provider | Credential (preferred) | Credential (legacy) | Example |
-| --- | --- | --- | --- |
-| OpenCode | `AGENTX_OPENCODE_API_KEY` | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
-| DeepSeek | `AGENTX_DEEPSEEK_API_KEY` | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
-| OpenRouter | `AGENTX_OPENROUTER_API_KEY` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
-
-### Custom providers
-
-Beyond the three built-in providers, you can register an arbitrary OpenAI- or Anthropic-compatible endpoint — a local model server (Ollama, vLLM, LM Studio), an internal gateway, or any other compatible API. In the interactive launcher's "Change Provider" list, choose **Add custom provider…** and enter a name, base URL, and protocol; the same picker also offers **Remove custom provider…** once one exists.
-
-For scripts and non-interactive use, `--base-url` defines (and persists) a custom provider without opening the launcher — `--provider` becomes its display name, and `--protocol` selects the upstream shape (`chat-completions` by default, or `responses`/`anthropic`):
-
-```bash
-# A local OpenAI-compatible server (e.g. Ollama)
-agentx exec --provider "My Local LLM" --base-url http://localhost:11434 --protocol chat-completions --model llama3 -- claude
-
-# A provider that speaks the native Anthropic Messages API
-agentx exec --provider "Internal Anthropic Gateway" --base-url https://gateway.internal --protocol anthropic --model claude-x -- claude
-```
-
-Once registered, reuse it by id (the name, lowercased and hyphenated) without repeating `--base-url`:
-
-```bash
-agentx claude --provider my-local-llm
-```
-
-The credential works exactly like a built-in provider's — set `AGENTX_<ID>_API_KEY` (uppercased, underscored) in your environment, or answer the prompt when asked; the connection metadata is persisted in `runtime.json`, but the API key never is. Remove a custom provider entirely (definition and all saved memory of it, not just a stale model id) with:
-
-```bash
-agentx forget --provider my-local-llm --remove-provider
-```
-
-Built-in providers cannot be removed this way. Both Claude Code and Codex can reach a custom provider regardless of which protocol it speaks — Codex talks to an `anthropic`-protocol custom provider through the same local translation layer that lets it reach Chat Completions upstreams (see [API Translation](#api-translation)).
-
-For scripts and advanced usage, `--provider`/`--model` override the configured runtime for a single invocation:
-
-```bash
-agentx claude --provider deepseek --model deepseek-v4-pro
-agentx codex --provider openrouter --model anthropic/claude-sonnet-4
-```
-
-These flags are the Advanced / Automation API: ordinary day-to-day provider switching happens in the interactive runtime configuration. The equivalent environment variables are `AGENTX_PROVIDER` and `AGENTX_MODEL` (they also bypass the interactive launcher). Provider credentials are only used by the adapter and are never injected into the client process.
-
-For Claude Code, the local token is injected as `ANTHROPIC_AUTH_TOKEN` rather than `ANTHROPIC_API_KEY`, matching provider integrations such as DeepSeek and avoiding Claude Code's custom API-key confirmation screen. The upstream key remains private to the adapter.
-
-Every Claude Code model tier (main, opus/sonnet/haiku aliases, subagents) is pinned to the selected model — the user's choice is used for all traffic, including the small background requests Claude Code fires through its haiku tier (permission checks, topic detection, summarization). Optionally, `--background-model <id>` (or `AGENTX_BACKGROUND_MODEL`) routes just that background lane to another model the same provider serves — useful when the main model is a heavyweight reasoning model whose non-streaming auxiliary calls run past client timeouts. Requests naming a model the configured provider serves are honored as-is; unknown ids fall back to the configured model.
-
-### Runtime configuration
-
-When `claude`, `codex`, or `pi` is started on an interactive terminal without `--provider`/`--model` and without `AGENTX_PROVIDER`/`AGENTX_MODEL`, AgentX shows an interactive runtime launcher instead of requiring you to pick anything:
-
-```
-┌  Claude Code — AgentX
-│
-◆  Provider
-│  ● OpenCode  (connected · 2 models)
-│    DeepSeek  (connected · 2 models)
-└
-```
-
-The current runtime is loaded from the saved default: a quick-start menu lets you launch immediately or reopen the pickers to change provider / model. The menu remembers which action (**Start** or **Launch native**) you picked last time, per client, and pre-selects it on the next launch. The model picker is searchable: type to filter the list by model id, with ↑/↓ to select and Enter to confirm. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Completing the pickers always saves the selection as the client's default, so the next launch starts from it. Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
-
-#### Native launch
-
-Claude Code and Codex have their own login/billing outside AgentX, so both support a native launch that bypasses AgentX entirely: no provider/model resolution, no local adapter, no `ANTHROPIC_*`/`OPENAI_*` environment injection — the client runs exactly as if you had invoked it yourself. Reach it either way:
-
-```bash
-agentx claude --native
-agentx codex --native
-```
-
-or, on the quick-start menu shown when a saved default exists, choose **Launch native (skip AgentX)**. `--native` combined with `--provider`/`--model` silently ignores them, since there is nothing left for AgentX to configure. `pi` has no native mode — it always depends on an OpenAI-compatible backend, so there is nothing "native" to fall back to.
-
-If `--native` runs nested inside a client AgentX itself launched — for example, typing `agentx claude --native` inside a Claude Code session started by `agentx claude` — the inherited environment still carries the outer launch's `ANTHROPIC_*`/`OPENAI_*` overrides. AgentX detects this (via an internal marker set on every environment it constructs) and strips exactly its own variables before spawning, so the nested client still starts native instead of silently pointing back at the adapter it's meant to skip. A hand-configured environment that never went through AgentX — including one that happens to set the same variable names for your own purposes — is left completely untouched.
-
-## Codex
-
-Start Codex with an OpenAI-compatible local Responses endpoint:
-
-```bash
-npx agentx codex
-npx agentx codex --model gpt-5.6-luna
-```
-
-The launcher passes `-c` overrides that define an inline `agentx` model provider pointing at `http://127.0.0.1:<port>/v1`, whose bearer token is the temporary local token injected as `OPENAI_API_KEY`. It also generates a model catalog (`~/.config/agentx/codex-models.json`, passed via `model_catalog_json`) so registry models — and any custom OpenRouter model id you enter in the launcher — resolve with real metadata instead of Codex's fallback-metadata warning: context windows and output limits for every provider come from the public models.dev registry when available, fall back to OpenRouter's public catalog for models models.dev lacks, and use conservative defaults otherwise. DeepSeek's `deepseek-v4-pro`/`deepseek-v4-flash` are an exception: they are OpenCode's own branding (served both through the OpenCode gateway and the direct DeepSeek provider), so neither public registry has a matching entry, and the catalog declares their real ~1M context window explicitly instead of falling back to a conservative 128k — otherwise Codex would auto-compact long DeepSeek sessions far earlier than necessary, the same class of issue `CLAUDE_CODE_MAX_CONTEXT_TOKENS` fixes for Claude Code (see [Models and Routing](#models-and-routing)). This works with current Codex releases (which no longer honor those environment variables) and skips Codex's sign-in screen entirely — no ChatGPT login or `~/.codex/auth.json` required, and your existing `~/.codex/config.toml` stays untouched. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.
-
-Pi Agent is launched through the same OpenAI-compatible environment as Codex (`OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL`) and its requests are translated through the same local Responses boundary, so it gets the same DeepSeek reasoning/tool-choice/error-surfacing translation as Codex. It does not receive a generated model catalog, so AgentX has no channel to declare a model's context window to it the way it does for Claude Code or Codex.
+See [Commands](#commands) below for `codex`, `pi`, `auth`, `usage`, and `quota`.
 
 ## Installation
 
-Use without installation:
+Use without installation — note the `@tanzz/` scope: the unscoped `agentx` name on npm belongs to an unrelated package, so `npx agentx` will not run this tool:
 
 ```bash
-npx agentx claude
+npx @tanzz/agentx claude
 ```
 
 Install globally:
@@ -196,15 +87,13 @@ agentx codex
 agentx codex --native   # skip the adapter; run the real `codex` with your own environment
 ```
 
-### `proxy`
+### `pi`
 
-Start only the local adapter. Press `Ctrl+C` to stop it:
+Launch Pi Agent through the OpenAI-compatible local environment:
 
 ```bash
-agentx proxy
+agentx pi --provider openrouter --model anthropic/claude-sonnet-4
 ```
-
-The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`, `GET /v1/models`, `POST /v1/messages`, `POST /v1/responses`, plus the read-only token usage endpoints documented under [Token Usage Statistics](#token-usage-statistics).
 
 ### `exec`
 
@@ -223,6 +112,16 @@ agentx exec --client-protocol openai -- my-openai-compatible-tool
 ```
 
 The command's stdin, stdout, stderr, exit code, and termination signals are forwarded where supported by the host platform.
+
+### `proxy`
+
+Start only the local adapter. Press `Ctrl+C` to stop it:
+
+```bash
+agentx proxy
+```
+
+The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`, `GET /v1/models`, `POST /v1/messages`, and `POST /v1/responses`.
 
 ### `doctor`
 
@@ -255,11 +154,9 @@ Forgetting removes every trace of the id from `runtime.json` — per-client
 defaults, per-provider last model, and the most recent selection — so the
 renamed id stops being offered as "current" on every launch.
 
-### `version`
-
-```bash
-agentx version
-```
+Remove a custom provider entirely (definition and all saved memory of it, not
+just a stale model id) with `--provider <id> --remove-provider` (see [Custom
+providers](#custom-providers)).
 
 ### `auth`
 
@@ -298,12 +195,10 @@ agentx quota --provider openrouter
 
 OpenCode currently reports an explicit unsupported result because it does not expose a documented public quota endpoint.
 
-### `pi`
-
-Launch Pi Agent through the OpenAI-compatible local environment:
+### `version`
 
 ```bash
-agentx pi --provider openrouter --model anthropic/claude-sonnet-4
+agentx version
 ```
 
 ## Configuration
@@ -327,6 +222,7 @@ For `claude`/`codex`, `--native` (or **Launch native (skip AgentX)** in the laun
 | `--port <port>` | `AGENTX_PORT` | `8787` | Preferred local port |
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Concrete upstream model id |
 | `--provider <id>` | `AGENTX_PROVIDER` | none | Upstream provider (`opencode`, `deepseek`, `openrouter`) |
+| `--background-model <id>` | `AGENTX_BACKGROUND_MODEL` | none | Model for Claude Code's background (haiku) lane |
 | `--retry <n>` | `AGENTX_RETRY` | `3` | Retry attempts on upstream 429/502/503/504 (0 disables) |
 | `--client-protocol <anthropic\|openai>` | | `anthropic` | `exec` only: env vars to inject for the launched program |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | Reserved for verbose logging |
@@ -340,9 +236,111 @@ agentx proxy --host 0.0.0.0
 
 `agentx doctor` accepts `--client <claude|codex|all>` (default `all`) to limit checks to one client, and `--offline` to skip network-dependent checks. Skipped checks are noted in the report.
 
+## Credentials and Profiles
+
+Credentials come exclusively from environment variables: AgentX-specific variables are namespaced with the `AGENTX_` prefix (e.g. `AGENTX_OPENCODE_API_KEY`) so they never clash with same-named variables set for other tools; at runtime the value is injected into upstream requests as the plain key — the prefix exists only in the variable name. A legacy unprefixed variable (such as `OPENCODE_API_KEY`) is still picked up directly if it is already set. Resolution order: `--api-key`, `AGENTX_<PROVIDER>_API_KEY`, legacy `<PROVIDER>_API_KEY`, then an interactive prompt. When you type a key interactively, AgentX keeps it for the current session only and prints the manual `export …` line you can add to your shell profile; AgentX never writes to your shell profile itself.
+
+Non-secret runtime selection is stored in a single `~/.config/agentx/runtime.json` file: per-client defaults, the last model per provider, and the most recent selection. API keys are never written to this file or to any AgentX-managed storage, and AgentX does not modify your shell profile.
+
+For Claude Code, the local token is injected as `ANTHROPIC_AUTH_TOKEN` rather than `ANTHROPIC_API_KEY`, matching provider integrations such as DeepSeek and avoiding Claude Code's custom API-key confirmation screen. The upstream key remains private to the adapter.
+
+## Providers
+
+The adapter has three layers: a client layer for Claude Code/Codex, protocol adapters for Anthropic Messages and OpenAI Responses/Chat Completions, and a provider layer for upstream platforms.
+
+Supported upstream providers:
+
+| Provider | Credential (preferred) | Credential (legacy) | Example |
+| --- | --- | --- | --- |
+| OpenCode | `AGENTX_OPENCODE_API_KEY` | `OPENCODE_API_KEY` | `gpt-5.6-luna` |
+| DeepSeek | `AGENTX_DEEPSEEK_API_KEY` | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` |
+| OpenRouter | `AGENTX_OPENROUTER_API_KEY` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4` |
+
+### Selecting a provider and model
+
+For scripts and advanced usage, `--provider`/`--model` override the configured runtime for a single invocation:
+
+```bash
+agentx claude --provider deepseek --model deepseek-v4-pro
+agentx codex --provider openrouter --model anthropic/claude-sonnet-4
+```
+
+These flags are the Advanced / Automation API: ordinary day-to-day provider switching happens in the interactive runtime configuration (see [Runtime configuration](#runtime-configuration)). The equivalent environment variables are `AGENTX_PROVIDER` and `AGENTX_MODEL` (they also bypass the interactive launcher). Provider credentials are only used by the adapter and are never injected into the client process.
+
+Every Claude Code model tier (main, opus/sonnet/haiku aliases, subagents) is pinned to the selected model — the user's choice is used for all traffic, including the small background requests Claude Code fires through its haiku tier (permission checks, topic detection, summarization). Optionally, `--background-model <id>` (or `AGENTX_BACKGROUND_MODEL`) routes just that background lane to another model the same provider serves — useful when the main model is a heavyweight reasoning model whose non-streaming auxiliary calls run past client timeouts. Requests naming a model the configured provider serves are honored as-is; unknown ids fall back to the configured model.
+
+### Custom providers
+
+Beyond the three built-in providers, you can register an arbitrary OpenAI- or Anthropic-compatible endpoint — a local model server (Ollama, vLLM, LM Studio), an internal gateway, or any other compatible API. In the interactive launcher's "Change Provider" list, choose **Add custom provider…** and enter a name, base URL, and protocol; the same picker also offers **Remove custom provider…** once one exists.
+
+For scripts and non-interactive use, `--base-url` defines (and persists) a custom provider without opening the launcher — `--provider` becomes its display name, and `--protocol` selects the upstream shape (`chat-completions` by default, or `responses`/`anthropic`):
+
+```bash
+# A local OpenAI-compatible server (e.g. Ollama)
+agentx exec --provider "My Local LLM" --base-url http://localhost:11434 --protocol chat-completions --model llama3 -- claude
+
+# A provider that speaks the native Anthropic Messages API
+agentx exec --provider "Internal Anthropic Gateway" --base-url https://gateway.internal --protocol anthropic --model claude-x -- claude
+```
+
+Once registered, reuse it by id (the name, lowercased and hyphenated) without repeating `--base-url`:
+
+```bash
+agentx claude --provider my-local-llm
+```
+
+The credential works exactly like a built-in provider's — set `AGENTX_<ID>_API_KEY` (uppercased, underscored) in your environment, or answer the prompt when asked; the connection metadata is persisted in `runtime.json`, but the API key never is. Remove a custom provider entirely (definition and all saved memory of it, not just a stale model id) with:
+
+```bash
+agentx forget --provider my-local-llm --remove-provider
+```
+
+Built-in providers cannot be removed this way. Both Claude Code and Codex can reach a custom provider regardless of which protocol it speaks — Codex talks to an `anthropic`-protocol custom provider through the same local translation layer that lets it reach Chat Completions upstreams (see [API Translation](#api-translation)).
+
+### Runtime configuration
+
+When `claude`, `codex`, or `pi` is started on an interactive terminal without `--provider`/`--model` and without `AGENTX_PROVIDER`/`AGENTX_MODEL`, AgentX shows an interactive runtime launcher instead of requiring you to pick anything:
+
+```
+┌  Claude Code — AgentX
+│
+◆  Provider
+│  ● OpenCode  (connected · 2 models)
+│    DeepSeek  (connected · 2 models)
+└
+```
+
+The current runtime is loaded from the saved default: a quick-start menu lets you launch immediately or reopen the pickers to change provider / model. The menu remembers which action (**Start** or **Launch native**) you picked last time, per client, and pre-selects it on the next launch. The model picker is searchable: type to filter the list by model id, with ↑/↓ to select and Enter to confirm. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Completing the pickers always saves the selection as the client's default, so the next launch starts from it. Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
+
+#### Native launch
+
+Claude Code and Codex have their own login/billing outside AgentX, so both support a native launch that bypasses AgentX entirely: no provider/model resolution, no local adapter, no `ANTHROPIC_*`/`OPENAI_*` environment injection — the client runs exactly as if you had invoked it yourself. Reach it either way:
+
+```bash
+agentx claude --native
+agentx codex --native
+```
+
+or, on the quick-start menu shown when a saved default exists, choose **Launch native (skip AgentX)**. `--native` combined with `--provider`/`--model` silently ignores them, since there is nothing left for AgentX to configure. `pi` has no native mode — it always depends on an OpenAI-compatible backend, so there is nothing "native" to fall back to.
+
+If `--native` runs nested inside a client AgentX itself launched — for example, typing `agentx claude --native` inside a Claude Code session started by `agentx claude` — the inherited environment still carries the outer launch's `ANTHROPIC_*`/`OPENAI_*` overrides. AgentX detects this (via an internal marker set on every environment it constructs) and strips exactly its own variables before spawning, so the nested client still starts native instead of silently pointing back at the adapter it's meant to skip. A hand-configured environment that never went through AgentX — including one that happens to set the same variable names for your own purposes — is left completely untouched.
+
+## Codex
+
+Start Codex with an OpenAI-compatible local Responses endpoint:
+
+```bash
+npx @tanzz/agentx codex
+npx @tanzz/agentx codex --model gpt-5.6-luna
+```
+
+The launcher passes `-c` overrides that define an inline `agentx` model provider pointing at `http://127.0.0.1:<port>/v1`, whose bearer token is the temporary local token injected as `OPENAI_API_KEY`. It also generates a model catalog (`~/.config/agentx/codex-models.json`, passed via `model_catalog_json`) so registry models — and any custom OpenRouter model id you enter in the launcher — resolve with real metadata instead of Codex's fallback-metadata warning: context windows and output limits for every provider come from the public models.dev registry when available, fall back to OpenRouter's public catalog for models models.dev lacks, and use conservative defaults otherwise. DeepSeek's `deepseek-v4-pro`/`deepseek-v4-flash` are an exception: they are OpenCode's own branding (served both through the OpenCode gateway and the direct DeepSeek provider), so neither public registry has a matching entry, and the catalog declares their real ~1M context window explicitly instead of falling back to a conservative 128k — otherwise Codex would auto-compact long DeepSeek sessions far earlier than necessary, the same class of issue `CLAUDE_CODE_MAX_CONTEXT_TOKENS` fixes for Claude Code (see [Models and Routing](#models-and-routing)). This works with current Codex releases (which no longer honor those environment variables) and skips Codex's sign-in screen entirely — no ChatGPT login or `~/.codex/auth.json` required, and your existing `~/.codex/config.toml` stays untouched. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.
+
+Pi Agent is launched through the same OpenAI-compatible environment as Codex (`OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL`) and its requests are translated through the same local Responses boundary, so it gets the same DeepSeek reasoning/tool-choice/error-surfacing translation as Codex. It does not receive a generated model catalog, so AgentX has no channel to declare a model's context window to it the way it does for Claude Code or Codex.
+
 ## Models and Routing
 
-The OpenCode model catalog is fetched only when no provider is selected or the selected provider is `opencode`. When the endpoint cannot be reached, the built-in fallback catalog is used:
+The OpenCode model catalog is fetched only when no provider is selected or the selected provider is `opencode`, and only when the last-fetched snapshot (persisted in `runtime.json`) is more than 24 hours old — a fresh snapshot is reused without a network round trip. When the fetch is skipped, absent, or fails, the last persisted snapshot is used; if none has ever been saved, the built-in fallback catalog below is used:
 
 | Model | Upstream protocol |
 | --- | --- |
@@ -356,7 +354,7 @@ The OpenCode model catalog is fetched only when no provider is selected or the s
 
 Models returned by the API use the Responses API (`gpt-5.6-luna`) or the Chat Completions API (everything else). The local `/v1/models` endpoint always reflects the current catalog; requests must resolve to a concrete configured model.
 
-The OpenRouter provider accepts any model id (defaulting to `OPENROUTER_MODEL` or `openai/gpt-4o-mini`). In the interactive launcher its model picker includes two extra options:
+The OpenRouter provider accepts any model id (defaulting to `OPENROUTER_MODEL` or `openai/gpt-4o-mini`). In the interactive launcher its model picker includes three extra options:
 
 - **Search / enter any model id…** — type any OpenRouter model id (e.g. `anthropic/claude-sonnet-4.5`) directly.
 - **Browse OpenRouter catalog…** — search the full live catalog (~400 models) fetched from `https://openrouter.ai/api/v1/models`, so you can find real vendor-prefixed ids (e.g. `deepseek/deepseek-v4-pro`) without typing them blind. The catalog is persisted in `runtime.json` for offline screening.
@@ -414,17 +412,9 @@ accumulates deltas and marks the record as `estimated`.
 
 ### Query API
 
-The adapter exposes read-only usage endpoints (no authentication):
-
-| Endpoint | Description |
-| --- | --- |
-| `GET /usage/session?id=<session>` | Input/output/total tokens for one session |
-| `GET /usage/providers?period=...` | Per-provider tokens and request counts |
-| `GET /usage/stats?period=...` | Totals over a time range |
-
-`period` accepts `today`, `week`, `month`, or `all`. Without a `period`, the
-endpoints report all recorded usage. The session endpoint also accepts the
-path form `GET /usage/session/<id>`.
+Usage statistics are not exposed over HTTP. The adapter has no `/usage/*`
+endpoints; read the data with the [`agentx usage`](#usage) CLI command, which
+reads the storage backend directly.
 
 ### Storage and Data
 
@@ -435,10 +425,10 @@ path form `GET /usage/session/<id>`.
 
 ## Security and Privacy
 
-- The upstream API key is read from the CLI or environment and sent only to OpenCode.
+- The upstream API key is read from the CLI or environment and sent only to the configured provider.
 - Claude Code receives a random, non-persisted local bearer token for each adapter process.
 - The default listener is `127.0.0.1`; no shell profile or permanent OS environment variable is modified.
-- The `/usage/*` query endpoints are unauthenticated; they expose aggregated token counts only and are safe to reach from localhost, but do not expose them when the adapter is bound to a non-loopback interface.
+- The adapter has no `/usage/*` or other unauthenticated HTTP endpoints for reading stored data; usage statistics are only readable locally via the [`agentx usage`](#usage) CLI command.
 - Logs must not contain API keys, authorization headers, prompts, or sensitive tool input.
 - Treat `--host 0.0.0.0` as a deliberate network exposure and protect it with appropriate network controls.
 
@@ -488,7 +478,7 @@ The adapter automatically tries the next ports after the configured port. Use `-
 
 **Upstream requests fail**
 
-Run `agentx doctor`, verify the API key and model availability, and check network access to the OpenCode API. Do not paste API keys or authorization headers into issue reports.
+Run `agentx doctor`, verify the API key and model availability, and check network access to the upstream provider. Do not paste API keys or authorization headers into issue reports.
 
 ## Contributing
 
@@ -496,4 +486,4 @@ Issues and pull requests are welcome. Keep changes focused, add or update tests 
 
 ## License
 
-MIT © agentx contributors
+MIT © tzzs

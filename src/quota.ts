@@ -28,10 +28,10 @@ export function parseOpenRouterKey(payload: any): UsageResult {
 }
 
 export async function queryProviderUsage(providerId: string, apiKey: string): Promise<UsageResult> {
-  if (providerId === "opencode") return { provider: providerId, supported: false, success: false, message: "OpenCode does not currently expose a documented public quota endpoint." };
+  const provider = providerById(providerId);
+  const endpoint = provider.quota?.endpoint;
+  if (!endpoint) return { provider: providerId, supported: false, success: false, message: `${provider.name} does not currently expose a documented public quota endpoint.` };
   if (!apiKey) return { provider: providerId, supported: true, success: false, message: "Provider API key is missing." };
-  const endpoint = providerId === "deepseek" ? "https://api.deepseek.com/user/balance" : providerId === "openrouter" ? "https://openrouter.ai/api/v1/key" : undefined;
-  if (!endpoint) throw new Error(`Usage query is not implemented for provider "${providerId}".`);
   let response: Response;
   try {
     response = await fetch(endpoint, { headers: { authorization: `Bearer ${apiKey}`, accept: "application/json" }, signal: AbortSignal.timeout(10_000) });

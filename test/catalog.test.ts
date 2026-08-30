@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chatResponseFailure, fromChatResponse, fromChatResponseToResponses, honorRequestedModel, providerFor, toChatCompletionsRequest, toChatRequest } from "../src/catalog.js";
-import { toResponsesRequest } from "../src/providers.js";
+import { honorRequestedModel, providerFor } from "../src/catalog.js";
+import { chatResponseFailure, fromChatResponse, fromChatResponseToResponses, toChatCompletionsRequest, toChatRequest, toResponsesRequest } from "../src/convert/index.js";
 test("routes DeepSeek models through chat completions", () => {
   assert.equal(providerFor("deepseek-v4-flash").protocol, "chat-completions");
   assert.equal((toChatRequest({ messages: [{ role: "user", content: "Hi" }] }, "deepseek-v4-flash") as any).messages[0].content, "Hi");
