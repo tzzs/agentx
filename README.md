@@ -42,16 +42,11 @@ Requirements:
 npx @tanzz/agentx claude
 ```
 
-On an interactive terminal, AgentX prompts for your OpenCode API key on first use — the key is kept for the current session only, never written to disk or your shell profile — and walks you through provider/model selection (see [Runtime configuration](#runtime-configuration)). It then starts a loopback-only adapter, waits for it to listen, launches Claude Code with temporary `ANTHROPIC_*` variables, forwards the terminal streams, and shuts the adapter down after Claude Code exits.
+On an interactive terminal, AgentX prompts for your OpenCode API key on first use and walks you through provider/model selection (see [Runtime configuration](#runtime-configuration)) — you don't set anything up yourself beforehand. The key is kept for the current session only, never written to disk or your shell profile, and is used to configure the adapter and inject the environment Claude Code needs. AgentX then starts a loopback-only adapter, waits for it to listen, launches Claude Code with temporary `ANTHROPIC_*` variables, forwards the terminal streams, and shuts the adapter down after Claude Code exits.
 
 The real OpenCode key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
 
-For scripts, CI, or any non-interactive shell, set the key up front instead of relying on the prompt:
-
-```bash
-export AGENTX_OPENCODE_API_KEY="your-api-key"
-npx @tanzz/agentx claude
-```
+Running non-interactively (CI, scripts, no terminal to prompt on)? Set `AGENTX_OPENCODE_API_KEY` up front — see [Configuration](#configuration).
 
 See [Commands](#commands) below for `codex`, `pi`, `auth`, `usage`, and `quota`.
 

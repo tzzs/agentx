@@ -42,16 +42,11 @@
 npx @tanzz/agentx claude
 ```
 
-在交互式终端中，首次运行时 AgentX 会提示你输入 OpenCode API Key——该 Key 仅在当前会话有效，绝不会写入磁盘或 shell profile——并引导你完成 Provider / 模型选择（见[运行时配置](#运行时配置)）。随后它会启动仅监听本机回环地址的适配器，等待服务就绪，使用临时 `ANTHROPIC_*` 环境变量启动 Claude Code，转发终端输入输出，并在 Claude Code 退出后关闭适配器。
+在交互式终端中，首次运行时 AgentX 会提示你输入 OpenCode API Key，并引导你完成 Provider / 模型选择（见[运行时配置](#运行时配置)）——不需要你提前手动配置任何东西。这个 Key 仅在当前会话有效，绝不会写入磁盘或 shell profile，AgentX 会用它来配置适配器，并自动注入 Claude Code 所需的环境变量。随后它会启动仅监听本机回环地址的适配器，等待服务就绪，使用临时 `ANTHROPIC_*` 环境变量启动 Claude Code，转发终端输入输出，并在 Claude Code 退出后关闭适配器。
 
 真实的 OpenCode Key 不会传给 Claude Code。Claude Code 每次只会收到一个随机生成的本地临时 Token。
 
-对于脚本、CI 或任何非交互式 shell，建议提前设置好 Key，而不是依赖交互式提示：
-
-```bash
-export AGENTX_OPENCODE_API_KEY="your-api-key"
-npx @tanzz/agentx claude
-```
+需要非交互式运行（CI、脚本，没有终端可以提示输入）？提前设置好 `AGENTX_OPENCODE_API_KEY` 即可——见[配置](#配置)。
 
 `codex`、`pi`、`auth`、`usage`、`quota` 等命令的用法见下方[命令](#命令)一节。
 
