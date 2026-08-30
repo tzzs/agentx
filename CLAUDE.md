@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-`agentx` 是一个本地 Anthropic/OpenAI 兼容的 API 适配器，让 Claude Code、Codex 或 Pi 可以对接 OpenCode 以及其他上游模型提供商。它会启动一个回环（loopback）HTTP 服务器，将临时凭据注入到被启动的客户端进程中，并在客户端退出后关闭。
+`agentx` 是一个本地 Anthropic/OpenAI 兼容的 API 适配器，让 Claude Code 或 Codex 可以对接 OpenCode 以及其他上游模型提供商。它会启动一个回环（loopback）HTTP 服务器，将临时凭据注入到被启动的客户端进程中，并在客户端退出后关闭。
 
 ## 常用命令
 
@@ -58,7 +58,7 @@ npm test          # 先构建，再执行 node --test（在 dist/ 下自动发�
 
 ### 请求流程
 
-入口 `src/cli.ts` 解析选项（CLI 参数优先于 `AGENTX_*` 环境变量，通过 `loadConfig`），解析 API key，保存非机密 profile，启动适配器（`src/server.ts`），然后用指向本地端点的 `ANTHROPIC_*`（Claude）或 `OPENAI_*`（Codex/Pi）环境变量启动客户端（`src/process.ts`）。`src/server.ts` 是无状态的——每个请求都携带完整对话，服务端不持久化任何内容。
+入口 `src/cli.ts` 解析选项（CLI 参数优先于 `AGENTX_*` 环境变量，通过 `loadConfig`），解析 API key，保存非机密 profile，启动适配器（`src/server.ts`），然后用指向本地端点的 `ANTHROPIC_*`（Claude）或 `OPENAI_*`（Codex）环境变量启动客户端（`src/process.ts`）。`src/server.ts` 是无状态的——每个请求都携带完整对话，服务端不持久化任何内容。
 
 凭据完全来自环境变量（在 `src/credentials.ts` 中解析）：`--api-key` → `AGENTX_<PROVIDER>_API_KEY`（带前缀的规范变量）→ 旧的无前缀变量（如 `OPENCODE_API_KEY`，直接兼容使用）→ 交互式提示（仅当前会话有效）。AgentX 自身不持久化任何密钥；带前缀的命名可避免与用户为其他工具设置的同名变量冲突。非敏感运行时状态只保存在 `runtime.json`；API key 绝不会写入任何 AgentX 状态文件。
 

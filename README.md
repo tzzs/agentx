@@ -6,7 +6,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Run Claude Code, Codex, or Pi with OpenCode models through a local API adapter. Claude Code uses the local Anthropic-compatible Messages API; Codex and Pi use the local OpenAI-compatible Responses API. The adapter translates requests to the upstream API, injects temporary credentials into the child process, and cleans up the local server when the child exits.
+Run Claude Code or Codex with OpenCode models through a local API adapter. Claude Code uses the local Anthropic-compatible Messages API; Codex uses the local OpenAI-compatible Responses API. The adapter translates requests to the upstream API, injects temporary credentials into the child process, and cleans up the local server when the child exits.
 
 > **Status:** Early-stage release. The protocol conversion layer and test suite are available, but real upstream API compatibility should be validated with your OpenCode account before production use.
 
@@ -48,7 +48,7 @@ The real OpenCode key is never passed to Claude Code. Claude Code receives a ran
 
 Running non-interactively (CI, scripts, no terminal to prompt on)? Set `AGENTX_OPENCODE_API_KEY` up front — see [Configuration](#configuration).
 
-See [Commands](#commands) below for `codex`, `pi`, `auth`, `usage`, and `quota`.
+See [Commands](#commands) below for `codex`, `auth`, `usage`, and `quota`.
 
 ## Installation
 
@@ -87,17 +87,9 @@ agentx codex
 agentx codex --native   # skip the adapter; run the real `codex` with your own environment
 ```
 
-### `pi`
-
-Launch Pi Agent through the OpenAI-compatible local environment:
-
-```bash
-agentx pi --provider openrouter --model anthropic/claude-sonnet-4
-```
-
 ### `exec`
 
-Run any command through the local adapter. Unlike `claude`/`codex`/`pi`, `exec` never shows the interactive runtime picker — it always resolves provider/model non-interactively (CLI flags → env vars → the most recent selection → built-in defaults), so it is safe to use in scripts and CI:
+Run any command through the local adapter. Unlike `claude`/`codex`, `exec` never shows the interactive runtime picker — it always resolves provider/model non-interactively (CLI flags → env vars → the most recent selection → built-in defaults), so it is safe to use in scripts and CI:
 
 ```bash
 agentx exec -- claude
@@ -299,7 +291,7 @@ Built-in providers cannot be removed this way. Both Claude Code and Codex can re
 
 ### Runtime configuration
 
-When `claude`, `codex`, or `pi` is started on an interactive terminal without `--provider`/`--model` and without `AGENTX_PROVIDER`/`AGENTX_MODEL`, AgentX shows an interactive runtime launcher instead of requiring you to pick anything:
+When `claude` or `codex` is started on an interactive terminal without `--provider`/`--model` and without `AGENTX_PROVIDER`/`AGENTX_MODEL`, AgentX shows an interactive runtime launcher instead of requiring you to pick anything:
 
 ```
 ┌  Claude Code — AgentX
@@ -321,7 +313,7 @@ agentx claude --native
 agentx codex --native
 ```
 
-or, on the quick-start menu shown when a saved default exists, choose **Launch native (skip AgentX)**. `--native` combined with `--provider`/`--model` silently ignores them, since there is nothing left for AgentX to configure. `pi` has no native mode — it always depends on an OpenAI-compatible backend, so there is nothing "native" to fall back to.
+or, on the quick-start menu shown when a saved default exists, choose **Launch native (skip AgentX)**. `--native` combined with `--provider`/`--model` silently ignores them, since there is nothing left for AgentX to configure.
 
 If `--native` runs nested inside a client AgentX itself launched — for example, typing `agentx claude --native` inside a Claude Code session started by `agentx claude` — the inherited environment still carries the outer launch's `ANTHROPIC_*`/`OPENAI_*` overrides. AgentX detects this (via an internal marker set on every environment it constructs) and strips exactly its own variables before spawning, so the nested client still starts native instead of silently pointing back at the adapter it's meant to skip. A hand-configured environment that never went through AgentX — including one that happens to set the same variable names for your own purposes — is left completely untouched.
 
@@ -335,8 +327,6 @@ npx @tanzz/agentx codex --model gpt-5.6-luna
 ```
 
 The launcher passes `-c` overrides that define an inline `agentx` model provider pointing at `http://127.0.0.1:<port>/v1`, whose bearer token is the temporary local token injected as `OPENAI_API_KEY`. It also generates a model catalog (`~/.config/agentx/codex-models.json`, passed via `model_catalog_json`) so registry models — and any custom OpenRouter model id you enter in the launcher — resolve with real metadata instead of Codex's fallback-metadata warning: context windows and output limits for every provider come from the public models.dev registry when available, fall back to OpenRouter's public catalog for models models.dev lacks, and use conservative defaults otherwise. DeepSeek's `deepseek-v4-pro`/`deepseek-v4-flash` are an exception: they are OpenCode's own branding (served both through the OpenCode gateway and the direct DeepSeek provider), so neither public registry has a matching entry, and the catalog declares their real ~1M context window explicitly instead of falling back to a conservative 128k — otherwise Codex would auto-compact long DeepSeek sessions far earlier than necessary, the same class of issue `CLAUDE_CODE_MAX_CONTEXT_TOKENS` fixes for Claude Code (see [Models and Routing](#models-and-routing)). This works with current Codex releases (which no longer honor those environment variables) and skips Codex's sign-in screen entirely — no ChatGPT login or `~/.codex/auth.json` required, and your existing `~/.codex/config.toml` stays untouched. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.
-
-Pi Agent is launched through the same OpenAI-compatible environment as Codex (`OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL`) and its requests are translated through the same local Responses boundary, so it gets the same DeepSeek reasoning/tool-choice/error-surfacing translation as Codex. It does not receive a generated model catalog, so AgentX has no channel to declare a model's context window to it the way it does for Claude Code or Codex.
 
 ## Models and Routing
 

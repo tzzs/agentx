@@ -18,7 +18,6 @@ export interface RuntimeDecision {
 
 export function clientDisplayName(client: string): string {
   if (client === "codex") return "Codex";
-  if (client === "pi") return "Pi";
   if (client === "proxy") return "Proxy";
   if (client === "exec") return "Exec";
   return "Claude Code";

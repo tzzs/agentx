@@ -16,7 +16,7 @@
         ▼                ▼                               ▼
   命令分发          配置加载/凭据                      启动 Adapter
   claude/codex     config.ts / credentials.ts         server.ts
-  pi/proxy/exec    runtime.ts                           │
+  proxy/exec       runtime.ts                           │
   auth/usage/quota                                 [HTTP 本地服务]
   doctor/forget/                                  127.0.0.1:<port>
   version
@@ -25,7 +25,7 @@
 ## 客户端进程启动链路（Process Launcher）
 
 ```
-cli.ts (claude/codex/pi/proxy/exec)
+cli.ts (claude/codex/proxy/exec)
    │
    ├─ ui.ts          runInteractiveLauncher（交互式 Provider/Model 选择，含 Add/Remove custom provider）
    ├─ config.ts      loadConfig（CLI 参数 > 环境变量 > 默认值）
@@ -36,13 +36,13 @@ cli.ts (claude/codex/pi/proxy/exec)
    ├─ server.ts      startAdapter() → 生成本地随机 token，绑定回环端口
    │                     ├─ /health
    │                     ├─ /v1/models
-   │                     ├─ /v1/messages   (Anthropic)
-   │                     └─ /v1/responses  (OpenAI)
+   │                     ├─ /v1/messages          (Anthropic)
+   │                     ├─ /v1/responses         (OpenAI Responses)
+   │                     └─ /v1/chat/completions  (OpenAI Chat Completions)
    │
    └─ process.ts     runCommand(executable, args, env)  注入环境变量、转发 stdio、清理
         claude  → ANTHROPIC_* (本地 token)
         codex   → OPENAI_BASE_URL/OPENAI_API_KEY/OPENAI_MODEL
-        pi      → OpenAI 兼容环境
         exec    → 默认 Anthropic 形状；--client-protocol openai 切换为 OpenAI 形状
 ```
 
@@ -107,7 +107,7 @@ Claude Code (Anthropic Messages API)
 - **工具调用**：只做协议转换（`tool_use`↔`function_call`、`tool_result`↔`function_call_output`），不在 Adapter 内执行
 - **模型路由**：没有隐式 `auto` 路由（已移除）；运行时必须解析为具体模型，解析优先级见 README「Configuration」
 - **上游重试**：`server.ts` 的 `forwardWithRetry` 对网络失败和 429/502/503/504 做指数退避重试（`--retry`/`AGENTX_RETRY`，默认 3，0 禁用），仅发生在流式传输开始之前
-- **命令覆盖**：`claude`/`codex`/`pi`/`proxy`/`exec`/`auth`/`usage`/`quota`/`doctor`/`forget`/`version`/`help`
+- **命令覆盖**：`claude`/`codex`/`proxy`/`exec`/`auth`/`usage`/`quota`/`doctor`/`forget`/`version`/`help`
 - **可选集成**：`agentx quota --provider <id>` 查询 DeepSeek/OpenRouter 额度（OpenCode 返回"不支持"；`usage --provider` 为过渡期别名）；凭据只来自环境变量（`AGENTX_<PROVIDER>_API_KEY`，旧的无前缀变量兼容）
 
 ## 模块 → 职责映射

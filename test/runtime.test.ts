@@ -33,9 +33,9 @@ test("default runtime persists per client", async () => {
 });
 
 test("overwriting a default replaces it instead of accumulating", async () => {
-  await saveDefaultRuntime("pi", { provider: "opencode", model: "gpt-5.6-luna" });
-  await saveDefaultRuntime("pi", { provider: "deepseek", model: "deepseek-v4-flash" });
-  assert.deepEqual(await loadDefaultRuntime("pi"), { provider: "deepseek", model: "deepseek-v4-flash" });
+  await saveDefaultRuntime("other-client", { provider: "opencode", model: "gpt-5.6-luna" });
+  await saveDefaultRuntime("other-client", { provider: "deepseek", model: "deepseek-v4-flash" });
+  assert.deepEqual(await loadDefaultRuntime("other-client"), { provider: "deepseek", model: "deepseek-v4-flash" });
 });
 
 test("last model persists per provider", async () => {
@@ -107,13 +107,13 @@ test("loadOpenCodeModels returns undefined before any snapshot has been saved", 
 test("forgetRuntime scrubs a renamed model id from defaults, last models, and last selection", async () => {
   await saveDefaultRuntime("claude", { provider: "openrouter", model: "vendor/renamed" });
   await saveDefaultRuntime("codex", { provider: "openrouter", model: "vendor/renamed" });
-  await saveDefaultRuntime("pi", { provider: "openrouter", model: "vendor/kept" });
+  await saveDefaultRuntime("other-client", { provider: "openrouter", model: "vendor/kept" });
   await saveLastModel("openrouter", "vendor/renamed");
 
   assert.equal(await forgetRuntime({ provider: "openrouter", model: "vendor/renamed" }), true);
   assert.equal(await loadDefaultRuntime("claude"), undefined);
   assert.equal(await loadDefaultRuntime("codex"), undefined);
-  assert.equal((await loadDefaultRuntime("pi"))?.model, "vendor/kept");
+  assert.equal((await loadDefaultRuntime("other-client"))?.model, "vendor/kept");
   assert.equal(await loadLastModel("openrouter"), undefined);
   // The remembered ids for openrouter no longer include the scrubbed id.
   assert.ok(!(await rememberedModelIds("openrouter")).includes("vendor/renamed"));
