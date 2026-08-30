@@ -14,10 +14,16 @@ help: ## Show available targets
 install: ## Install exact dependencies from package-lock.json
 	$(NPM) ci
 
-build: ## Compile TypeScript into dist/
+# npm ci/install stamps node_modules/.package-lock.json; using it as a
+# prerequisite makes `make build`/`make test` auto-install deps only when
+# missing or stale, instead of failing with "tsc: not found".
+node_modules/.package-lock.json: package-lock.json
+	$(NPM) ci
+
+build: node_modules/.package-lock.json ## Compile TypeScript into dist/
 	$(NPM) run build
 
-test: ## Build and run the test suite
+test: node_modules/.package-lock.json ## Build and run the test suite
 	$(NPM) test
 
 check: test ## Run tests and verify the npm package contents
