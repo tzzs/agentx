@@ -5,7 +5,7 @@ import { atomicWriteFile } from "./fsutil.js";
 
 /**
  * A runtime is the combination of a provider and the model it will use for a
- * given invocation of an agent client (Claude Code, Codex, Pi, ...).
+ * given invocation of an agent client (Claude Code, Codex, ...).
  *
  * Provider and model are deliberately bound together: switching provider must
  * resolve the model against the target provider rather than reusing one that
@@ -26,7 +26,7 @@ export interface CustomProviderState {
 
 /** Persistent, non-secret agent runtime state (no API keys ever stored here). */
 export interface RuntimeState {
-  /** Default runtime per client id (claude, codex, pi). */
+  /** Default runtime per client id (claude, codex). */
   defaults: Record<string, RuntimeSelection>;
   /** Last model used per provider id, so switching back restores it. */
   lastModels: Record<string, string>;

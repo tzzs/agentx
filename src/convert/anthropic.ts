@@ -113,3 +113,106 @@ export function fromAnthropicResponse(response: any, model: string): Record<stri
     ...(incomplete ? { incomplete_details: { reason: "max_output_tokens" } } : {}),
   };
 }
+
+/**
+ * Chat Completions <-> Anthropic Messages API: the local `/v1/chat/completions`
+ * endpoint reaching an upstream whose protocol is "anthropic". DeepSeek's
+ * `thinking`/`reasoning_effort` extensions are intentionally not mapped here
+ * — a generic Chat Completions client has no reason to send agentx's own
+ * reasoning-control fields.
+ */
+
+/** Convert Chat Completions tool-choice variants to Anthropic's object-shaped tool_choice. */
+function chatToolChoiceToAnthropic(value: unknown): unknown {
+  if (typeof value === "string") {
+    if (value === "none" || value === "auto") return { type: value };
+    if (value === "required") return { type: "any" };
+    return undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const choice = value as { type?: string; function?: { name?: string } };
+  if (choice.type === "function" && typeof choice.function?.name === "string") return { type: "tool", name: choice.function.name };
+  return undefined;
+}
+
+function chatToolsToAnthropic(tools: unknown): any[] | undefined {
+  if (!Array.isArray(tools)) return undefined;
+  const mapped = tools.map((tool: any) => {
+    const source = tool?.function ?? tool;
+    if (!source || typeof source.name !== "string") return undefined;
+    return { name: source.name, ...(source.description === undefined ? {} : { description: source.description }), input_schema: source.parameters ?? { type: "object", properties: {} } };
+  }).filter((tool) => tool !== undefined);
+  return mapped.length ? mapped : undefined;
+}
+
+function chatContentToAnthropic(content: unknown): unknown {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts = content.map((part: any) => {
+    if (part?.type === "text" && typeof part.text === "string") return { type: "text", text: part.text };
+    if (part?.type === "image_url" && typeof part.image_url?.url === "string") { const source = toAnthropicImageSource(part.image_url.url); return source ? { type: "image", source } : undefined; }
+    return undefined;
+  }).filter((part) => part !== undefined);
+  if (!parts.length) return "";
+  return parts.every((part: any) => part.type === "text") ? parts.map((part: any) => part.text).join("") : parts;
+}
+
+export function toAnthropicRequestFromChat(input: any, model: string): Record<string, unknown> {
+  const systemParts: string[] = [];
+  const messages: AnthropicMessage[] = [];
+  for (const message of input.messages ?? []) {
+    if (message.role === "system") { if (typeof message.content === "string") systemParts.push(message.content); continue; }
+    if (message.role === "tool") {
+      messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: message.tool_call_id, content: typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? "") }] });
+      continue;
+    }
+    const blocks: any[] = [];
+    const converted = chatContentToAnthropic(message.content);
+    if (Array.isArray(converted)) blocks.push(...converted);
+    else if (converted) blocks.push({ type: "text", text: converted });
+    for (const call of message.tool_calls ?? []) blocks.push({ type: "tool_use", id: call.id, name: call.function?.name, input: parse(call.function?.arguments) });
+    if (blocks.length) messages.push({ role: message.role, content: blocks });
+  }
+  const stopSequences = typeof input.stop === "string" ? [input.stop] : Array.isArray(input.stop) ? input.stop : undefined;
+  const toolChoice = chatToolChoiceToAnthropic(input.tool_choice);
+  const tools = chatToolsToAnthropic(input.tools);
+  return {
+    model,
+    messages,
+    max_tokens: input.max_tokens ?? 4096,
+    ...(systemParts.length ? { system: systemParts.join("\n") } : {}),
+    ...(input.stream ? { stream: true } : {}),
+    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+    ...(input.top_p === undefined ? {} : { top_p: input.top_p }),
+    ...(stopSequences ? { stop_sequences: stopSequences } : {}),
+    ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
+    ...(tools ? { tools } : {}),
+  };
+}
+
+export function fromAnthropicResponseToChat(response: any, model: string): Record<string, unknown> {
+  const content = Array.isArray(response.content) ? response.content : [];
+  const text = content.filter((part: any) => part?.type === "text").map((part: any) => part.text ?? "").join("");
+  const thinking = content.filter((part: any) => part?.type === "thinking").map((part: any) => part.thinking ?? "").join("");
+  const toolCalls = content.filter((part: any) => part?.type === "tool_use").map((part: any) => ({ id: part.id, type: "function", function: { name: part.name, arguments: JSON.stringify(part.input ?? {}) } }));
+  const inputTokens = response.usage?.input_tokens ?? 0;
+  const outputTokens = response.usage?.output_tokens ?? 0;
+  const cached = response.usage?.cache_read_input_tokens;
+  return {
+    id: response.id ?? `chatcmpl_${crypto.randomUUID()}`,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content: text || null, ...(thinking ? { reasoning_content: thinking } : {}), ...(toolCalls.length ? { tool_calls: toolCalls } : {}) },
+      finish_reason: toolCalls.length ? "tool_calls" : response.stop_reason === "max_tokens" ? "length" : "stop",
+    }],
+    usage: {
+      prompt_tokens: inputTokens,
+      completion_tokens: outputTokens,
+      total_tokens: inputTokens + outputTokens,
+      ...(cached !== undefined && cached !== null ? { prompt_tokens_details: { cached_tokens: Number(cached) } } : {}),
+    },
+  };
+}

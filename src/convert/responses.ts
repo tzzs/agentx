@@ -1,6 +1,7 @@
 /** Anthropic Messages API <-> Responses API: the direction whose upstream speaks the Responses protocol. */
 import type { AnthropicMessage, AnthropicRequest } from "./shared.js";
 import { chatThinking, imageDataUri, parse, reasoningEffort, responsesToolChoice } from "./shared.js";
+import { fromAnthropicResponseToChat, toAnthropicRequestFromChat } from "./anthropic.js";
 
 function convertContent(content: any, role: string): any {
   if (!Array.isArray(content)) return content;
@@ -96,4 +97,19 @@ export function responsesResponseFailure(response: any): string | undefined {
     return `The upstream response is incomplete (${String(response.incomplete_details?.reason ?? "unknown")}).`;
   }
   return undefined;
+}
+
+/**
+ * Chat Completions <-> Responses API: the local `/v1/chat/completions`
+ * endpoint reaching an upstream whose protocol is "responses". Reuses
+ * `toAnthropicRequestFromChat`/`toResponsesRequest` instead of writing a
+ * separate chat->Responses request mapping.
+ */
+export function toResponsesRequestFromChat(input: any, model: string): Record<string, unknown> {
+  return toResponsesRequest(toAnthropicRequestFromChat(input, model) as unknown as AnthropicRequest, model);
+}
+
+/** Reuses `fromResponsesResponse`/`fromAnthropicResponseToChat` instead of writing a separate Responses->chat response mapping. */
+export function fromResponsesResponseToChat(response: any, model: string): Record<string, unknown> {
+  return fromAnthropicResponseToChat(fromResponsesResponse(response, model), model);
 }

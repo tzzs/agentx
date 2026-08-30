@@ -19,7 +19,6 @@ import { confirm, isCancel } from "@clack/prompts";
 const HELP: Record<string, string> = {
   claude: "Start the local adapter and Claude Code together",
   codex: "Start the local adapter and Codex together",
-  pi: "Launch Pi Agent through the OpenAI-compatible local environment",
   proxy: "Start only the local adapter",
   exec: "Run any command with the temporary Anthropic environment",
   auth: "Manage stored provider credentials",
@@ -104,7 +103,7 @@ function helpText(command?: string): string {
   return lines.join("\n");
 }
 
-const CLIENT_COMMANDS = new Set(["claude", "codex", "pi"]);
+const CLIENT_COMMANDS = new Set(["claude", "codex"]);
 
 /**
  * Version reported by `agentx version`, read from package.json at the package
@@ -189,7 +188,7 @@ async function resolveClientRuntime(command: string, opts: Record<string, string
   };
 }
 
-const CLIENT_LABELS: Record<string, string> = { claude: "Claude Code", codex: "Codex", pi: "Pi" };
+const CLIENT_LABELS: Record<string, string> = { claude: "Claude Code", codex: "Codex" };
 
 /** Print a clear explanation for a client executable that could not be spawned. */
 function reportMissingClient(executable: string): void {
@@ -345,9 +344,9 @@ export async function runForgetCommand(args: string[]): Promise<void> {
 
 /**
  * Resolve the executable to spawn, which env-var shape it expects, and its
- * positional arguments — for claude/codex/pi/exec. exec launches an arbitrary
+ * positional arguments — for claude/codex/exec. exec launches an arbitrary
  * program, so it cannot infer which env-var shape the target expects from its
- * name the way claude/codex/pi can; `--client-protocol` lets the caller say so
+ * name the way claude/codex can; `--client-protocol` lets the caller say so
  * explicitly (default anthropic, matching prior behavior).
  */
 function resolveLaunchTarget(command: string, args: string[], opts: Record<string, string | undefined>): { executable: string; client: "anthropic" | "openai"; commandArgs: string[] } {
@@ -356,17 +355,16 @@ function resolveLaunchTarget(command: string, args: string[], opts: Record<strin
   let executable: string | undefined;
   if (command === "claude") executable = "claude";
   else if (command === "codex") executable = "codex";
-  else if (command === "pi") executable = "pi";
   else if (command === "exec") executable = commandArgs.shift();
   if (!executable) throw new Error("Usage: agentx exec [options] -- <command>");
   const client: "anthropic" | "openai" = command === "exec"
     ? (opts["client-protocol"] === "openai" ? "openai" : "anthropic")
-    : executable === "codex" || executable === "pi" ? "openai" : "anthropic";
+    : executable === "codex" ? "openai" : "anthropic";
   return { executable, client, commandArgs };
 }
 
 /**
- * Shared launch path for `claude`/`codex`/`pi`/`proxy`/`exec`: runtime
+ * Shared launch path for `claude`/`codex`/`proxy`/`exec`: runtime
  * resolution (interactive or not), native-launch bypass, credential
  * resolution with a missing-key recovery flow, adapter startup, and finally
  * handing off to {@link launchClient}. `deps` only affects the final
@@ -377,7 +375,7 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
   // --base-url defines (and persists) a custom provider ad hoc, without going
   // through the TUI's "Add custom provider…" flow — the non-interactive path
   // for exec/scripts/CI, but not restricted to exec: it works the same way
-  // for claude/codex/pi. --provider doubles as the display name here.
+  // for claude/codex. --provider doubles as the display name here.
   if (opts["base-url"]) {
     const protocol: ProviderProtocol = opts.protocol === "responses" || opts.protocol === "anthropic" ? opts.protocol : "chat-completions";
     const definition = registerCustomProvider({ name: opts.provider ?? "custom", baseUrl: opts["base-url"], protocol, model: opts.model });
@@ -422,6 +420,13 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
     return;
   }
 
+  // Resolved before the adapter starts (and before any credential prompt):
+  // resolveLaunchTarget depends only on (command, args, opts), so an
+  // unrecognized command fails fast here instead of leaving a listening
+  // adapter behind for the `finally` below to never reach. `proxy` has no
+  // executable to resolve, so it's exempt.
+  const launchTarget = command === "proxy" ? undefined : resolveLaunchTarget(command, args, opts);
+
   const lastSelection = CLIENT_COMMANDS.has(command)
     ? undefined
     : command === "proxy" || command === "exec"
@@ -445,11 +450,13 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
     return;
   }
   const adapter = await startAdapter(config);
-  const clientLabel = command === "codex" ? "Codex" : command === "claude" ? "Claude Code" : command === "pi" ? "Pi" : "command";
+  const clientLabel = command === "codex" ? "Codex" : command === "claude" ? "Claude Code" : "command";
   console.error(`AgentX\n✓ Client: ${clientLabel}\n✓ Provider: ${config.provider ?? "opencode"}\n✓ Adapter started on ${config.host}:${adapter.port}\n✓ Model: ${config.model}`);
   if (config.host !== "127.0.0.1" && config.host !== "localhost") console.error("Warning: Adapter will be accessible from the network.");
 
   if (command === "proxy") {
+    const base = `http://${config.host}:${adapter.port}`;
+    console.error(`\nEndpoints:\n  Anthropic Messages:       ${base}/v1/messages\n  OpenAI Responses:         ${base}/v1/responses\n  OpenAI Chat Completions:  ${base}/v1/chat/completions\n`);
     console.error("Press Ctrl+C to stop.");
     await new Promise<void>((resolve) => {
       const close = async () => { await adapter.close(); resolve(); };
@@ -459,7 +466,7 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
     return;
   }
 
-  const { executable, client, commandArgs } = resolveLaunchTarget(command, args, opts);
+  const { executable, client, commandArgs } = launchTarget!;
   let codexCatalogFile: string | undefined;
   if (executable === "codex") {
     // Codex needs external context/output limits only now; other launch paths

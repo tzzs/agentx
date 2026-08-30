@@ -219,13 +219,13 @@ test("quick-start menu remembers the last picked action ('native') as the next l
 });
 
 test("quick-start menu falls back to 'start' when the remembered action no longer applies (client lost native capability)", async () => {
-  await saveDefaultRuntime("pi", { provider: "opencode", model: "gpt-5.6-luna" });
-  await saveLastQuickAction("pi", "native"); // "pi" is not in NATIVE_CAPABLE_CLIENTS
+  await saveDefaultRuntime("other-client", { provider: "opencode", model: "gpt-5.6-luna" });
+  await saveLastQuickAction("other-client", "native"); // "other-client" is not in NATIVE_CAPABLE_CLIENTS
 
   const tty = createFakeTTY();
   __setTestIO({ input: tty.input, output: tty.output });
   const initial = { provider: "opencode", model: "gpt-5.6-luna", source: "default" as const, defaultApplied: true };
-  const resultPromise = runInteractiveLauncher("pi", initial);
+  const resultPromise = runInteractiveLauncher("other-client", initial);
 
   await tty.pressEnter(); // accepts "start", the only sane initialValue for a non-native-capable client
 
@@ -233,5 +233,5 @@ test("quick-start menu falls back to 'start' when the remembered action no longe
   assert.equal(outcome.native, undefined);
   assert.equal(outcome.provider, "opencode");
   assert.equal(outcome.model, "gpt-5.6-luna");
-  assert.equal(await loadLastQuickAction("pi"), "start");
+  assert.equal(await loadLastQuickAction("other-client"), "start");
 });

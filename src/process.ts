@@ -146,7 +146,6 @@ export class ClientNotFoundError extends Error {
 export const CLIENT_INSTALL_COMMANDS: Record<string, string> = {
   claude: "npm install -g @anthropic-ai/claude-code",
   codex: "npm install -g @openai/codex",
-  pi: "npm install -g @mariozechner/pi",
 };
 
 /** Run a command through the user's shell with inherited stdio; resolves with the exit code.

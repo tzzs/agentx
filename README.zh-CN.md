@@ -6,7 +6,7 @@
 
 [English](README.md) | 简体中文
 
-通过本地 API 适配器，让 Claude Code、Codex 或 Pi 使用 OpenCode 提供的模型。Claude Code 使用本地 Anthropic 兼容 Messages API，Codex 和 Pi 使用本地 OpenAI 兼容 Responses API。适配器负责将请求转换为上游 API 请求，为子进程注入临时认证信息，并在子进程退出后清理本地服务。
+通过本地 API 适配器，让 Claude Code 或 Codex 使用 OpenCode 提供的模型。Claude Code 使用本地 Anthropic 兼容 Messages API，Codex 使用本地 OpenAI 兼容 Responses API。适配器负责将请求转换为上游 API 请求，为子进程注入临时认证信息，并在子进程退出后清理本地服务。
 
 > **项目状态：** 当前为早期版本。项目包含协议转换层和自动化测试，但在生产使用前仍应使用自己的 OpenCode 账号验证真实上游 API 的兼容性。
 
@@ -48,7 +48,7 @@ npx @tanzz/agentx claude
 
 需要非交互式运行（CI、脚本，没有终端可以提示输入）？提前设置好 `AGENTX_OPENCODE_API_KEY` 即可——见[配置](#配置)。
 
-`codex`、`pi`、`auth`、`usage`、`quota` 等命令的用法见下方[命令](#命令)一节。
+`codex`、`auth`、`usage`、`quota` 等命令的用法见下方[命令](#命令)一节。
 
 ## 安装
 
@@ -87,17 +87,9 @@ agentx codex
 agentx codex --native   # 跳过适配器，直接以你自己的环境运行真正的 `codex`
 ```
 
-### `pi`
-
-通过 OpenAI 兼容本地环境启动 Pi Agent：
-
-```bash
-agentx pi --provider openrouter --model anthropic/claude-sonnet-4
-```
-
 ### `exec`
 
-通过本地适配器执行任意命令。和 `claude`/`codex`/`pi` 不同,`exec` 永远不会弹出交互式运行时选择器——它总是按“CLI 参数 → 环境变量 → 最近一次选择 → 内置默认值”非交互式解析,因此可以安全用于脚本和 CI:
+通过本地适配器执行任意命令。和 `claude`/`codex` 不同,`exec` 永远不会弹出交互式运行时选择器——它总是按“CLI 参数 → 环境变量 → 最近一次选择 → 内置默认值”非交互式解析,因此可以安全用于脚本和 CI:
 
 ```bash
 agentx exec -- claude
@@ -121,7 +113,7 @@ agentx exec --client-protocol openai -- my-openai-compatible-tool
 agentx proxy
 ```
 
-本地 API 地址为 `http://127.0.0.1:<port>`，提供 `GET /health`、`GET /v1/models`、`POST /v1/messages`、`POST /v1/responses`。
+本地 API 地址为 `http://127.0.0.1:<port>`，提供 `GET /health`、`GET /v1/models`、`POST /v1/messages`、`POST /v1/responses`、`POST /v1/chat/completions`。启动 `proxy` 时会打印这三个面向客户端端点各自的完整 URL。
 
 ### `doctor`
 
@@ -289,7 +281,7 @@ agentx forget --provider my-local-llm --remove-provider
 
 ### 运行时配置
 
-如果在交互式终端启动 `claude`、`codex` 或 `pi` 时没有指定 `--provider`/`--model`，且没有设置 `AGENTX_PROVIDER`/`AGENTX_MODEL`，AgentX 会显示交互式运行时启动器，而不是要求你凭空做选择：
+如果在交互式终端启动 `claude` 或 `codex` 时没有指定 `--provider`/`--model`，且没有设置 `AGENTX_PROVIDER`/`AGENTX_MODEL`，AgentX 会显示交互式运行时启动器，而不是要求你凭空做选择：
 
 ```
 ┌  Claude Code — AgentX
@@ -311,7 +303,7 @@ agentx claude --native
 agentx codex --native
 ```
 
-或者在已保存默认值时弹出的快捷菜单中选择「Launch native (skip AgentX)」。`--native` 与 `--provider`/`--model` 同时出现时会静默忽略后者，因为此时已经没有需要 AgentX 配置的内容。`pi` 没有原生模式——它始终依赖一个 OpenAI 兼容后端，因此没有「原生」可以回退。
+或者在已保存默认值时弹出的快捷菜单中选择「Launch native (skip AgentX)」。`--native` 与 `--provider`/`--model` 同时出现时会静默忽略后者，因为此时已经没有需要 AgentX 配置的内容。
 
 如果 `--native` 是嵌套运行在 AgentX 自己启动的客户端内部——例如在由 `agentx claude` 启动的 Claude Code 会话中再次输入 `agentx claude --native`——继承到的环境仍然带着外层启动注入的 `ANTHROPIC_*`/`OPENAI_*` 覆盖值。AgentX 会检测到这种情况（依据它在每个自建环境中都会设置的一个内部标记），并在启动子进程前只清除自己注入的那些变量，使嵌套的客户端仍然以原生方式启动，而不是悄悄指回本该被跳过的 Adapter。一个从未经过 AgentX 的、纯手工配置的环境——即便其中恰好使用了相同的变量名——则完全不会被改动。
 
@@ -325,8 +317,6 @@ npx @tanzz/agentx codex --model gpt-5.6-luna
 ```
 
 启动器通过 `-c` 参数定义一个内联的 `agentx` 模型 Provider，指向 `http://127.0.0.1:<port>/v1`，其 Bearer Token 是以 `OPENAI_API_KEY` 注入的临时本地 Token。启动时还会生成一份模型目录（`~/.config/agentx/codex-models.json`，经 `model_catalog_json` 传入），让目录中的模型——包括你在启动器中输入的自定义 OpenRouter 模型 id——以真实元数据加载，而不是触发 Codex 的 fallback 元数据警告：上下文窗口与输出上限对所有 Provider 生效，在可用时取自公开注册表 models.dev，models.dev 缺失的模型回退到 OpenRouter 公开目录，否则使用保守默认值。DeepSeek 的 `deepseek-v4-pro`/`deepseek-v4-flash` 是个例外：它们是 OpenCode 自己的品牌命名（同时通过 OpenCode 网关和直连的 DeepSeek Provider 提供），两个公开注册表都没有对应词条，因此目录会显式声明它们约 1M 的真实上下文窗口，而不是回退到保守的 128k——否则 Codex 会比必要时机早得多地对长时间 DeepSeek 会话做自动压缩，这与 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 为 Claude Code 修复的是同一类问题（见[模型和路由](#模型和路由)）。新版 Codex 已不再读取那些环境变量，该方式可以正常工作，并完全绕过 Codex 的登录页——无需 ChatGPT 登录或 `~/.codex/auth.json`，也不会修改你已有的 `~/.codex/config.toml`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
-
-Pi Agent 通过与 Codex 相同的 OpenAI 兼容环境启动（`OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL`），其请求也经过同一个本地 Responses 边界转换，因此可以获得与 Codex 相同的 DeepSeek reasoning/tool_choice/错误处理转换。但它不会收到生成的模型目录，所以 AgentX 目前没有渠道像对 Claude Code 或 Codex 那样向它声明模型的上下文窗口。
 
 ## 模型和路由
 
@@ -377,6 +367,7 @@ Claude Code 遇到不认识的模型时，会假定它使用默认的约 200k to
 - Anthropic `tool_choice` 转换为上游 Chat Completions 或 Responses 对应的 tool-choice 结构
 - Responses 和 Chat Completions usage 字段转换为 Anthropic usage 字段
 - Responses 请求/响应与原生 Anthropic Messages API 上游之间的双向转换(针对协议为 `anthropic` 的自定义 Provider),包括流式响应——这是唯一一条 Codex 也会用到、而不仅限于 Claude Code 的转换方向,因为 Codex 只会看到本地的 Responses 端点
+- 本地 `/v1/chat/completions` 端点的请求/响应与原生 Anthropic Messages 或 Responses API 上游之间的双向转换,包括流式响应;这条转换只覆盖主流字段(`messages`/`tools`/`tool_choice`/`max_tokens`/`temperature`/`top_p`/`stop`/`stream`),不映射 DeepSeek 专属的 `thinking`/`reasoning_effort` 扩展字段——一个通用的 Chat Completions 客户端没有理由发送这些字段
 
 DeepSeek 的思考模式要求每个 assistant 回合的 `reasoning_content` 必须回传，并且要挂在它所引出的那个 tool call 所在的同一条消息上；适配器会把一条 assistant 消息的文本、reasoning 与 tool call 保持在同一条消息里，而不是拆分成多条，并且只对 DeepSeek 转发 `reasoning_content`（其它 Chat Completions 上游并不期望这个字段）。当上游以异常方式结束——`content_filter`、`insufficient_system_resource`，或者流结束时既没有 `finish_reason` 也没有 `[DONE]`——都会转换为错误返回，而不是被悄悄当成正常的 `end_turn`。
 

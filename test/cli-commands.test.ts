@@ -249,6 +249,16 @@ test("exec --base-url registers and persists a custom provider, reusable without
   }
 });
 
+test("an unrecognized command rejects before credential resolution or adapter startup, instead of hanging with a listening adapter", async () => {
+  // Before this was fixed, an unknown command only failed inside
+  // resolveLaunchTarget *after* startAdapter() had already bound a port —
+  // nothing ever closed it, so the process hung forever. Rejecting with the
+  // executable-resolution error here (rather than an "API key required"
+  // error from credential resolution, which would run first under the old
+  // ordering) proves the fix: the command is validated before either step.
+  await assert.rejects(() => runClientLaunch("totally-bogus-command", []), /Usage: agentx exec/);
+});
+
 test("agentx forget --remove-provider deletes a custom provider but refuses a built-in one", async () => {
   registerCustomProvider({ name: "Removable Exec", baseUrl: "http://x", protocol: "chat-completions" });
   await runForgetCommand(["--provider", "removable-exec", "--remove-provider"]);

@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { chatResponseFailure, fromAnthropicResponse, fromChatResponse, fromChatResponseToResponses, fromResponsesResponse, responsesResponseFailure, toAnthropicRequest, toChatCompletionsRequest, toChatRequest, toResponsesRequest } from "./convert/index.js";
-import { pipeAnthropicPassthrough, pipeAnthropicStreamToResponses, pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream, type StreamUsageOptions } from "./streaming/index.js";
+import { chatResponseFailure, fromAnthropicResponse, fromAnthropicResponseToChat, fromChatResponse, fromChatResponseToResponses, fromResponsesResponse, fromResponsesResponseToChat, responsesResponseFailure, toAnthropicRequest, toAnthropicRequestFromChat, toChatCompletionsRequest, toChatRequest, toResponsesRequest, toResponsesRequestFromChat } from "./convert/index.js";
+import { pipeAnthropicPassthrough, pipeAnthropicStreamToChat, pipeAnthropicStreamToResponses, pipeChatPassthrough, pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream, pipeResponsesStreamToChat, type StreamUsageOptions } from "./streaming/index.js";
 import type { ProviderModel } from "./providers/types.js";
 import type { TokenUsage } from "./usage/types.js";
 import { honorRequestedModel, providerFor, providers } from "./catalog.js";
@@ -261,6 +261,28 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
       const failure = provider.protocol === "chat-completions" ? chatResponseFailure(value) : responsesResponseFailure(value);
       if (failure) return json(response, 502, { error: { message: failure, type: "upstream_error" } });
       return json(response, watched.status, provider.protocol === "chat-completions" ? fromChatResponseToResponses(value, model) : value);
+    }
+    if (pathname === "/v1/chat/completions" && request.method === "POST") {
+      const proxied = await proxyRequest(config, request, response, token, {
+        fallbackModel: config.model,
+        payload: (input, model, provider) => {
+          if (provider.protocol === "anthropic") return toAnthropicRequestFromChat(input, model);
+          if (provider.protocol === "responses") return toResponsesRequestFromChat(input, model);
+          return { ...input, model }; // already chat-completions-shaped
+        },
+      }, maxBodyBytes);
+      if (!proxied) return;
+      const { input, model, provider, watched } = proxied;
+      const chatOptions = streamOptions(config, provider, sessionFor(input), safeRecord);
+      if (input.stream && provider.protocol === "anthropic") return pipeAnthropicStreamToChat(watched, response, model, chatOptions);
+      if (input.stream && provider.protocol === "responses") return pipeResponsesStreamToChat(watched, response, model, chatOptions);
+      if (input.stream) return pipeChatPassthrough(watched, response, model, chatOptions);
+      if (!watched.body) { response.end(); return; }
+      const value = await watched.json(); recordUsage(value, provider, sessionFor(input));
+      if (provider.protocol === "anthropic") return json(response, watched.status, fromAnthropicResponseToChat(value, model));
+      const failure = provider.protocol === "responses" ? responsesResponseFailure(value) : chatResponseFailure(value);
+      if (failure) return json(response, 502, { error: { message: failure, type: "upstream_error" } });
+      return json(response, watched.status, provider.protocol === "responses" ? fromResponsesResponseToChat(value, model) : value);
     }
     if (pathname !== "/v1/messages" || request.method !== "POST") return json(response, 404, { error: { message: "Not found", type: "not_found" } });
     const proxied = await proxyRequest(config, request, response, token, {
