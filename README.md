@@ -39,22 +39,28 @@ Requirements:
 - Codex installed and available as `codex` on `PATH` when using Codex
 
 ```bash
-export AGENTX_OPENCODE_API_KEY="your-api-key"
-npx agentx claude
+npx @tanzz/agentx claude
 ```
 
-The command starts a loopback-only adapter, waits for it to listen, launches Claude Code with temporary `ANTHROPIC_*` variables, forwards the terminal streams, and shuts the adapter down after Claude Code exits.
+On an interactive terminal, AgentX prompts for your OpenCode API key on first use — the key is kept for the current session only, never written to disk or your shell profile — and walks you through provider/model selection (see [Runtime configuration](#runtime-configuration)). It then starts a loopback-only adapter, waits for it to listen, launches Claude Code with temporary `ANTHROPIC_*` variables, forwards the terminal streams, and shuts the adapter down after Claude Code exits.
 
 The real OpenCode key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
+
+For scripts, CI, or any non-interactive shell, set the key up front instead of relying on the prompt:
+
+```bash
+export AGENTX_OPENCODE_API_KEY="your-api-key"
+npx @tanzz/agentx claude
+```
 
 See [Commands](#commands) below for `codex`, `pi`, `auth`, `usage`, and `quota`.
 
 ## Installation
 
-Use without installation:
+Use without installation — note the `@tanzz/` scope: the unscoped `agentx` name on npm belongs to an unrelated package, so `npx agentx` will not run this tool:
 
 ```bash
-npx agentx claude
+npx @tanzz/agentx claude
 ```
 
 Install globally:
@@ -329,8 +335,8 @@ If `--native` runs nested inside a client AgentX itself launched — for example
 Start Codex with an OpenAI-compatible local Responses endpoint:
 
 ```bash
-npx agentx codex
-npx agentx codex --model gpt-5.6-luna
+npx @tanzz/agentx codex
+npx @tanzz/agentx codex --model gpt-5.6-luna
 ```
 
 The launcher passes `-c` overrides that define an inline `agentx` model provider pointing at `http://127.0.0.1:<port>/v1`, whose bearer token is the temporary local token injected as `OPENAI_API_KEY`. It also generates a model catalog (`~/.config/agentx/codex-models.json`, passed via `model_catalog_json`) so registry models — and any custom OpenRouter model id you enter in the launcher — resolve with real metadata instead of Codex's fallback-metadata warning: context windows and output limits for every provider come from the public models.dev registry when available, fall back to OpenRouter's public catalog for models models.dev lacks, and use conservative defaults otherwise. DeepSeek's `deepseek-v4-pro`/`deepseek-v4-flash` are an exception: they are OpenCode's own branding (served both through the OpenCode gateway and the direct DeepSeek provider), so neither public registry has a matching entry, and the catalog declares their real ~1M context window explicitly instead of falling back to a conservative 128k — otherwise Codex would auto-compact long DeepSeek sessions far earlier than necessary, the same class of issue `CLAUDE_CODE_MAX_CONTEXT_TOKENS` fixes for Claude Code (see [Models and Routing](#models-and-routing)). This works with current Codex releases (which no longer honor those environment variables) and skips Codex's sign-in screen entirely — no ChatGPT login or `~/.codex/auth.json` required, and your existing `~/.codex/config.toml` stays untouched. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.

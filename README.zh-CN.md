@@ -39,22 +39,28 @@
 - 使用 Codex 时，需要已安装且能在 `PATH` 中找到 `codex` 的 Codex
 
 ```bash
-export AGENTX_OPENCODE_API_KEY="your-api-key"
-npx agentx claude
+npx @tanzz/agentx claude
 ```
 
-该命令会启动仅监听本机回环地址的适配器，等待服务就绪，然后使用临时 `ANTHROPIC_*` 环境变量启动 Claude Code，转发终端输入输出，并在 Claude Code 退出后关闭适配器。
+在交互式终端中，首次运行时 AgentX 会提示你输入 OpenCode API Key——该 Key 仅在当前会话有效，绝不会写入磁盘或 shell profile——并引导你完成 Provider / 模型选择（见[运行时配置](#运行时配置)）。随后它会启动仅监听本机回环地址的适配器，等待服务就绪，使用临时 `ANTHROPIC_*` 环境变量启动 Claude Code，转发终端输入输出，并在 Claude Code 退出后关闭适配器。
 
 真实的 OpenCode Key 不会传给 Claude Code。Claude Code 每次只会收到一个随机生成的本地临时 Token。
+
+对于脚本、CI 或任何非交互式 shell，建议提前设置好 Key，而不是依赖交互式提示：
+
+```bash
+export AGENTX_OPENCODE_API_KEY="your-api-key"
+npx @tanzz/agentx claude
+```
 
 `codex`、`pi`、`auth`、`usage`、`quota` 等命令的用法见下方[命令](#命令)一节。
 
 ## 安装
 
-无需安装，直接使用：
+无需安装，直接使用——注意 `@tanzz/` 这个 scope：npm 上不带 scope 的 `agentx` 是另一个无关的包，`npx agentx` 不会运行这个工具：
 
 ```bash
-npx agentx claude
+npx @tanzz/agentx claude
 ```
 
 全局安装：
@@ -319,8 +325,8 @@ agentx codex --native
 使用本地 OpenAI 兼容 Responses API 启动 Codex：
 
 ```bash
-npx agentx codex
-npx agentx codex --model gpt-5.6-luna
+npx @tanzz/agentx codex
+npx @tanzz/agentx codex --model gpt-5.6-luna
 ```
 
 启动器通过 `-c` 参数定义一个内联的 `agentx` 模型 Provider，指向 `http://127.0.0.1:<port>/v1`，其 Bearer Token 是以 `OPENAI_API_KEY` 注入的临时本地 Token。启动时还会生成一份模型目录（`~/.config/agentx/codex-models.json`，经 `model_catalog_json` 传入），让目录中的模型——包括你在启动器中输入的自定义 OpenRouter 模型 id——以真实元数据加载，而不是触发 Codex 的 fallback 元数据警告：上下文窗口与输出上限对所有 Provider 生效，在可用时取自公开注册表 models.dev，models.dev 缺失的模型回退到 OpenRouter 公开目录，否则使用保守默认值。DeepSeek 的 `deepseek-v4-pro`/`deepseek-v4-flash` 是个例外：它们是 OpenCode 自己的品牌命名（同时通过 OpenCode 网关和直连的 DeepSeek Provider 提供），两个公开注册表都没有对应词条，因此目录会显式声明它们约 1M 的真实上下文窗口，而不是回退到保守的 128k——否则 Codex 会比必要时机早得多地对长时间 DeepSeek 会话做自动压缩，这与 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 为 Claude Code 修复的是同一类问题（见[模型和路由](#模型和路由)）。新版 Codex 已不再读取那些环境变量，该方式可以正常工作，并完全绕过 Codex 的登录页——无需 ChatGPT 登录或 `~/.codex/auth.json`，也不会修改你已有的 `~/.codex/config.toml`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
