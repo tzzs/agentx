@@ -1,5 +1,33 @@
 # Changelog
 
+## [3.0.0](https://github.com/tzzs/agentx/compare/v2.0.1...v3.0.0) (2026-08-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove Pi Agent support
+
+### Features
+
+* add local /v1/chat/completions endpoint for full 3-protocol support ([5a693f4](https://github.com/tzzs/agentx/commit/5a693f44b7f3532cafb815eb5520e0ab2efe5be0))
+* **registry:** persist the OpenCode catalog with a 24h TTL ([dfb3ca2](https://github.com/tzzs/agentx/commit/dfb3ca2d3e6fdc362d66c21b43e8796f0834762e))
+* remember quick-start menu action per client ([822c1a9](https://github.com/tzzs/agentx/commit/822c1a9d938b07e3a59c624739c1d9208ed61dab))
+* remember quick-start menu action per client ([bf88067](https://github.com/tzzs/agentx/commit/bf88067d2f46255538f5b48a90f144a61a923533))
+* remove Pi Agent support ([baf04e6](https://github.com/tzzs/agentx/commit/baf04e61a88461f9d97fbfe01729e2c5962980cf))
+* **server:** remove /usage/* HTTP endpoints and harden request handling ([219b9ea](https://github.com/tzzs/agentx/commit/219b9eac5f3d90db96e6042228fcca6ea23292f6))
+
+
+### Bug Fixes
+
+* **cli:** read the version from package.json instead of a hardcoded constant ([5c9c934](https://github.com/tzzs/agentx/commit/5c9c93426ae105857f8d3526fb8a58429e2844ee))
+* drop redundant static "Using: ..." line from quick-start menu ([5f34275](https://github.com/tzzs/agentx/commit/5f34275d4bf4d58a6e67dafac0efb63693c92154))
+* drop redundant static "Using: ..." line from quick-start menu ([813bb22](https://github.com/tzzs/agentx/commit/813bb22e3484d1ef2f465855f21fa549ffacf036))
+* fail fast on an unrecognized command instead of hanging ([5f9311c](https://github.com/tzzs/agentx/commit/5f9311c90d58f438351378e84cc7a0b58f8dc740))
+* **forget:** screen only OpenRouter ids against the OpenRouter catalog ([8e991f8](https://github.com/tzzs/agentx/commit/8e991f881a47c3245ad4509b96b5fba9b8bff7e9))
+* **process:** scrub AgentX's own config vars from native launches ([d1e8a18](https://github.com/tzzs/agentx/commit/d1e8a1852bc242a98208c03667f561127298fd33))
+* **providers:** cap the Anthropic thinking budget under max_tokens ([b680046](https://github.com/tzzs/agentx/commit/b68004608a72c7215ed89da3478622fa2d70d17e))
+* **server:** keep the adapter alive when a request handler rejects ([23832d4](https://github.com/tzzs/agentx/commit/23832d472c405f345a8d559b04b7ce45955c0bdb))
+
 ## [2.0.1](https://github.com/tzzs/agentx/compare/v2.0.0...v2.0.1) (2026-08-28)
 
 
