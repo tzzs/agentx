@@ -420,6 +420,13 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
     return;
   }
 
+  // Resolved before the adapter starts (and before any credential prompt):
+  // resolveLaunchTarget depends only on (command, args, opts), so an
+  // unrecognized command fails fast here instead of leaving a listening
+  // adapter behind for the `finally` below to never reach. `proxy` has no
+  // executable to resolve, so it's exempt.
+  const launchTarget = command === "proxy" ? undefined : resolveLaunchTarget(command, args, opts);
+
   const lastSelection = CLIENT_COMMANDS.has(command)
     ? undefined
     : command === "proxy" || command === "exec"
@@ -459,7 +466,7 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
     return;
   }
 
-  const { executable, client, commandArgs } = resolveLaunchTarget(command, args, opts);
+  const { executable, client, commandArgs } = launchTarget!;
   let codexCatalogFile: string | undefined;
   if (executable === "codex") {
     // Codex needs external context/output limits only now; other launch paths
