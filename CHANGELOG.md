@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.1](https://github.com/tzzs/agentx/compare/v3.0.0...v3.0.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* auto-install npm deps in Makefile build/test targets ([48a0a29](https://github.com/tzzs/agentx/commit/48a0a295f81f9c6d39475e2ba49f0a5da59102a4))
+* auto-install npm deps in Makefile build/test targets ([26d6575](https://github.com/tzzs/agentx/commit/26d6575b67f7229c20c373c03738bbba730e8814))
+
 ## [3.0.0](https://github.com/tzzs/agentx/compare/v2.0.1...v3.0.0) (2026-08-30)
 
 
