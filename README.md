@@ -345,7 +345,7 @@ Pi Agent is launched through the same OpenAI-compatible environment as Codex (`O
 
 ## Models and Routing
 
-The OpenCode model catalog is fetched only when no provider is selected or the selected provider is `opencode`. When the endpoint cannot be reached, the built-in fallback catalog is used:
+The OpenCode model catalog is fetched only when no provider is selected or the selected provider is `opencode`, and only when the last-fetched snapshot (persisted in `runtime.json`) is more than 24 hours old — a fresh snapshot is reused without a network round trip. When the fetch is skipped, absent, or fails, the last persisted snapshot is used; if none has ever been saved, the built-in fallback catalog below is used:
 
 | Model | Upstream protocol |
 | --- | --- |

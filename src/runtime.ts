@@ -34,6 +34,8 @@ export interface RuntimeState {
   last?: RuntimeSelection;
   /** Last-seen OpenRouter catalog ids (cached models.dev-style data, not user state). */
   openrouterModels?: string[];
+  /** Last-seen OpenCode catalog ids plus the time they were fetched, so a fresh snapshot can skip a live refetch. */
+  opencodeModels?: { ids: string[]; fetchedAt: number };
   /** User-registered custom providers, keyed by their derived id. Connection metadata only — never an API key. */
   customProviders?: Record<string, CustomProviderState>;
 }
@@ -59,8 +61,11 @@ function normalizeState(raw: Partial<RuntimeState>): RuntimeState {
   // The OpenRouter catalog id cache is metadata, not user state, but it must
   // round-trip or every offline launch loses the screening list.
   const openrouterModels = Array.isArray(raw.openrouterModels) ? raw.openrouterModels : [];
+  const opencodeModels = raw.opencodeModels && Array.isArray(raw.opencodeModels.ids) && typeof raw.opencodeModels.fetchedAt === "number"
+    ? { ids: raw.opencodeModels.ids, fetchedAt: raw.opencodeModels.fetchedAt }
+    : undefined;
   const customProviders = raw.customProviders && typeof raw.customProviders === "object" ? raw.customProviders : {};
-  return { defaults, lastModels, openrouterModels, customProviders, ...(last ? { last } : {}) };
+  return { defaults, lastModels, openrouterModels, customProviders, ...(last ? { last } : {}), ...(opencodeModels ? { opencodeModels } : {}) };
 }
 
 export async function loadRuntimeState(): Promise<RuntimeState> {
@@ -224,6 +229,22 @@ export async function saveOpenRouterModels(ids: string[]): Promise<void> {
 /** Last-seen OpenRouter catalog ids, or an empty list before the first fetch. */
 export async function loadOpenRouterModels(): Promise<string[]> {
   return (await loadRuntimeState()).openrouterModels ?? [];
+}
+
+/**
+ * Persist the last-seen OpenCode catalog ids with the time they were fetched,
+ * so a later process can decide whether the snapshot is still fresh enough to
+ * skip a live refetch (see `hydrateOpenCodeCatalog` in providers/registry.ts).
+ */
+export async function saveOpenCodeModels(snapshot: { ids: string[]; fetchedAt: number }): Promise<void> {
+  const state = await loadRuntimeState();
+  state.opencodeModels = snapshot;
+  await writeRuntimeState(state);
+}
+
+/** Last-seen OpenCode catalog ids and fetch time, if any snapshot has ever been persisted. */
+export async function loadOpenCodeModels(): Promise<{ ids: string[]; fetchedAt: number } | undefined> {
+  return (await loadRuntimeState()).opencodeModels;
 }
 
 /** Path used for diagnostics and tests. */

@@ -45,7 +45,7 @@ npm test          # 先构建，再执行 node --test（在 dist/ 下自动发�
 
 ### 模型路由与提供商注册表
 
-`src/providers/registry.ts` 是提供商和模型的唯一数据来源。每个 `ProviderDefinition` 列出模型、API key 环境变量名和协议。`refreshProviderCatalog()` 按需刷新目录：仅在未绑定 Provider 或绑定 `opencode` 时拉取 OpenCode 模型列表；只有生成 Codex catalog 时才拉取 models.dev / OpenRouter 元数据。`src/catalog.ts` 重新导出扁平化的模型列表以及 `providerFor(model, providerId)` 解析器，该解析器会匹配模型定义，未知则抛出异常。OpenRouter 接受任意模型 id（注册表条目相当于透传）。
+`src/providers/registry.ts` 是提供商和模型的唯一数据来源。每个 `ProviderDefinition` 列出模型、API key 环境变量名和协议。`refreshProviderCatalog()` 按需刷新目录：仅在未绑定 Provider 或绑定 `opencode` 时拉取 OpenCode 模型列表；只有生成 Codex catalog 时才拉取 models.dev / OpenRouter 元数据。OpenCode 目录会持久化到 `runtime.json`（`opencodeModels: { ids, fetchedAt }`）并带 24 小时 TTL：`hydrateOpenCodeCatalog()` 先从磁盘恢复上次快照，快照未过期（< 24h）则跳过本次网络拉取，过期或从未拉取过才发起实际请求；拉取失败时回退到磁盘上的持久化列表，而不是硬编码的 `fallbackOpenCodeIds`。OpenRouter 目录同理走 `hydrateOpenRouterCatalog()`（无 TTL，仅“本进程是否已拉取过”的一次性判断）。`src/catalog.ts` 重新导出扁平化的模型列表以及 `providerFor(model, providerId)` 解析器，该解析器会匹配模型定义，未知则抛出异常。OpenRouter 接受任意模型 id（注册表条目相当于透传）。
 
 没有隐式 `auto` 路由；运行时必须解析为具体模型。Claude 的后台通道只能通过显式 `backgroundModel` 配置切换。
 

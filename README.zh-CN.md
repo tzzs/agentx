@@ -335,7 +335,7 @@ Pi Agent 通过与 Codex 相同的 OpenAI 兼容环境启动（`OPENAI_BASE_URL`
 
 ## 模型和路由
 
-只有在未指定 Provider 或选择的 Provider 为 `opencode` 时，才会拉取 OpenCode 模型目录。当无法访问该接口时，使用内置的回退目录：
+只有在未指定 Provider 或选择的 Provider 为 `opencode` 时，才会拉取 OpenCode 模型目录；且仅当上次拉取的快照（持久化在 `runtime.json` 中）距今已超过 24 小时才会真正发起网络请求——快照未过期则直接复用，不产生网络往返。跳过拉取、尚无快照或拉取失败时，会使用磁盘上最近一次持久化的快照；若从未成功拉取过，则使用下面内置的回退目录：
 
 | 模型 | 上游协议 |
 | --- | --- |

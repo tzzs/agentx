@@ -1,5 +1,5 @@
 import type { ProviderDefinition, ProviderModel } from "./types.js";
-import { loadOpenRouterModels, saveOpenRouterModels } from "../runtime.js";
+import { loadOpenCodeModels, loadOpenRouterModels, saveOpenCodeModels, saveOpenRouterModels } from "../runtime.js";
 
 const openCodeBase = "https://opencode.ai/zen/go/v1";
 const deepSeekBase = "https://api.deepseek.com/v1";
@@ -14,6 +14,9 @@ const fallbackOpenCodeIds = ["gpt-5.6-luna", "deepseek-v4-pro", "deepseek-v4-fla
 
 /** OpenCode models served through the Responses API rather than Chat Completions. */
 const responsesModelIds = new Set(["gpt-5.6-luna"]);
+
+/** How long a persisted OpenCode catalog snapshot stays fresh enough to skip a live refetch. */
+const OPENCODE_CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * DeepSeek's long-context ids are OpenCode's own branding — the same two ids
@@ -223,6 +226,44 @@ function openCodeModels(ids: string[], devMetadata?: MetadataMap, routerMetadata
   }, devMetadata, routerMetadata));
 }
 
+/**
+ * When this process last knew its in-memory OpenCode model list to be
+ * accurate — set by a live fetch or by hydrating a persisted snapshot from
+ * disk. Unlike `cachedOpenRouterIds` (which starts empty), the registry's
+ * "opencode" entry is always pre-populated with `fallbackOpenCodeIds`
+ * synchronously at module load, so an empty-list check can't serve as the
+ * "already hydrated this process" guard the way it does for OpenRouter —
+ * this timestamp is that guard instead, and doubles as the TTL clock.
+ */
+let openCodeSnapshotFetchedAt: number | undefined;
+
+function applyOpenCodeIds(ids: string[], fetchedAt: number, devMetadata?: MetadataMap, routerMetadata?: MetadataMap): void {
+  const openCode = providerRegistry.find((provider) => provider.id === "opencode");
+  if (openCode) {
+    openCode.models = openCodeModels(ids, devMetadata, routerMetadata);
+    rebuildAllModels();
+  }
+  openCodeSnapshotFetchedAt = fetchedAt;
+}
+
+/**
+ * Hydrate the in-memory OpenCode catalog from the last persisted snapshot, so
+ * a fresh process doesn't discard a recent live fetch just because it
+ * happened in an earlier run. A no-op once this process has already fetched
+ * or hydrated (mirrors `hydrateOpenRouterCatalog`'s already-populated guard).
+ */
+export async function hydrateOpenCodeCatalog(): Promise<string[]> {
+  if (openCodeSnapshotFetchedAt !== undefined) return providerRegistry.find((provider) => provider.id === "opencode")?.models.map((model) => model.model) ?? [];
+  const snapshot = await loadOpenCodeModels();
+  if (snapshot && snapshot.ids.length) applyOpenCodeIds(snapshot.ids, snapshot.fetchedAt);
+  return providerRegistry.find((provider) => provider.id === "opencode")?.models.map((model) => model.model) ?? [];
+}
+
+/** Test-only: clear the in-memory hydration/TTL guard so a test observes a fresh-process fetch decision. */
+export function resetOpenCodeCatalogCache(): void {
+  openCodeSnapshotFetchedAt = undefined;
+}
+
 export const providerRegistry: ProviderDefinition[] = [
   { id: "opencode", name: "OpenCode", apiKeyEnv: "OPENCODE_API_KEY", models: openCodeModels(fallbackOpenCodeIds) },
   { id: "deepseek", name: "DeepSeek", apiKeyEnv: "DEEPSEEK_API_KEY", models: models("deepseek", `${deepSeekBase}/chat/completions`, ["deepseek-v4-pro", "deepseek-v4-flash"], "chat-completions").map((model) => ({ ...model, contextWindow: deepSeekLongContextWindow(model.model) })), quota: { endpoint: "https://api.deepseek.com/user/balance" } },
@@ -301,20 +342,27 @@ export function unregisterCustomProvider(id: string): boolean {
 
 /**
  * Refresh provider model catalogs. OpenCode's list is fetched only when the
- * runtime is unbound or pinned to OpenCode. Metadata is fetched only when a
- * Codex catalog will be generated; it is applied globally because Codex can
- * enumerate multiple providers through the local proxy. Each source tolerates
- * independent failure and mutations stay in place for existing references.
- * The OpenRouter id cache is always hydrated from disk first (no network), so
- * callers get accurate offline screening even when neither refresh runs —
- * e.g. a plain launch bound to OpenRouter with no `metadata` request.
+ * runtime is unbound or pinned to OpenCode, and only when no persisted
+ * snapshot younger than `OPENCODE_CATALOG_TTL_MS` is already in memory — a
+ * plain launch that just hydrated a fresh-enough snapshot from disk doesn't
+ * need a network round trip on every invocation. Metadata is fetched only
+ * when a Codex catalog will be generated; it is applied globally because
+ * Codex can enumerate multiple providers through the local proxy. Each
+ * source tolerates independent failure and mutations stay in place for
+ * existing references. The OpenRouter and OpenCode id caches are always
+ * hydrated from disk first (no network), so callers get accurate offline
+ * screening even when neither refresh runs — e.g. a plain launch bound to
+ * OpenRouter with no `metadata` request.
  */
 export async function refreshProviderCatalog(
   options: { provider?: string; metadata?: boolean } = {},
   fetcher: typeof fetch = fetch,
 ): Promise<{ list: boolean; metadata: boolean }> {
   await hydrateOpenRouterCatalog();
-  const needList = !options.provider || options.provider === "opencode";
+  await hydrateOpenCodeCatalog();
+  const wantsList = !options.provider || options.provider === "opencode";
+  const listIsFresh = openCodeSnapshotFetchedAt !== undefined && Date.now() - openCodeSnapshotFetchedAt < OPENCODE_CATALOG_TTL_MS;
+  const needList = wantsList && !listIsFresh;
   const needMetadata = Boolean(options.metadata);
   if (!needList && !needMetadata) return { list: false, metadata: false };
 
@@ -357,8 +405,9 @@ export async function refreshProviderCatalog(
   if (ids.length) {
     const openCode = providerRegistry.find((provider) => provider.id === "opencode");
     if (openCode) {
-      openCode.models = openCodeModels(ids, sections.get("opencode"), openRouter);
-      rebuildAllModels();
+      const fetchedAt = Date.now();
+      applyOpenCodeIds(ids, fetchedAt, sections.get("opencode"), openRouter);
+      await saveOpenCodeModels({ ids, fetchedAt });
       refreshedList = true;
     }
   }
