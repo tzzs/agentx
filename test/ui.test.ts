@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { __resetTestIO, __setTestIO, providerEntries, runInteractiveLauncher, selectProvider, type ProviderEntry } from "../src/ui.js";
 import { defaultModelFor } from "../src/selection.js";
 import { providerById, providerRegistry, registerCustomProvider, unregisterCustomProvider } from "../src/providers/registry.js";
-import { loadCustomProviders, saveCustomProvider } from "../src/runtime.js";
+import { loadCustomProviders, loadLastQuickAction, saveCustomProvider, saveDefaultRuntime, saveLastQuickAction } from "../src/runtime.js";
 
 test("lists all configured providers from the registry", async () => {
   const entries = await providerEntries();
@@ -183,4 +183,42 @@ test("Remove custom provider: only offered once a custom provider exists, and re
   } finally {
     unregisterCustomProvider(definition.id);
   }
+});
+
+test("quick-start menu remembers the last picked action ('native') as the next launch's default", async () => {
+  await saveDefaultRuntime("claude", { provider: "deepseek", model: "deepseek-v4-pro" });
+  await saveLastQuickAction("claude", "native");
+
+  const tty = createFakeTTY();
+  __setTestIO({ input: tty.input, output: tty.output });
+  const initial = { provider: "deepseek", model: "deepseek-v4-pro", source: "default" as const, defaultApplied: true };
+  const resultPromise = runInteractiveLauncher("claude", initial);
+
+  // "native" is the remembered initialValue, so accepting immediately picks it.
+  await tty.pressEnter();
+
+  const outcome = await resultPromise;
+  assert.equal(outcome.native, true);
+  assert.equal(outcome.provider, "deepseek");
+  assert.equal(outcome.model, "deepseek-v4-pro");
+  // The choice re-persists (a no-op here, but exercises the save path).
+  assert.equal(await loadLastQuickAction("claude"), "native");
+});
+
+test("quick-start menu falls back to 'start' when the remembered action no longer applies (client lost native capability)", async () => {
+  await saveDefaultRuntime("pi", { provider: "opencode", model: "gpt-5.6-luna" });
+  await saveLastQuickAction("pi", "native"); // "pi" is not in NATIVE_CAPABLE_CLIENTS
+
+  const tty = createFakeTTY();
+  __setTestIO({ input: tty.input, output: tty.output });
+  const initial = { provider: "opencode", model: "gpt-5.6-luna", source: "default" as const, defaultApplied: true };
+  const resultPromise = runInteractiveLauncher("pi", initial);
+
+  await tty.pressEnter(); // accepts "start", the only sane initialValue for a non-native-capable client
+
+  const outcome = await resultPromise;
+  assert.equal(outcome.native, undefined);
+  assert.equal(outcome.provider, "opencode");
+  assert.equal(outcome.model, "gpt-5.6-luna");
+  assert.equal(await loadLastQuickAction("pi"), "start");
 });

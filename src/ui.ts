@@ -7,7 +7,8 @@ import {
   clientDisplayName, defaultModelFor, modelAvailable, providerAcceptsCustomModels, resolveModelForProvider, resolveRuntimeNonInteractive, type RuntimeDecision,
 } from "./selection.js";
 import {
-  forgetCustomProvider, forgetRuntime, rememberedModelIds, remembererProviders, saveCustomProvider, saveDefaultRuntime, type RuntimeSelection,
+  forgetCustomProvider, forgetRuntime, loadLastQuickAction, rememberedModelIds, remembererProviders, saveCustomProvider, saveDefaultRuntime,
+  saveLastQuickAction, type RuntimeSelection,
 } from "./runtime.js";
 
 /** Injectable I/O streams every prompt in this module renders through; real process stdio by default. */
@@ -120,10 +121,12 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
     const shortcut = await selectDefaultAction(provider, model, client);
     if (isCancel(shortcut) || shortcut === "cancel") { cancel(`${clientDisplayName(client)} launch cancelled`, stdio()); throw new LaunchCancelledError(0); }
     if (shortcut === "start") {
+      await saveLastQuickAction(client, "start");
       outro("Ready", stdio());
       return { provider, model, madeDefault: false, defaultApplied: true, changed: false, apiKey: sessionKeys.get(provider) };
     }
     if (shortcut === "native") {
+      await saveLastQuickAction(client, "native");
       outro("Launching native — adapter skipped", stdio());
       return { provider, model, madeDefault: false, defaultApplied: true, changed: false, native: true };
     }
@@ -387,18 +390,23 @@ const NATIVE_CAPABLE_CLIENTS = new Set(["claude", "codex"]);
 
 async function selectDefaultAction(provider: string, model: string, client: string): Promise<string | symbol> {
   const runtime = `${providerLabel(provider)} / ${model}`;
+  const nativeCapable = NATIVE_CAPABLE_CLIENTS.has(client);
+  const lastAction = await loadLastQuickAction(client);
+  // Only honor a remembered "native" pick when this client still supports it;
+  // any other remembered value (or none) falls back to "start".
+  const initialValue = lastAction === "native" && nativeCapable ? "native" : "start";
   return select({
     message: "",
     options: [
       { value: "start", label: "Start", hint: runtime },
-      ...(NATIVE_CAPABLE_CLIENTS.has(client)
+      ...(nativeCapable
         ? [{ value: "native", label: "Launch native (skip AgentX)", hint: "no adapter, no env overrides" }]
         : []),
       { value: "change", label: "Change provider / model" },
       { value: "manage", label: "Forget a saved model…", hint: "rename / removed ids" },
       { value: "cancel", label: "Cancel" },
     ],
-    initialValue: "start",
+    initialValue,
     ...stdio(),
   });
 }

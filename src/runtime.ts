@@ -36,6 +36,8 @@ export interface RuntimeState {
   openrouterModels?: string[];
   /** User-registered custom providers, keyed by their derived id. Connection metadata only — never an API key. */
   customProviders?: Record<string, CustomProviderState>;
+  /** Last quick-start action picked per client ("start" or "native"), so the next launch's quick-start menu defaults to it. */
+  lastQuickAction?: Record<string, string>;
 }
 
 /** Config directory path; reads env lazily so tests can redirect it. */
@@ -60,7 +62,8 @@ function normalizeState(raw: Partial<RuntimeState>): RuntimeState {
   // round-trip or every offline launch loses the screening list.
   const openrouterModels = Array.isArray(raw.openrouterModels) ? raw.openrouterModels : [];
   const customProviders = raw.customProviders && typeof raw.customProviders === "object" ? raw.customProviders : {};
-  return { defaults, lastModels, openrouterModels, customProviders, ...(last ? { last } : {}) };
+  const lastQuickAction = raw.lastQuickAction && typeof raw.lastQuickAction === "object" ? raw.lastQuickAction : {};
+  return { defaults, lastModels, openrouterModels, customProviders, lastQuickAction, ...(last ? { last } : {}) };
 }
 
 export async function loadRuntimeState(): Promise<RuntimeState> {
@@ -85,6 +88,18 @@ export async function loadDefaultRuntime(client: string): Promise<RuntimeSelecti
 export async function saveDefaultRuntime(client: string, selection: RuntimeSelection): Promise<void> {
   const state = await loadRuntimeState();
   state.defaults[client] = { provider: selection.provider, model: selection.model };
+  await writeRuntimeState(state);
+}
+
+/** Last quick-start action ("start" or "native") picked for a client, if any. */
+export async function loadLastQuickAction(client: string): Promise<string | undefined> {
+  return (await loadRuntimeState()).lastQuickAction?.[client];
+}
+
+/** Persist the quick-start action picked for a client, so the next launch's menu defaults to it. */
+export async function saveLastQuickAction(client: string, action: string): Promise<void> {
+  const state = await loadRuntimeState();
+  state.lastQuickAction = { ...state.lastQuickAction, [client]: action };
   await writeRuntimeState(state);
 }
 
