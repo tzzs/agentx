@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  forgetCustomProvider, forgetRuntime, loadCustomProviders, loadDefaultRuntime, loadLastModel, loadOpenCodeModels, loadOpenRouterModels, remembererProviders, rememberedModelIds, runtimeFile, saveCustomProvider, saveDefaultRuntime, saveLastModel, saveOpenCodeModels, saveOpenRouterModels,
+  forgetCustomProvider, forgetRuntime, loadCustomProviders, loadDefaultRuntime, loadLastModel, loadLastQuickAction, loadOpenCodeModels, loadOpenRouterModels, remembererProviders, rememberedModelIds, runtimeFile, saveCustomProvider, saveDefaultRuntime, saveLastModel, saveLastQuickAction, saveOpenCodeModels, saveOpenRouterModels,
 } from "../src/runtime.js";
 
 let dir: string;
@@ -48,6 +48,17 @@ test("last model persists per provider", async () => {
 test("returns nothing for absent defaults and last models", async () => {
   assert.equal(await loadDefaultRuntime("nonexistent"), undefined);
   assert.equal(await loadLastModel("nonexistent"), undefined);
+});
+
+test("last quick-start action persists per client and is independent across clients", async () => {
+  await saveLastQuickAction("claude", "native");
+  await saveLastQuickAction("codex", "start");
+  assert.equal(await loadLastQuickAction("claude"), "native");
+  assert.equal(await loadLastQuickAction("codex"), "start");
+  assert.equal(await loadLastQuickAction("nonexistent"), undefined);
+  // Overwriting replaces instead of accumulating.
+  await saveLastQuickAction("claude", "start");
+  assert.equal(await loadLastQuickAction("claude"), "start");
 });
 
 test("persists and reloads the OpenRouter catalog id cache", async () => {
