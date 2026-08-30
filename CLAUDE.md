@@ -25,23 +25,24 @@ npm test          # 先构建，再执行 node --test（在 dist/ 下自动发�
 
 ### 两套协议转换路径
 
-适配器对外暴露两个请求端点，在三种 API 格式之间进行转换。本地面向客户端（client-facing）的端点是：
+适配器对外暴露三个请求端点，在三种 API 格式之间进行转换。本地面向客户端（client-facing）的端点是：
 - `POST /v1/messages` — Anthropic Messages API（Claude Code 使用）
 - `POST /v1/responses` — OpenAI Responses API（Codex 使用）
+- `POST /v1/chat/completions` — OpenAI Chat Completions API（任何只认这个老式端点的客户端）
 
-上游提供商使用 Responses 协议或 Chat Completions 协议。路由决策以每个模型的 `protocol` 字段体现。
+上游提供商使用 Responses 协议、Chat Completions 协议或原生 Anthropic Messages 协议（自定义 Provider）。路由决策以每个模型的 `protocol` 字段体现。
 
 转换函数集中在 `src/convert/`，按**上游协议**（而非转换方向）拆分为四个文件：
 
 - `shared.ts` — 跨方向 helper：图片/effort/thinking/三套 tool-choice 转换、采样参数、JSON 解析等
 - `chat.ts` — 上游 = Chat Completions 的全部方向：`toChatRequest` / `fromChatResponse`（Anthropic ↔ Chat Completions）、`toChatCompletionsRequest` / `fromChatResponseToResponses`（Responses ↔ Chat Completions）
-- `responses.ts` — 上游 = Responses：`toResponsesRequest` / `fromResponsesResponse`（Anthropic ↔ Responses）
-- `anthropic.ts` — 上游 = Anthropic（自定义 Provider 声明 `protocol: "anthropic"` 时专属）：`toAnthropicRequest` / `fromAnthropicResponse`（Responses ↔ Anthropic；Codex 只会看到本地 Responses 端点，仍需经此转换才能到达一个原生 Anthropic 上游）
+- `responses.ts` — 上游 = Responses：`toResponsesRequest` / `fromResponsesResponse`（Anthropic ↔ Responses）；`toResponsesRequestFromChat` / `fromResponsesResponseToChat`（本地 Chat Completions ↔ Responses；分别复用 `toResponsesRequest`/`fromResponsesResponse` 加 `anthropic.ts` 的两个新函数拼出，不重复写转换逻辑）
+- `anthropic.ts` — 上游 = Anthropic（自定义 Provider 声明 `protocol: "anthropic"` 时专属）：`toAnthropicRequest` / `fromAnthropicResponse`（Responses ↔ Anthropic；Codex 只会看到本地 Responses 端点，仍需经此转换才能到达一个原生 Anthropic 上游）；`toAnthropicRequestFromChat` / `fromAnthropicResponseToChat`（本地 Chat Completions ↔ Anthropic，供 `/v1/chat/completions` 使用，只映射主流字段，不映射 DeepSeek 的 `thinking`/`reasoning_effort` 扩展）
 - `index.ts` — barrel 导出，公共函数名不变
 
 `src/catalog.ts` 收敛为纯路由模块，只保留 `providers`（模型列表）/`providerFor`（按 model 选路由）/`honorRequestedModel`，不再含任何转换函数。
 
-对应的流式转换位于 `src/streaming/`（模块化目录，非单一文件）：`pipeChatStreamToResponses`（上游 Chat Completions SSE → 本地 Responses SSE）、`pipeResponsesStream`（上游 Responses 或 Chat Completions SSE → 本地 Anthropic SSE）、`pipeAnthropicPassthrough`/`pipeAnthropicStreamToResponses`（上游 Anthropic SSE ↔ 本地两端点，自定义 Provider 专属）。
+对应的流式转换位于 `src/streaming/`（模块化目录，非单一文件）：`pipeChatStreamToResponses`（上游 Chat Completions SSE → 本地 Responses SSE）、`pipeResponsesStream`（上游 Responses 或 Chat Completions SSE → 本地 Anthropic SSE）、`pipeAnthropicPassthrough`/`pipeAnthropicStreamToResponses`（上游 Anthropic SSE ↔ 本地两端点，自定义 Provider 专属），以及 `pipeAnthropicStreamToChat`/`pipeResponsesStreamToChat`/`pipeChatPassthrough`（本地 `/v1/chat/completions` 对应的三个上游协议方向）。
 
 ### 模型路由与提供商注册表
 

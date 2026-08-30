@@ -450,6 +450,8 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
   if (config.host !== "127.0.0.1" && config.host !== "localhost") console.error("Warning: Adapter will be accessible from the network.");
 
   if (command === "proxy") {
+    const base = `http://${config.host}:${adapter.port}`;
+    console.error(`\nEndpoints:\n  Anthropic Messages:       ${base}/v1/messages\n  OpenAI Responses:         ${base}/v1/responses\n  OpenAI Chat Completions:  ${base}/v1/chat/completions\n`);
     console.error("Press Ctrl+C to stop.");
     await new Promise<void>((resolve) => {
       const close = async () => { await adapter.close(); resolve(); };

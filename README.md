@@ -121,7 +121,7 @@ Start only the local adapter. Press `Ctrl+C` to stop it:
 agentx proxy
 ```
 
-The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`, `GET /v1/models`, `POST /v1/messages`, and `POST /v1/responses`.
+The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`, `GET /v1/models`, `POST /v1/messages`, `POST /v1/responses`, and `POST /v1/chat/completions`. On startup, `proxy` prints the full URL of all three client-facing endpoints.
 
 ### `doctor`
 
@@ -387,6 +387,7 @@ Supported translation areas include:
 - Anthropic `tool_choice` to the upstream's Chat Completions or Responses tool-choice shape
 - Responses and Chat Completions usage data to Anthropic usage fields
 - Responses requests/responses to and from a native Anthropic Messages API upstream (for a custom provider whose protocol is `anthropic`), including streaming — this is the one direction that also runs for Codex, not just Claude Code, since Codex only ever sees the local Responses endpoint
+- Chat Completions requests/responses (the local `/v1/chat/completions` endpoint) to and from a native Anthropic Messages or Responses API upstream, including streaming; this conversion covers mainstream fields only (`messages`/`tools`/`tool_choice`/`max_tokens`/`temperature`/`top_p`/`stop`/`stream`) and does not map DeepSeek's `thinking`/`reasoning_effort` extensions, which a generic Chat Completions client has no reason to send
 
 For DeepSeek specifically, its thinking mode requires every assistant turn's `reasoning_content` to be echoed back anchored to the same message as the tool call it led to; the adapter keeps an assistant message's text, reasoning, and tool calls together instead of splitting them across separate messages, and only forwards `reasoning_content` for DeepSeek (other Chat Completions upstreams do not expect that field). An abnormal upstream stop — `content_filter`, `insufficient_system_resource`, or a stream that ends without either a `finish_reason` or `[DONE]` — surfaces as an error instead of silently reading back as a normal `end_turn`.
 

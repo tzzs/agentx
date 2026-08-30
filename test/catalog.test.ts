@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { honorRequestedModel, providerFor } from "../src/catalog.js";
-import { chatResponseFailure, fromChatResponse, fromChatResponseToResponses, toChatCompletionsRequest, toChatRequest, toResponsesRequest } from "../src/convert/index.js";
+import { chatResponseFailure, fromAnthropicResponseToChat, fromChatResponse, fromChatResponseToResponses, fromResponsesResponseToChat, toAnthropicRequestFromChat, toChatCompletionsRequest, toChatRequest, toResponsesRequest, toResponsesRequestFromChat } from "../src/convert/index.js";
 test("routes DeepSeek models through chat completions", () => {
   assert.equal(providerFor("deepseek-v4-flash").protocol, "chat-completions");
   assert.equal((toChatRequest({ messages: [{ role: "user", content: "Hi" }] }, "deepseek-v4-flash") as any).messages[0].content, "Hi");
@@ -140,6 +140,46 @@ test("flags DeepSeek's insufficient_system_resource and content_filter as failur
   assert.match(chatResponseFailure({ choices: [{ finish_reason: "insufficient_system_resource" }] }) ?? "", /insufficient/);
   assert.match(chatResponseFailure({ choices: [{ finish_reason: "content_filter" }] }) ?? "", /filtered/);
   assert.match(chatResponseFailure({ choices: [{ finish_reason: "weird_new_reason" }] }) ?? "", /weird_new_reason/);
+});
+test("converts a chat completions request (system, tool_calls, tool result, tool_choice, image) to Anthropic shape", () => {
+  const result = toAnthropicRequestFromChat({
+    messages: [
+      { role: "system", content: "Be brief" },
+      { role: "user", content: [{ type: "text", text: "What is this?" }, { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } }] },
+      { role: "assistant", content: "Running", tool_calls: [{ id: "call-1", type: "function", function: { name: "bash", arguments: '{"command":"pwd"}' } }] },
+      { role: "tool", tool_call_id: "call-1", content: "/tmp" },
+    ],
+    max_tokens: 100, stop: "STOP", tool_choice: { type: "function", function: { name: "bash" } },
+    tools: [{ type: "function", function: { name: "bash", description: "Runs a command", parameters: { type: "object", properties: {} } } }],
+  }, "claude-x") as any;
+  assert.equal(result.system, "Be brief");
+  assert.deepEqual(result.messages[0], { role: "user", content: [{ type: "text", text: "What is this?" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "AAA" } }] });
+  assert.deepEqual(result.messages[1], { role: "assistant", content: [{ type: "text", text: "Running" }, { type: "tool_use", id: "call-1", name: "bash", input: { command: "pwd" } }] });
+  assert.deepEqual(result.messages[2], { role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", content: "/tmp" }] });
+  assert.deepEqual(result.stop_sequences, ["STOP"]);
+  assert.deepEqual(result.tool_choice, { type: "tool", name: "bash" });
+  assert.deepEqual(result.tools, [{ name: "bash", description: "Runs a command", input_schema: { type: "object", properties: {} } }]);
+});
+test("converts a chat completions request to Responses shape by reusing toAnthropicRequestFromChat/toResponsesRequest", () => {
+  const result = toResponsesRequestFromChat({ messages: [{ role: "system", content: "Be brief" }, { role: "user", content: "Hi" }], max_tokens: 50 }, "gpt-5.6-luna") as any;
+  assert.equal(result.instructions, "Be brief");
+  assert.equal(result.max_output_tokens, 50);
+  assert.deepEqual(result.input, [{ role: "user", content: [{ type: "input_text", text: "Hi" }] }]);
+});
+test("converts an Anthropic response (text, tool_use, usage) to chat completions shape", () => {
+  const result = fromAnthropicResponseToChat({ id: "msg_1", content: [{ type: "tool_use", id: "call-1", name: "bash", input: { command: "pwd" } }], stop_reason: "tool_use", usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 3 } }, "claude-x") as any;
+  assert.equal(result.object, "chat.completion");
+  assert.equal(result.choices[0].finish_reason, "tool_calls");
+  assert.deepEqual(result.choices[0].message.tool_calls, [{ id: "call-1", type: "function", function: { name: "bash", arguments: '{"command":"pwd"}' } }]);
+  assert.equal(result.usage.prompt_tokens, 10); assert.equal(result.usage.completion_tokens, 5);
+  assert.equal(result.usage.prompt_tokens_details.cached_tokens, 3);
+});
+test("converts a Responses response to chat completions shape by reusing fromResponsesResponse/fromAnthropicResponseToChat", () => {
+  const result = fromResponsesResponseToChat({ id: "resp_1", output: [{ type: "message", content: [{ type: "output_text", text: "Hi" }] }], usage: { input_tokens: 4, output_tokens: 2 } }, "gpt-5.6-luna") as any;
+  assert.equal(result.object, "chat.completion");
+  assert.equal(result.choices[0].message.content, "Hi");
+  assert.equal(result.choices[0].finish_reason, "stop");
+  assert.equal(result.usage.total_tokens, 6);
 });
 test("gates DeepSeek thinking and reasoning_effort behind the provider/model check", () => {
   const deepseek = toChatRequest({ thinking: { type: "disabled" }, messages: [{ role: "user", content: "Hi" }] } as any, "deepseek-v4-flash") as any;

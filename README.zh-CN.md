@@ -121,7 +121,7 @@ agentx exec --client-protocol openai -- my-openai-compatible-tool
 agentx proxy
 ```
 
-本地 API 地址为 `http://127.0.0.1:<port>`，提供 `GET /health`、`GET /v1/models`、`POST /v1/messages`、`POST /v1/responses`。
+本地 API 地址为 `http://127.0.0.1:<port>`，提供 `GET /health`、`GET /v1/models`、`POST /v1/messages`、`POST /v1/responses`、`POST /v1/chat/completions`。启动 `proxy` 时会打印这三个面向客户端端点各自的完整 URL。
 
 ### `doctor`
 
@@ -377,6 +377,7 @@ Claude Code 遇到不认识的模型时，会假定它使用默认的约 200k to
 - Anthropic `tool_choice` 转换为上游 Chat Completions 或 Responses 对应的 tool-choice 结构
 - Responses 和 Chat Completions usage 字段转换为 Anthropic usage 字段
 - Responses 请求/响应与原生 Anthropic Messages API 上游之间的双向转换(针对协议为 `anthropic` 的自定义 Provider),包括流式响应——这是唯一一条 Codex 也会用到、而不仅限于 Claude Code 的转换方向,因为 Codex 只会看到本地的 Responses 端点
+- 本地 `/v1/chat/completions` 端点的请求/响应与原生 Anthropic Messages 或 Responses API 上游之间的双向转换,包括流式响应;这条转换只覆盖主流字段(`messages`/`tools`/`tool_choice`/`max_tokens`/`temperature`/`top_p`/`stop`/`stream`),不映射 DeepSeek 专属的 `thinking`/`reasoning_effort` 扩展字段——一个通用的 Chat Completions 客户端没有理由发送这些字段
 
 DeepSeek 的思考模式要求每个 assistant 回合的 `reasoning_content` 必须回传，并且要挂在它所引出的那个 tool call 所在的同一条消息上；适配器会把一条 assistant 消息的文本、reasoning 与 tool call 保持在同一条消息里，而不是拆分成多条，并且只对 DeepSeek 转发 `reasoning_content`（其它 Chat Completions 上游并不期望这个字段）。当上游以异常方式结束——`content_filter`、`insufficient_system_resource`，或者流结束时既没有 `finish_reason` 也没有 `[DONE]`——都会转换为错误返回，而不是被悄悄当成正常的 `end_turn`。
 
