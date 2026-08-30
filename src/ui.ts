@@ -1,5 +1,5 @@
 import { stdin as realStdin, stdout as realStdout } from "node:process";
-import { autocomplete, cancel, intro, isCancel, log, multiselect, note, outro, select, text } from "@clack/prompts";
+import { autocomplete, cancel, intro, isCancel, multiselect, note, outro, select, text } from "@clack/prompts";
 import { providerRegistry, openRouterCatalogIds, registerCustomProvider, unregisterCustomProvider } from "./providers/registry.js";
 import type { ProviderDefinition, ProviderProtocol } from "./providers/types.js";
 import { promptCredential, storedCredential } from "./credentials.js";
@@ -117,7 +117,6 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
   const title = `${clientDisplayName(client)} — AgentX`;
   intro(title, stdio());
   if (startWithDefault) {
-    log.message(`Using: ${providerLabel(provider)} / ${model}`, stdio());
     const shortcut = await selectDefaultAction(provider, model, client);
     if (isCancel(shortcut) || shortcut === "cancel") { cancel(`${clientDisplayName(client)} launch cancelled`, stdio()); throw new LaunchCancelledError(0); }
     if (shortcut === "start") {
