@@ -109,6 +109,10 @@ test("discoverClaudeSessionId returns undefined when nothing changed, and when m
   const since = Date.now();
   assert.equal(await discoverClaudeSessionId(since, projectsDir), undefined);
 
+  // A short delay guarantees both writes land strictly after `since` — without it,
+  // filesystem mtime rounding can put one write on either side of the boundary,
+  // making only one file register as a hit and flaking the "ambiguous" assertion below.
+  await new Promise((resolve) => setTimeout(resolve, 20));
   await writeFile(join(projectDir, `${CLAUDE_ID}.jsonl`), "{}");
   await writeFile(join(projectDir, "44444444-4444-4444-8444-444444444444.jsonl"), "{}");
   // Two files touched in the same window is ambiguous — better to record nothing than guess.
