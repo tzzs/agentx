@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.2.0](https://github.com/tzzs/agentx/compare/v3.1.0...v3.2.0) (2026-09-01)
+
+
+### Features
+
+* **ui:** lead the launcher with a top-level transport menu ([29b428d](https://github.com/tzzs/agentx/commit/29b428d5667dc97627b4c17e68ac5e35495a0261))
+* **ui:** lead the launcher with a top-level transport menu ([8e3ea85](https://github.com/tzzs/agentx/commit/8e3ea85549845e2fdd8076b9d3af079eb9950075))
+
+
+### Bug Fixes
+
+* **test:** avoid mtime-boundary flake in discoverClaudeSessionId test ([cc050ea](https://github.com/tzzs/agentx/commit/cc050ead3df38fffefa2e0da61b060e48bd69b98))
+* **test:** avoid mtime-boundary flake in discoverClaudeSessionId test ([e8bebcd](https://github.com/tzzs/agentx/commit/e8bebcde63f7f253a684b6559abe4990eaf9d3cd))
+
 ## [3.1.0](https://github.com/tzzs/agentx/compare/v3.0.1...v3.1.0) (2026-09-01)
 
 
