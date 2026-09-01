@@ -281,7 +281,25 @@ agentx forget --provider my-local-llm --remove-provider
 
 ### 运行时配置
 
-如果在交互式终端启动 `claude` 或 `codex` 时没有指定 `--provider`/`--model`，且没有设置 `AGENTX_PROVIDER`/`AGENTX_MODEL`，AgentX 会显示交互式运行时启动器，而不是要求你凭空做选择：
+如果在交互式终端启动 `claude` 或 `codex` 时没有指定 `--provider`/`--model`，且没有设置 `AGENTX_PROVIDER`/`AGENTX_MODEL`，AgentX 会先弹出一个顶层菜单，优先问清楚「走 AgentX 路由，还是原生启动」这个传输层问题，而不是要求你凭空做选择。菜单选项取决于当前对这个 client 已知的状态：
+
+- **还没配置过任何 Provider：** 「Configure a provider」/「Launch native」/「Cancel」。
+- **已经配置过 Provider，但这个 client 还没启动过：** 「Select provider / model」/「Launch native」/「Cancel」。
+- **这个 client 已经有保存过的默认值：** 「Start」/「Launch native」/「Change provider / model」/「Forget a saved model…」（仅当确实有可清理的记录时才出现）/「Cancel」。
+
+```
+┌  Claude Code — AgentX
+│
+◆
+│  ● Start                          DeepSeek / deepseek-v4-pro
+│  ○ Launch native (skip AgentX)
+│  ○ Change provider / model
+│  ○ Forget a saved model…
+│  ○ Cancel
+└
+```
+
+「Launch native」只对在 AgentX 之外有自己登录/计费方式的 client 出现（Claude Code、Codex——见[原生启动](#原生启动)）；「Start」只在这个 client 已经有保存过的默认值可以复用时才出现。选择配置/选择/更换 Provider 会打开 Provider 和模型选择器：
 
 ```
 ┌  Claude Code — AgentX
@@ -292,7 +310,7 @@ agentx forget --provider my-local-llm --remove-provider
 └
 ```
 
-当前运行时会从已保存的默认值加载：存在已保存默认时先显示快捷菜单，可以直接启动，或进入选择器重新选择 Provider / 模型。该菜单会按客户端分别记住上一次选择的动作（「Start」或「Launch native」），下次启动时自动预选同一项。模型选择支持搜索：输入文字即可按模型 id 过滤列表，↑/↓ 选择、Enter 确认。切换 Provider 会自动为该 Provider 解析模型，并记住每个 Provider 最近使用的模型。完成选择后会自动保存为该客户端的默认运行时，下次启动直接从该默认值开始。非交互场景会跳过界面，按「`--provider` → 环境变量 → 已保存默认值 → 内置默认值」解析。
+该菜单会按客户端分别记住上一次选择的动作（「Start」或「Launch native」），下次启动时自动预选同一项。模型选择支持搜索：输入文字即可按模型 id 过滤列表，↑/↓ 选择、Enter 确认。切换 Provider 会自动为该 Provider 解析模型，并记住每个 Provider 最近使用的模型。完成选择后会自动保存为该客户端的默认运行时，下次启动直接从该默认值开始。非交互场景会跳过界面，按「`--provider` → 环境变量 → 已保存默认值 → 内置默认值」解析。
 
 #### 原生启动
 
@@ -303,7 +321,7 @@ agentx claude --native
 agentx codex --native
 ```
 
-或者在已保存默认值时弹出的快捷菜单中选择「Launch native (skip AgentX)」。`--native` 与 `--provider`/`--model` 同时出现时会静默忽略后者，因为此时已经没有需要 AgentX 配置的内容。
+或者在顶层菜单中选择「Launch native (skip AgentX)」——无论是否配置过 Provider、这个 client 是否启动过，这一项始终存在。`--native` 与 `--provider`/`--model` 同时出现时会静默忽略后者，因为此时已经没有需要 AgentX 配置的内容。
 
 如果 `--native` 是嵌套运行在 AgentX 自己启动的客户端内部——例如在由 `agentx claude` 启动的 Claude Code 会话中再次输入 `agentx claude --native`——继承到的环境仍然带着外层启动注入的 `ANTHROPIC_*`/`OPENAI_*` 覆盖值。AgentX 会检测到这种情况（依据它在每个自建环境中都会设置的一个内部标记），并在启动子进程前只清除自己注入的那些变量，使嵌套的客户端仍然以原生方式启动，而不是悄悄指回本该被跳过的 Adapter。一个从未经过 AgentX 的、纯手工配置的环境——即便其中恰好使用了相同的变量名——则完全不会被改动。
 

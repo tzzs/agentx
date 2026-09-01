@@ -70,10 +70,14 @@ export async function providerEntries(): Promise<ProviderEntry[]> {
  * Interactive runtime launcher.
  *
  * Uses the clack prompt library to present the provider and model pickers in
- * sequence. A saved default short-circuits to a quick-start menu; choosing
- * "Change provider / model" reopens the pickers. Completing the pickers always
- * persists the selection as the client's default, so the next launch starts
- * from it.
+ * sequence. Unless an explicit `--provider`/`--model`/env override picked the
+ * runtime already, a top-level menu asks the transport question first — native
+ * vs AgentX-routed — with its option set shaped by what's already known about
+ * this client (see `selectTopLevelAction`). Choosing "Configure a provider" /
+ * "Select provider / model" / "Change provider / model" (the same destination,
+ * worded for whichever state the user is in) reopens the pickers below.
+ * Completing the pickers always persists the selection as the client's
+ * default, so the next launch starts from it.
  */
 export async function runInteractiveLauncher(client: string, initial: RuntimeDecision): Promise<LauncherOutcome> {
   if (!io.input.isTTY || !io.output.isTTY) {
@@ -85,51 +89,38 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
   let model = initial.model;
   let madeDefault = false;
   let changed = false;
-  let startWithDefault = initial.defaultApplied;
+  const defaultApplied = initial.defaultApplied;
   // Keys entered during this launch, keyed by provider id. Only the key for
   // the finally selected provider is returned; switching to an already
   // configured provider must not leak the earlier key as its credential.
   const sessionKeys = new Map<string, string>();
 
-  // No saved default for this client: help the user pick a first runtime.
-  let providerChosenViaFirstUse = false;
-  if (!initial.defaultApplied && initial.source === "builtin") {
-    const configured = providers.filter((entry) => entry.configured);
-    // A single configured provider: deduce it automatically instead of asking.
-    if (configured.length === 1) {
-      provider = configured[0].definition.id;
-      model = await resolveModelForProvider(provider);
-      changed = true;
-    } else if (configured.length > 1) {
-      const chosen = await chooseRuntime(providers, `${clientDisplayName(client)} — AgentX`);
-      if (chosen) {
-        providerChosenViaFirstUse = true;
-        provider = chosen.provider;
-        model = await resolveModelForProvider(provider);
-        if (chosen.apiKey) sessionKeys.set(provider, chosen.apiKey);
-        changed = true;
-      }
-    }
-  }
-
-  // The quick-start path offers the common actions, plus a manager for saved
-  // models whose upstream ids were renamed or pulled (e.g. OpenRouter).
   const title = `${clientDisplayName(client)} — AgentX`;
   intro(title, stdio());
-  if (startWithDefault) {
-    const shortcut = await selectDefaultAction(provider, model, client);
-    if (isCancel(shortcut) || shortcut === "cancel") { cancel(`${clientDisplayName(client)} launch cancelled`, stdio()); throw new LaunchCancelledError(0); }
-    if (shortcut === "start") {
+
+  // An explicit --provider/--model/env override already picked the runtime;
+  // skip the transport question and go straight to confirming it below.
+  if (initial.source === "builtin" || initial.source === "default") {
+    // No saved default for this client yet: default the picker to a provider
+    // that's already configured (if any) instead of the hardcoded fallback.
+    if (!defaultApplied) {
+      const configured = providers.find((entry) => entry.configured);
+      if (configured) provider = configured.definition.id;
+    }
+
+    const action = await selectTopLevelAction(client, providers, provider, model, defaultApplied);
+    if (isCancel(action) || action === "cancel") { cancel(`${clientDisplayName(client)} launch cancelled`, stdio()); throw new LaunchCancelledError(0); }
+    if (action === "start") {
       await saveLastQuickAction(client, "start");
       outro("Ready", stdio());
-      return { provider, model, madeDefault: false, defaultApplied: true, changed: false, apiKey: sessionKeys.get(provider) };
+      return { provider, model, madeDefault: false, defaultApplied, changed: false, apiKey: sessionKeys.get(provider) };
     }
-    if (shortcut === "native") {
+    if (action === "native") {
       await saveLastQuickAction(client, "native");
       outro("Launching native — adapter skipped", stdio());
-      return { provider, model, madeDefault: false, defaultApplied: true, changed: false, native: true };
+      return { provider, model, madeDefault: false, defaultApplied, changed: false, native: true };
     }
-    if (shortcut === "manage") {
+    if (action === "manage") {
       await runSavedModelManager();
       // Forgetting may have removed the saved default this client depends on;
       // re-resolve the effective runtime so the picker flow below starts from
@@ -139,9 +130,10 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
       model = fresh.model;
       changed = true;
     }
+    // action === "change": fall through into the provider/model pickers below.
   }
 
-  const nextProvider = providerChosenViaFirstUse ? provider : await selectProvider(providers, provider);
+  const nextProvider = await selectProvider(providers, provider);
   if (isCancel(nextProvider)) { cancel("Provider selection cancelled", stdio()); throw new LaunchCancelledError(0); }
   if (nextProvider !== provider) {
     provider = nextProvider;
@@ -169,7 +161,7 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
 
   outro(changed ? `${providerLabel(provider)} / ${model}` : "Ready", stdio());
 
-  return { provider, model, madeDefault, defaultApplied: startWithDefault, changed, apiKey: sessionKeys.get(provider) };
+  return { provider, model, madeDefault, defaultApplied, changed, apiKey: sessionKeys.get(provider) };
 }
 
 function providerLabel(id: string): string {
@@ -381,34 +373,59 @@ async function promptCustomModelId(label: string, suggestion: string): Promise<s
 }
 
 /**
- * Quick-start menu shown when a saved default exists. The user can launch
- * immediately, enter the full reconfiguration flow, or review/forget saved
- * model ids that are no longer offered upstream.
+ * Top-level menu shown before anything else (unless an explicit
+ * --provider/--model/env override already picked the runtime — see the
+ * `initial.source` check in `runInteractiveLauncher`). Its option set is
+ * shaped by two independent signals: whether any provider has been
+ * configured at all, and whether this specific client has a saved default
+ * runtime (`defaultApplied`, i.e. has completed the picker below before):
+ *
+ *   - nothing configured yet:      Configure a provider / [Native] / Cancel
+ *   - configured, never used here: Select provider / model / [Native] / Cancel
+ *   - configured and used before:  Start / [Native] / Change provider / model / [Forget] / Cancel
+ *
+ * Native only appears for clients with their own login/billing outside
+ * AgentX (see NATIVE_CAPABLE_CLIENTS); "Forget a saved model…" only appears
+ * once there's actually something saved to forget.
  */
-/** Clients with their own login/billing outside AgentX, so a native (adapter-free) launch makes sense. */
 const NATIVE_CAPABLE_CLIENTS = new Set(["claude", "codex"]);
 
-async function selectDefaultAction(provider: string, model: string, client: string): Promise<string | symbol> {
-  const runtime = `${providerLabel(provider)} / ${model}`;
+async function selectTopLevelAction(
+  client: string,
+  providers: ProviderEntry[],
+  provider: string,
+  model: string,
+  defaultApplied: boolean,
+): Promise<string | symbol> {
   const nativeCapable = NATIVE_CAPABLE_CLIENTS.has(client);
-  const lastAction = await loadLastQuickAction(client);
-  // Only honor a remembered "native" pick when this client still supports it;
-  // any other remembered value (or none) falls back to "start".
-  const initialValue = lastAction === "native" && nativeCapable ? "native" : "start";
-  return select({
-    message: "",
-    options: [
-      { value: "start", label: "Start", hint: runtime },
-      ...(nativeCapable
-        ? [{ value: "native", label: "Launch native (skip AgentX)", hint: "no adapter, no env overrides" }]
-        : []),
-      { value: "change", label: "Change provider / model" },
-      { value: "manage", label: "Forget a saved model…", hint: "rename / removed ids" },
-      { value: "cancel", label: "Cancel" },
-    ],
-    initialValue,
-    ...stdio(),
-  });
+  const hasConfiguredProvider = providers.some((entry) => entry.configured);
+  const hasSavedModels = (await remembererProviders()).length > 0;
+
+  const nativeOption = { value: "native", label: "Launch native (skip AgentX)", hint: "no adapter, no env overrides" };
+  const changeOption = defaultApplied
+    ? { value: "change", label: "Change provider / model" }
+    : {
+        value: "change",
+        label: hasConfiguredProvider ? "Select provider / model" : "Configure a provider",
+        hint: hasConfiguredProvider ? undefined : "connect an upstream (API key required)",
+      };
+
+  // A saved default puts the fast path ("Start") first; otherwise the
+  // provider/model step is the primary action and leads, with native (an
+  // escape hatch around AgentX entirely) right after it.
+  const options: Array<{ value: string; label: string; hint?: string }> = defaultApplied
+    ? [{ value: "start", label: "Start", hint: `${providerLabel(provider)} / ${model}` }, ...(nativeCapable ? [nativeOption] : []), changeOption]
+    : [changeOption, ...(nativeCapable ? [nativeOption] : [])];
+  if (hasSavedModels) options.push({ value: "manage", label: "Forget a saved model…", hint: "rename / removed ids" });
+  options.push({ value: "cancel", label: "Cancel" });
+
+  // Recalling the last quick-start pick only makes sense once there's a
+  // "Start" to fall back to; cases without a saved default always default
+  // the cursor to the primary (first) option instead.
+  const lastAction = defaultApplied ? await loadLastQuickAction(client) : undefined;
+  const initialValue = lastAction === "native" && nativeCapable ? "native" : options[0].value;
+
+  return select({ message: "", options, initialValue, ...stdio() });
 }
 
 /**
@@ -479,25 +496,6 @@ export async function runSavedModelManager(provider?: string): Promise<void> {
   }
   if (forgot) note(`Forgot ${forgot} model${forgot === 1 ? "" : "s"} from ${providerLabel(chosenProvider)}.`, "Saved models", stdio());
   else note("Nothing forgotten (no saved references were found).", "Saved models", stdio());
-}
-
-/**
- * First-use "Choose runtime" picker. Configured providers are listed first so
- * users can begin immediately; an unconfigured provider enters the setup flow.
- * Returns the chosen provider with its session key (when prompted for), or
- * undefined when cancelled.
- */
-async function chooseRuntime(entries: ProviderEntry[], prompt: string): Promise<{ provider: string; apiKey?: string } | undefined> {
-  const entryMap = new Map(entries.map((entry) => [entry.definition.id, entry]));
-  const chosen = await select({ message: prompt, options: providerOptions(entries), ...stdio() });
-  if (isCancel(chosen)) return undefined;
-  const entry = entryMap.get(chosen);
-  let apiKey: string | undefined;
-  if (entry && !entry.configured) {
-    apiKey = await configureProvider(entry.definition);
-    if (!apiKey) return undefined;
-  }
-  return { provider: chosen, apiKey };
 }
 
 /**
