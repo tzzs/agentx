@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.1.0](https://github.com/tzzs/agentx/compare/v3.0.1...v3.1.0) (2026-09-01)
+
+
+### Features
+
+* auto-restore native/provider routing when resuming a known session ([e5878f1](https://github.com/tzzs/agentx/commit/e5878f1432193e20b26504d3aca90be326a22d3a))
+* auto-restore native/provider routing when resuming a known session ([e84b156](https://github.com/tzzs/agentx/commit/e84b156c2749a8347567c63f7be650c2ccbefe07))
+
 ## [3.0.1](https://github.com/tzzs/agentx/compare/v3.0.0...v3.0.1) (2026-08-30)
 
 
