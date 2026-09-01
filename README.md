@@ -317,6 +317,17 @@ or, on the quick-start menu shown when a saved default exists, choose **Launch n
 
 If `--native` runs nested inside a client AgentX itself launched — for example, typing `agentx claude --native` inside a Claude Code session started by `agentx claude` — the inherited environment still carries the outer launch's `ANTHROPIC_*`/`OPENAI_*` overrides. AgentX detects this (via an internal marker set on every environment it constructs) and strips exactly its own variables before spawning, so the nested client still starts native instead of silently pointing back at the adapter it's meant to skip. A hand-configured environment that never went through AgentX — including one that happens to set the same variable names for your own purposes — is left completely untouched.
 
+#### Resuming a session
+
+AgentX remembers, per Claude Code/Codex session id, whether that session was last launched natively or through a specific provider/model. When you resume a known session with an explicit session id —
+
+```bash
+agentx claude -- --resume <session-id>
+agentx codex -- resume <session-id>
+```
+
+— AgentX looks up that id and relaunches it the same way automatically: native stays native, and an AgentX-routed session reuses its provider/model without showing the picker. Any explicit `--native`, `--provider`, or `--model` you pass still wins over the recalled record. A `--resume`/`resume` without an id (interactive picker, search term, or `--continue`/`--last`) can't be resolved ahead of the launch, so it falls back to the normal flow — but AgentX still records what that launch used once it starts, ready for the next explicit resume. This tracking is best-effort: it depends on locating the session's local transcript file, and simply does nothing if that lookup is inconclusive (e.g. another session was touched around the same time).
+
 ## Codex
 
 Start Codex with an OpenAI-compatible local Responses endpoint:

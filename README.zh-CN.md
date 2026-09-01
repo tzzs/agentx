@@ -307,6 +307,17 @@ agentx codex --native
 
 如果 `--native` 是嵌套运行在 AgentX 自己启动的客户端内部——例如在由 `agentx claude` 启动的 Claude Code 会话中再次输入 `agentx claude --native`——继承到的环境仍然带着外层启动注入的 `ANTHROPIC_*`/`OPENAI_*` 覆盖值。AgentX 会检测到这种情况（依据它在每个自建环境中都会设置的一个内部标记），并在启动子进程前只清除自己注入的那些变量，使嵌套的客户端仍然以原生方式启动，而不是悄悄指回本该被跳过的 Adapter。一个从未经过 AgentX 的、纯手工配置的环境——即便其中恰好使用了相同的变量名——则完全不会被改动。
 
+#### 恢复（resume）会话
+
+AgentX 会按 Claude Code/Codex 自己的会话 id 记住：这个会话上一次是原生启动的，还是通过某个具体的 Provider/模型启动的。当你带着明确的会话 id 恢复一个已知会话时——
+
+```bash
+agentx claude -- --resume <session-id>
+agentx codex -- resume <session-id>
+```
+
+——AgentX 会查到这条记录并按同样的方式自动重新启动：原生的仍然原生启动；由 AgentX 路由的会话则直接复用当初的 Provider/模型，不再弹出选择器。你在命令行显式传入的 `--native`、`--provider`、`--model` 始终优先于回忆出的记录。不带 id 的 `--resume`/`resume`（交互式选择器、搜索词，或 `--continue`/`--last`）在启动前无法确定具体是哪个会话，因此会退回正常流程——但 AgentX 仍会在这次启动开始后记下它使用的参数，供以后显式恢复时使用。这项跟踪是尽力而为的：它依赖于定位到该会话的本地记录文件，一旦这个查找结果不明确（例如同一时间段内还有另一个会话被触碰过），就什么也不做。
+
 ## Codex 支持
 
 使用本地 OpenAI 兼容 Responses API 启动 Codex：
