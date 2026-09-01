@@ -12,8 +12,9 @@ import { credentialInstructions, credentialSource, promptCredential, resolveCred
 import { runQuotaCommand } from "./quota.js";
 import { runUsageStats } from "./usage/cli.js";
 import { resolveRuntimeNonInteractive } from "./selection.js";
-import { forgetCustomProvider, loadCustomProviders, loadLastSelection, remembererProviders, rememberedModelIds, saveCustomProvider, saveLastModel, saveOpenRouterModels } from "./runtime.js";
+import { forgetCustomProvider, loadCustomProviders, loadLastSelection, loadSessionRecord, remembererProviders, rememberedModelIds, saveCustomProvider, saveLastModel, saveOpenRouterModels, saveSessionRecord } from "./runtime.js";
 import { catalogModels, writeCodexCatalog } from "./codex-catalog.js";
+import { applySessionRecord, discoverClaudeSessionId, discoverCodexSessionId, resumeSessionId } from "./sessions.js";
 import { confirm, isCancel } from "@clack/prompts";
 
 const HELP: Record<string, string> = {
@@ -190,6 +191,25 @@ async function resolveClientRuntime(command: string, opts: Record<string, string
 
 const CLIENT_LABELS: Record<string, string> = { claude: "Claude Code", codex: "Codex" };
 
+/** Small backdated slack on the launch-start timestamp so a session file the client writes to almost immediately isn't missed by an mtime comparison. */
+const SESSION_DISCOVERY_SLACK_MS = 250;
+
+/**
+ * Passive, best-effort tracking: after a claude/codex launch, look for the
+ * transcript file it just touched (new session or resume) and remember how
+ * it was launched, so a future resume of the same id can restore it without
+ * asking. Failure here must never affect the launch outcome — it already
+ * finished by the time this runs.
+ */
+async function trackSession(command: string, since: number, info: { mode: "native" } | { mode: "agentx"; provider: string; model: string }): Promise<void> {
+  if (!CLIENT_COMMANDS.has(command)) return;
+  try {
+    const id = command === "claude" ? await discoverClaudeSessionId(since) : await discoverCodexSessionId(since);
+    if (!id) return;
+    await saveSessionRecord(id, { client: command, recordedAt: Date.now(), ...info });
+  } catch { /* passive tracking only */ }
+}
+
 /** Print a clear explanation for a client executable that could not be spawned. */
 function reportMissingClient(executable: string): void {
   const label = CLIENT_LABELS[executable] ?? `"${executable}"`;
@@ -343,6 +363,17 @@ export async function runForgetCommand(args: string[]): Promise<void> {
 }
 
 /**
+ * The client-facing arguments for claude/codex/exec: everything after a `--`
+ * separator verbatim, or (for claude/codex without one) `args` stripped of
+ * adapter flags. Shared by {@link resolveLaunchTarget} and the resume-record
+ * lookup, which both need the same view before any adapter flags are parsed.
+ */
+function computeCommandArgs(command: string, args: string[]): string[] {
+  const separator = args.indexOf("--");
+  return separator >= 0 ? args.slice(separator + 1) : CLIENT_COMMANDS.has(command) ? clientArguments(args) : [];
+}
+
+/**
  * Resolve the executable to spawn, which env-var shape it expects, and its
  * positional arguments — for claude/codex/exec. exec launches an arbitrary
  * program, so it cannot infer which env-var shape the target expects from its
@@ -350,8 +381,7 @@ export async function runForgetCommand(args: string[]): Promise<void> {
  * explicitly (default anthropic, matching prior behavior).
  */
 function resolveLaunchTarget(command: string, args: string[], opts: Record<string, string | undefined>): { executable: string; client: "anthropic" | "openai"; commandArgs: string[] } {
-  const separator = args.indexOf("--");
-  const commandArgs = separator >= 0 ? args.slice(separator + 1) : CLIENT_COMMANDS.has(command) ? clientArguments(args) : [];
+  const commandArgs = computeCommandArgs(command, args);
   let executable: string | undefined;
   if (command === "claude") executable = "claude";
   else if (command === "codex") executable = "codex";
@@ -371,7 +401,7 @@ function resolveLaunchTarget(command: string, args: string[], opts: Record<strin
  * `launchClient` call, so tests can exercise the install-recovery flow.
  */
 export async function runClientLaunch(command: string, args: string[], deps: ClientLaunchDeps = {}): Promise<void> {
-  const opts = options(args);
+  let opts = options(args);
   // --base-url defines (and persists) a custom provider ad hoc, without going
   // through the TUI's "Add custom provider…" flow — the non-interactive path
   // for exec/scripts/CI, but not restricted to exec: it works the same way
@@ -388,6 +418,26 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
   // interactive quick-start menu (detected via `runtime.native` below).
   const nativeCapable = command === "claude" || command === "codex";
   let nativeRequested = nativeCapable && isNativeRequested(opts);
+  // If this launch resumes a session AgentX has seen before (an explicit
+  // session UUID passed to --resume/resume), restore whichever way it was
+  // launched last time — native or a specific provider/model — instead of
+  // asking again. Any routing the user gave explicitly still wins; see
+  // applySessionRecord's doc comment.
+  let resumedSessionId: string | undefined;
+  if (CLIENT_COMMANDS.has(command)) {
+    resumedSessionId = resumeSessionId(command as "claude" | "codex", computeCommandArgs(command, args));
+    if (resumedSessionId) {
+      const record = await loadSessionRecord(resumedSessionId);
+      const applied = applySessionRecord(opts, nativeRequested, record);
+      opts = applied.opts;
+      if (applied.forceNative) {
+        nativeRequested = true;
+        console.error(`AgentX\n✓ Resuming session ${resumedSessionId} — previously launched natively, skipping provider selection.`);
+      } else if (applied.applied && record) {
+        console.error(`AgentX\n✓ Resuming session ${resumedSessionId} — reusing ${record.provider}/${record.model} from the original launch.`);
+      }
+    }
+  }
   if (CLIENT_COMMANDS.has(command) && !nativeRequested) {
     // The launcher needs the OpenCode catalog when the provider is not yet known.
     await refreshProviderCatalog({ provider: opts.provider ?? process.env.AGENTX_PROVIDER });
@@ -413,10 +463,11 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
     // this process is itself nested inside a client AgentX already launched
     // (e.g. `agentx claude --native` typed inside an agentx-started Claude
     // Code session) — see its doc comment in process.ts.
-    const separator = args.indexOf("--");
-    const commandArgs = separator >= 0 ? args.slice(separator + 1) : clientArguments(args);
+    const commandArgs = computeCommandArgs(command, args);
+    const since = Date.now() - SESSION_DISCOVERY_SLACK_MS;
     console.error(`AgentX\n✓ Client: ${CLIENT_LABELS[command]} (native — adapter skipped)`);
     process.exitCode = await launchClient(command, commandArgs, nativeClientEnvironment(process.env), deps);
+    await trackSession(command, since, { mode: "native" });
     return;
   }
 
@@ -479,7 +530,9 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
       : commandArgs;
 
   try {
+    const since = Date.now() - SESSION_DISCOVERY_SLACK_MS;
     process.exitCode = await launchClient(executable, launchArgs, clientEnvironment(config, adapter, client), deps);
+    await trackSession(command, since, { mode: "agentx", provider: config.provider ?? "opencode", model: config.model });
   } finally {
     await adapter.close();
   }

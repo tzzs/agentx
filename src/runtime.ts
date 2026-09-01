@@ -24,6 +24,22 @@ export interface CustomProviderState {
   model?: string;
 }
 
+/**
+ * Launch parameters recorded for one client (Claude Code/Codex) session id, so
+ * a later `--resume`/`resume` of the same id can restore how it was launched
+ * without asking again. `mode` is written explicitly at record time rather
+ * than inferred from which fields are present — an untracked session id must
+ * read as "unknown", never silently as "native".
+ */
+export interface SessionRecord {
+  client: string;
+  mode: "native" | "agentx";
+  /** Only meaningful when mode is "agentx" — native sessions never went through AgentX's routing. */
+  provider?: string;
+  model?: string;
+  recordedAt: number;
+}
+
 /** Persistent, non-secret agent runtime state (no API keys ever stored here). */
 export interface RuntimeState {
   /** Default runtime per client id (claude, codex). */
@@ -40,6 +56,8 @@ export interface RuntimeState {
   customProviders?: Record<string, CustomProviderState>;
   /** Last quick-start action picked per client ("start" or "native"), so the next launch's quick-start menu defaults to it. */
   lastQuickAction?: Record<string, string>;
+  /** Launch parameters keyed by the client's own session id, so `--resume` can restore them. See {@link SessionRecord}. */
+  sessions?: Record<string, SessionRecord>;
 }
 
 /** Config directory path; reads env lazily so tests can redirect it. */
@@ -68,7 +86,8 @@ function normalizeState(raw: Partial<RuntimeState>): RuntimeState {
     : undefined;
   const customProviders = raw.customProviders && typeof raw.customProviders === "object" ? raw.customProviders : {};
   const lastQuickAction = raw.lastQuickAction && typeof raw.lastQuickAction === "object" ? raw.lastQuickAction : {};
-  return { defaults, lastModels, openrouterModels, customProviders, lastQuickAction, ...(last ? { last } : {}), ...(opencodeModels ? { opencodeModels } : {}) };
+  const sessions = raw.sessions && typeof raw.sessions === "object" ? raw.sessions : {};
+  return { defaults, lastModels, openrouterModels, customProviders, lastQuickAction, sessions, ...(last ? { last } : {}), ...(opencodeModels ? { opencodeModels } : {}) };
 }
 
 export async function loadRuntimeState(): Promise<RuntimeState> {
@@ -260,6 +279,27 @@ export async function saveOpenCodeModels(snapshot: { ids: string[]; fetchedAt: n
 /** Last-seen OpenCode catalog ids and fetch time, if any snapshot has ever been persisted. */
 export async function loadOpenCodeModels(): Promise<{ ids: string[]; fetchedAt: number } | undefined> {
   return (await loadRuntimeState()).opencodeModels;
+}
+
+/** Cap on remembered sessions so runtime.json doesn't grow without bound over long-term use. */
+const MAX_REMEMBERED_SESSIONS = 200;
+
+/** Persist (or refresh) the launch parameters used for one client session id. */
+export async function saveSessionRecord(sessionId: string, record: SessionRecord): Promise<void> {
+  const state = await loadRuntimeState();
+  const sessions: Record<string, SessionRecord> = { ...state.sessions, [sessionId]: record };
+  const ids = Object.keys(sessions);
+  if (ids.length > MAX_REMEMBERED_SESSIONS) {
+    const oldest = ids.sort((a, b) => sessions[a].recordedAt - sessions[b].recordedAt).slice(0, ids.length - MAX_REMEMBERED_SESSIONS);
+    for (const id of oldest) delete sessions[id];
+  }
+  state.sessions = sessions;
+  await writeRuntimeState(state);
+}
+
+/** The recorded launch parameters for a client session id, if AgentX has seen it before. */
+export async function loadSessionRecord(sessionId: string): Promise<SessionRecord | undefined> {
+  return (await loadRuntimeState()).sessions?.[sessionId];
 }
 
 /** Path used for diagnostics and tests. */

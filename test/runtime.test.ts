@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  forgetCustomProvider, forgetRuntime, loadCustomProviders, loadDefaultRuntime, loadLastModel, loadLastQuickAction, loadOpenCodeModels, loadOpenRouterModels, remembererProviders, rememberedModelIds, runtimeFile, saveCustomProvider, saveDefaultRuntime, saveLastModel, saveLastQuickAction, saveOpenCodeModels, saveOpenRouterModels,
+  forgetCustomProvider, forgetRuntime, loadCustomProviders, loadDefaultRuntime, loadLastModel, loadLastQuickAction, loadOpenCodeModels, loadOpenRouterModels, loadSessionRecord, remembererProviders, rememberedModelIds, runtimeFile, saveCustomProvider, saveDefaultRuntime, saveLastModel, saveLastQuickAction, saveOpenCodeModels, saveOpenRouterModels, saveSessionRecord,
 } from "../src/runtime.js";
 
 let dir: string;
@@ -178,4 +178,30 @@ test("forgetCustomProvider removes the persisted definition and any default/last
 
   // Forgetting an id that was never saved reports no damage.
   assert.equal(await forgetCustomProvider("never-existed"), false);
+});
+
+test("session records round-trip and distinguish native from agentx-routed sessions", async () => {
+  await saveSessionRecord("11111111-1111-4111-8111-111111111111", { client: "claude", mode: "native", recordedAt: 1 });
+  await saveSessionRecord("22222222-2222-4222-8222-222222222222", { client: "codex", mode: "agentx", provider: "deepseek", model: "deepseek-v4-pro", recordedAt: 2 });
+
+  assert.deepEqual(await loadSessionRecord("11111111-1111-4111-8111-111111111111"), { client: "claude", mode: "native", recordedAt: 1 });
+  assert.deepEqual(await loadSessionRecord("22222222-2222-4222-8222-222222222222"), { client: "codex", mode: "agentx", provider: "deepseek", model: "deepseek-v4-pro", recordedAt: 2 });
+  // An id AgentX has never seen must read as "unknown", not as either mode.
+  assert.equal(await loadSessionRecord("33333333-3333-4333-8333-333333333333"), undefined);
+});
+
+test("saving a session record for an existing id overwrites it instead of accumulating", async () => {
+  const id = "44444444-4444-4444-8444-444444444444";
+  await saveSessionRecord(id, { client: "claude", mode: "agentx", provider: "opencode", model: "gpt-5.6-luna", recordedAt: 10 });
+  await saveSessionRecord(id, { client: "claude", mode: "native", recordedAt: 20 });
+  assert.deepEqual(await loadSessionRecord(id), { client: "claude", mode: "native", recordedAt: 20 });
+});
+
+test("session records are capped so runtime.json doesn't grow without bound, dropping the oldest first", async () => {
+  for (let i = 0; i < 210; i++) {
+    await saveSessionRecord(`cap-${i}`, { client: "claude", mode: "native", recordedAt: i });
+  }
+  assert.equal(await loadSessionRecord("cap-0"), undefined);
+  assert.equal(await loadSessionRecord("cap-9"), undefined);
+  assert.deepEqual(await loadSessionRecord("cap-209"), { client: "claude", mode: "native", recordedAt: 209 });
 });
