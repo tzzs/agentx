@@ -235,3 +235,98 @@ test("quick-start menu falls back to 'start' when the remembered action no longe
   assert.equal(outcome.model, "gpt-5.6-luna");
   assert.equal(await loadLastQuickAction("other-client"), "start");
 });
+
+// --- Top-level menu: shape driven by (any provider configured?, this client used before?) ---
+//
+// Provider-configured status comes straight from process.env (storedCredential
+// reads AGENTX_<KEY> / <KEY>); this dev shell has real opencode/openrouter
+// credentials exported, so these tests scope both the credential env vars and
+// XDG_CONFIG_HOME to themselves and restore everything in `finally`.
+
+const CREDENTIAL_ENV_VARS = ["AGENTX_OPENCODE_API_KEY", "OPENCODE_GO_API_KEY", "AGENTX_OPENROUTER_API_KEY", "OPENROUTER_API_KEY", "AGENTX_DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY"];
+
+/** Runs `fn` with every known provider credential env var cleared (optionally re-adding a few), plus a fresh, isolated runtime.json. Restores both afterward. */
+async function withIsolatedRuntime<T>(envOverrides: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+  const savedEnv = new Map(CREDENTIAL_ENV_VARS.map((key) => [key, process.env[key]]));
+  const savedConfigDir = process.env.XDG_CONFIG_HOME;
+  const tmp = await mkdtemp(join(tmpdir(), "agentx-ui-toplevel-"));
+  for (const key of CREDENTIAL_ENV_VARS) delete process.env[key];
+  for (const [key, value] of Object.entries(envOverrides)) process.env[key] = value;
+  process.env.XDG_CONFIG_HOME = tmp;
+  try {
+    return await fn();
+  } finally {
+    for (const [key, value] of savedEnv) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    if (savedConfigDir === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = savedConfigDir;
+    await rm(tmp, { recursive: true, force: true });
+  }
+}
+
+async function cancelAtTopLevelMenu(client: string, initial: { provider: string; model: string; source: "builtin" | "default"; defaultApplied: boolean }, tty: FakeTTY): Promise<string> {
+  const resultPromise = runInteractiveLauncher(client, initial);
+  // Attach the rejection expectation synchronously, before yielding to the
+  // event loop below — otherwise the node:test runner sees an unhandled
+  // rejection in the window between creating the promise and awaiting it.
+  const rejection = assert.rejects(resultPromise, { name: "LaunchCancelledError" });
+  await tty.pressCtrlC();
+  await rejection;
+  return tty.text;
+}
+
+test("top-level menu: no provider configured shows Configure a provider / Native / Cancel — no Start, no Forget", async () => {
+  await withIsolatedRuntime({}, async () => {
+    const tty = createFakeTTY();
+    __setTestIO({ input: tty.input, output: tty.output });
+    const initial = { provider: "opencode", model: defaultModelFor("opencode"), source: "builtin" as const, defaultApplied: false };
+    const text = await cancelAtTopLevelMenu("claude", initial, tty);
+
+    assert.match(text, /Configure a provider/);
+    assert.match(text, /Launch native \(skip AgentX\)/);
+    assert.ok(text.indexOf("Configure a provider") < text.indexOf("Launch native"), "the provider setup step leads, native is the escape hatch");
+    assert.doesNotMatch(text, /\bStart\b/);
+    assert.doesNotMatch(text, /Forget a saved model/);
+    assert.doesNotMatch(text, /Select provider \/ model/);
+    assert.doesNotMatch(text, /Change provider \/ model/);
+  });
+});
+
+test("top-level menu: no provider configured, non-native-capable client shows only Configure a provider / Cancel", async () => {
+  await withIsolatedRuntime({}, async () => {
+    const tty = createFakeTTY();
+    __setTestIO({ input: tty.input, output: tty.output });
+    const initial = { provider: "opencode", model: defaultModelFor("opencode"), source: "builtin" as const, defaultApplied: false };
+    const text = await cancelAtTopLevelMenu("proxy", initial, tty);
+
+    assert.match(text, /Configure a provider/);
+    assert.doesNotMatch(text, /Launch native/);
+  });
+});
+
+test("top-level menu: provider configured but this client never launched shows Select provider / model / Native / Cancel — no Start", async () => {
+  await withIsolatedRuntime({ AGENTX_DEEPSEEK_API_KEY: "test-key" }, async () => {
+    const tty = createFakeTTY();
+    __setTestIO({ input: tty.input, output: tty.output });
+    const initial = { provider: "opencode", model: defaultModelFor("opencode"), source: "builtin" as const, defaultApplied: false };
+    const text = await cancelAtTopLevelMenu("claude", initial, tty);
+
+    assert.match(text, /Select provider \/ model/);
+    assert.match(text, /Launch native \(skip AgentX\)/);
+    assert.ok(text.indexOf("Select provider / model") < text.indexOf("Launch native"), "picking up the already-configured provider leads, native is the escape hatch");
+    assert.doesNotMatch(text, /\bStart\b/);
+    assert.doesNotMatch(text, /Configure a provider/);
+  });
+});
+
+test("top-level menu: Forget only appears once something is actually saved, even for a client that never launched", async () => {
+  await withIsolatedRuntime({ AGENTX_DEEPSEEK_API_KEY: "test-key" }, async () => {
+    // Recorded via a different client (e.g. `codex`) or `proxy`/`exec`; "claude" itself still has no saved default.
+    await saveLastModel("deepseek", "deepseek-v4-pro");
+
+    const tty = createFakeTTY();
+    __setTestIO({ input: tty.input, output: tty.output });
+    const initial = { provider: "opencode", model: defaultModelFor("opencode"), source: "builtin" as const, defaultApplied: false };
+    const text = await cancelAtTopLevelMenu("claude", initial, tty);
+
+    assert.match(text, /Forget a saved model/);
+  });
+});

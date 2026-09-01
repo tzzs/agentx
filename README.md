@@ -291,7 +291,25 @@ Built-in providers cannot be removed this way. Both Claude Code and Codex can re
 
 ### Runtime configuration
 
-When `claude` or `codex` is started on an interactive terminal without `--provider`/`--model` and without `AGENTX_PROVIDER`/`AGENTX_MODEL`, AgentX shows an interactive runtime launcher instead of requiring you to pick anything:
+When `claude` or `codex` is started on an interactive terminal without `--provider`/`--model` and without `AGENTX_PROVIDER`/`AGENTX_MODEL`, AgentX leads with a top-level menu that asks the transport question first — AgentX-routed or native — before anything else. Its options depend on what's already known for this client:
+
+- **Nothing configured yet:** `Configure a provider` / `Launch native` / `Cancel`.
+- **A provider is configured, but this client hasn't launched before:** `Select provider / model` / `Launch native` / `Cancel`.
+- **This client already has a saved default:** `Start` / `Launch native` / `Change provider / model` / `Forget a saved model…` (only once something is actually saved) / `Cancel`.
+
+```
+┌  Claude Code — AgentX
+│
+◆
+│  ● Start                          DeepSeek / deepseek-v4-pro
+│  ○ Launch native (skip AgentX)
+│  ○ Change provider / model
+│  ○ Forget a saved model…
+│  ○ Cancel
+└
+```
+
+`Launch native` only appears for clients with their own login/billing outside AgentX (Claude Code, Codex — see [Native launch](#native-launch)); `Start` only appears once this client has a saved default to reuse. Choosing to configure/select/change a provider opens the provider and model pickers:
 
 ```
 ┌  Claude Code — AgentX
@@ -302,7 +320,7 @@ When `claude` or `codex` is started on an interactive terminal without `--provid
 └
 ```
 
-The current runtime is loaded from the saved default: a quick-start menu lets you launch immediately or reopen the pickers to change provider / model. The menu remembers which action (**Start** or **Launch native**) you picked last time, per client, and pre-selects it on the next launch. The model picker is searchable: type to filter the list by model id, with ↑/↓ to select and Enter to confirm. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Completing the pickers always saves the selection as the client's default, so the next launch starts from it. Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
+The menu remembers which action (**Start** or **Launch native**) you picked last time, per client, and pre-selects it on the next launch. The model picker is searchable: type to filter the list by model id, with ↑/↓ to select and Enter to confirm. Switching provider automatically resolves a model for that provider and remembers the last model used on it. Completing the pickers always saves the selection as the client's default, so the next launch starts from it. Non-interactive sessions skip the UI and resolve `--provider` → env vars → saved default → built-in defaults.
 
 #### Native launch
 
@@ -313,7 +331,7 @@ agentx claude --native
 agentx codex --native
 ```
 
-or, on the quick-start menu shown when a saved default exists, choose **Launch native (skip AgentX)**. `--native` combined with `--provider`/`--model` silently ignores them, since there is nothing left for AgentX to configure.
+or, on the top-level menu, choose **Launch native (skip AgentX)** — it's offered there regardless of whether a provider is configured yet or this client has launched before. `--native` combined with `--provider`/`--model` silently ignores them, since there is nothing left for AgentX to configure.
 
 If `--native` runs nested inside a client AgentX itself launched — for example, typing `agentx claude --native` inside a Claude Code session started by `agentx claude` — the inherited environment still carries the outer launch's `ANTHROPIC_*`/`OPENAI_*` overrides. AgentX detects this (via an internal marker set on every environment it constructs) and strips exactly its own variables before spawning, so the nested client still starts native instead of silently pointing back at the adapter it's meant to skip. A hand-configured environment that never went through AgentX — including one that happens to set the same variable names for your own purposes — is left completely untouched.
 
