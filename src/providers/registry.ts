@@ -417,7 +417,13 @@ export async function refreshProviderCatalog(
 
 export function providerFor(model: string, providerId?: string): ProviderModel {
   const candidates = providerId ? allModels.filter((item) => item.provider === providerId) : allModels;
-  const match = candidates.find((item) => item.model === model) ?? (providerId === "openrouter" ? candidates[0] && { ...candidates[0], model } : undefined);
+  // OpenRouter and runtime-registered custom endpoints accept arbitrary model
+  // ids (the registry only holds a single template entry for the latter), so
+  // synthesize the requested id from the provider's template — protocol and
+  // endpoint routing still come from the definition.
+  const provider = providerId ? providerRegistry.find((entry) => entry.id === providerId) : undefined;
+  const acceptsArbitraryIds = providerId === "openrouter" || Boolean(provider?.custom);
+  const match = candidates.find((item) => item.model === model) ?? (acceptsArbitraryIds ? candidates[0] && { ...candidates[0], model } : undefined);
   if (!match) throw new Error(`Model "${model}" is not available. Available models: ${candidates.map((item) => `${item.provider}/${item.model}`).join(", ")}`);
   return match;
 }

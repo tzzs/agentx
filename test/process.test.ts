@@ -5,6 +5,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { backgroundModel, clientEnvironment, codexLaunchArgs, nativeClientEnvironment, runCommand, ClientNotFoundError } from "../src/process.js";
+import { hydrateProfileCredentials, resetProfileCredentials } from "../src/credentials.js";
+
+test("never leaks shell-profile credentials into a launched client's environment", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "agentx-process-profile-"));
+  try {
+    writeFileSync(join(dir, ".zshrc"), "# >>> agentx credentials: AGENTX_LEAK_TEST_API_KEY >>>\nexport AGENTX_LEAK_TEST_API_KEY='sk-leak-secret'\n# <<< agentx credentials: AGENTX_LEAK_TEST_API_KEY <<<\n");
+    await hydrateProfileCredentials({ SHELL: "/bin/zsh", HOME: dir }, "linux");
+    const adapter = { port: 8788, token: "local-token" } as any;
+    const config = { host: "127.0.0.1", port: 8787, model: "m", apiKey: "sk-leak-secret", logLevel: "info", retry: 0 };
+    for (const client of ["anthropic", "openai"] as const) {
+      const env = clientEnvironment(config as any, adapter, client);
+      assert.equal(env.AGENTX_LEAK_TEST_API_KEY, undefined);
+      assert.ok(!Object.values(env).includes("sk-leak-secret"), "the upstream key must not reach the client");
+    }
+  } finally {
+    resetProfileCredentials();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("injects OpenAI environment for Codex", async () => {
   const adapter = { port: 8788, token: "local-token" } as any;

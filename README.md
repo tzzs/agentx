@@ -42,7 +42,7 @@ Requirements:
 npx @tanzz/agentx claude
 ```
 
-On an interactive terminal, AgentX prompts for your OpenCode API key on first use and walks you through provider/model selection (see [Runtime configuration](#runtime-configuration)) — you don't set anything up yourself beforehand. The key is kept for the current session only, never written to disk or your shell profile, and is used to configure the adapter and inject the environment Claude Code needs. AgentX then starts a loopback-only adapter, waits for it to listen, launches Claude Code with temporary `ANTHROPIC_*` variables, forwards the terminal streams, and shuts the adapter down after Claude Code exits.
+On an interactive terminal, AgentX prompts for your OpenCode API key on first use and walks you through provider/model selection (see [Runtime configuration](#runtime-configuration)) — you don't set anything up yourself beforehand. The key is kept for the current session only and never written to disk; persisting it to your shell profile is a separate, explicit opt-in in [`agentx config`](#config). It is used to configure the adapter and inject the environment Claude Code needs. AgentX then starts a loopback-only adapter, waits for it to listen, launches Claude Code with temporary `ANTHROPIC_*` variables, forwards the terminal streams, and shuts the adapter down after Claude Code exits.
 
 The real OpenCode key is never passed to Claude Code. Claude Code receives a random per-process local token instead.
 
@@ -160,6 +160,17 @@ agentx auth status --provider deepseek   # show current source and state
 agentx auth logout --provider deepseek   # explain how to remove the variable
 ```
 
+### `config`
+
+Configure providers without starting the adapter or a client — inspect credential status and add or remove custom endpoints:
+
+```bash
+agentx config    # interactive provider manager
+agentx config --provider "My Local LLM" --base-url http://localhost:11434 --protocol chat-completions   # non-interactive add
+```
+
+AgentX keeps no key store of its own. Selecting an unconfigured provider (or adding one) in the interactive manager offers to load its API key and write it to your shell profile — zsh `~/.zshrc` (honoring `ZDOTDIR`) or bash `~/.bashrc`/`~/.bash_profile` — as an export block delimited by `# >>> agentx credentials` markers. The write happens only after you confirm where it goes, backs an existing profile up to `<profile>.agentx.bak`, replaces the block idempotently on later runs, and is undone by deleting the block (or restoring the backup); a warning is printed if the profile is readable by other local users. On later launches AgentX reads these blocks back automatically (current shell's profile only, environment variables still take precedence), so the provider works without sourcing the profile first — but the key is never copied into the environment the launched client inherits. Nothing is ever written without that confirmation, and shells AgentX can't edit safely (e.g. fish) fall back to printed instructions. Non-interactive terminals print the provider list with credential status instead.
+
 ### `usage`
 
 Print token usage statistics collected from every request the adapter serves:
@@ -230,9 +241,9 @@ agentx proxy --host 0.0.0.0
 
 ## Credentials and Profiles
 
-Credentials come exclusively from environment variables: AgentX-specific variables are namespaced with the `AGENTX_` prefix (e.g. `AGENTX_OPENCODE_API_KEY`) so they never clash with same-named variables set for other tools; at runtime the value is injected into upstream requests as the plain key — the prefix exists only in the variable name. A legacy unprefixed variable (such as `OPENCODE_API_KEY`) is still picked up directly if it is already set. Resolution order: `--api-key`, `AGENTX_<PROVIDER>_API_KEY`, legacy `<PROVIDER>_API_KEY`, then an interactive prompt. When you type a key interactively, AgentX keeps it for the current session only and prints the manual `export …` line you can add to your shell profile; AgentX never writes to your shell profile itself.
+Credentials come exclusively from environment variables: AgentX-specific variables are namespaced with the `AGENTX_` prefix (e.g. `AGENTX_OPENCODE_API_KEY`) so they never clash with same-named variables set for other tools; at runtime the value is injected into upstream requests as the plain key — the prefix exists only in the variable name. A legacy unprefixed variable (such as `OPENCODE_API_KEY`) is still picked up directly if it is already set. Resolution order: `--api-key`, `AGENTX_<PROVIDER>_API_KEY`, legacy `<PROVIDER>_API_KEY`, then the matching block [`agentx config`](#config) wrote to your shell profile, then an interactive prompt. On startup AgentX reads those profile blocks back (current shell's profile only) so a provider configured there works immediately, without sourcing the file first; environment variables always win over the profile, and the profile value is never merged into the process environment — only the adapter uses it, it is not inherited by the launched client. When you type a key interactively, AgentX keeps it for the current session only and prints the manual `export …` line you can add to your shell profile. The launch flow never writes to your shell profile itself; only `agentx config` will — after you explicitly confirm it — write the marked export block described there.
 
-Non-secret runtime selection is stored in a single `~/.config/agentx/runtime.json` file: per-client defaults, the last model per provider, and the most recent selection. API keys are never written to this file or to any AgentX-managed storage, and AgentX does not modify your shell profile.
+Non-secret runtime selection is stored in a single `~/.config/agentx/runtime.json` file: per-client defaults, the last model per provider, and the most recent selection. API keys are never written to this file or to any AgentX-managed storage; the one place AgentX can write a key is the confirmed shell-profile block managed by `agentx config`, and that block is read back at startup as described above.
 
 For Claude Code, the local token is injected as `ANTHROPIC_AUTH_TOKEN` rather than `ANTHROPIC_API_KEY`, matching provider integrations such as DeepSeek and avoiding Claude Code's custom API-key confirmation screen. The upstream key remains private to the adapter.
 
@@ -263,16 +274,21 @@ Every Claude Code model tier (main, opus/sonnet/haiku aliases, subagents) is pin
 
 ### Custom providers
 
-Beyond the three built-in providers, you can register an arbitrary OpenAI- or Anthropic-compatible endpoint — a local model server (Ollama, vLLM, LM Studio), an internal gateway, or any other compatible API. In the interactive launcher's "Change Provider" list, choose **Add custom provider…** and enter a name, base URL, and protocol; the same picker also offers **Remove custom provider…** once one exists.
+Beyond the three built-in providers, you can register an arbitrary OpenAI- or Anthropic-compatible endpoint — a local model server (Ollama, vLLM, LM Studio), an internal gateway, or any other compatible API. In the interactive launcher's "Change Provider" list, choose **Add custom provider…**, then pick the protocol on a single screen — each option shows the path AgentX appends (`/v1/messages`, `/responses`, or `/chat/completions`), and Chat Completions carries a `legacy` note (it is OpenAI's earlier API, still the shape almost every third-party and local endpoint implements). The Base URL prompt repeats the chosen path, so enter the base URL only — then a display name, and the API key prompt follows. The same picker also offers **Remove custom provider…** once one exists. To do any of this without launching a client, run `agentx config` (see [`config`](#config)).
 
-For scripts and non-interactive use, `--base-url` defines (and persists) a custom provider without opening the launcher — `--provider` becomes its display name, and `--protocol` selects the upstream shape (`chat-completions` by default, or `responses`/`anthropic`):
+A custom endpoint exposes no model list, so the first launch asks for its model id directly — the internal placeholder model is never offered as a choice — and remembers it like any other model afterwards. (Non-interactive runs without `--model` still fall back to the placeholder, so pass `--model` in scripts.)
+
+For scripts and non-interactive use, `agentx config --provider <name> --base-url <url>` registers (and persists) a custom provider without launching a client; `exec`/`claude`/`codex` accept the same flags to define it and run in one step. `--provider` becomes its display name, and `--protocol` selects the upstream shape (`chat-completions` by default, or `responses`/`anthropic`):
 
 ```bash
-# A local OpenAI-compatible server (e.g. Ollama)
+# Define a local OpenAI-compatible server once, without launching a client
+agentx config --provider "My Local LLM" --base-url http://localhost:11434 --protocol chat-completions --model llama3
+
+# Or define it and launch in one step
 agentx exec --provider "My Local LLM" --base-url http://localhost:11434 --protocol chat-completions --model llama3 -- claude
 
 # A provider that speaks the native Anthropic Messages API
-agentx exec --provider "Internal Anthropic Gateway" --base-url https://gateway.internal --protocol anthropic --model claude-x -- claude
+agentx config --provider "Internal Anthropic Gateway" --base-url https://gateway.internal --protocol anthropic --model claude-x
 ```
 
 Once registered, reuse it by id (the name, lowercased and hyphenated) without repeating `--base-url`:
@@ -281,7 +297,7 @@ Once registered, reuse it by id (the name, lowercased and hyphenated) without re
 agentx claude --provider my-local-llm
 ```
 
-The credential works exactly like a built-in provider's — set `AGENTX_<ID>_API_KEY` (uppercased, underscored) in your environment, or answer the prompt when asked; the connection metadata is persisted in `runtime.json`, but the API key never is. Remove a custom provider entirely (definition and all saved memory of it, not just a stale model id) with:
+The credential works exactly like a built-in provider's — set `AGENTX_<ID>_API_KEY` (uppercased, underscored) in your environment, or answer the prompt when asked; the connection metadata is persisted in `runtime.json`, but the API key never is (the only place a key is ever written is the confirmed shell-profile block described under [`config`](#config)). Remove a custom provider entirely (definition and all saved memory of it, not just a stale model id) with:
 
 ```bash
 agentx forget --provider my-local-llm --remove-provider
@@ -447,7 +463,7 @@ reads the storage backend directly.
 
 - The upstream API key is read from the CLI or environment and sent only to the configured provider.
 - Claude Code receives a random, non-persisted local bearer token for each adapter process.
-- The default listener is `127.0.0.1`; no shell profile or permanent OS environment variable is modified.
+- The default listener is `127.0.0.1`; the launch flow modifies no shell profile or permanent OS environment variable. The only exception is the explicitly confirmed profile write in [`agentx config`](#config).
 - The adapter has no `/usage/*` or other unauthenticated HTTP endpoints for reading stored data; usage statistics are only readable locally via the [`agentx usage`](#usage) CLI command.
 - Logs must not contain API keys, authorization headers, prompts, or sensitive tool input.
 - Treat `--host 0.0.0.0` as a deliberate network exposure and protect it with appropriate network controls.

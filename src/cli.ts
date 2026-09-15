@@ -4,11 +4,11 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, parseCliOptions as options } from "./config.js";
 import { startAdapter } from "./server.js";
 import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, clientEnvironment, codexLaunchArgs, nativeClientEnvironment } from "./process.js";
-import { runInteractiveLauncher, runSavedModelManager, LaunchCancelledError } from "./ui.js";
+import { providerEntries, runInteractiveLauncher, runProviderManager, runSavedModelManager, LaunchCancelledError, type ProviderEntry } from "./ui.js";
 import { credentialEnvName, providerById, refreshProviderCatalog, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerDisplayName, registerCustomProvider, unregisterCustomProvider } from "./providers/registry.js";
 import type { ProviderDefinition, ProviderProtocol } from "./providers/types.js";
 import { runDoctor, renderDoctor, executableExists } from "./doctor.js";
-import { credentialInstructions, credentialSource, promptCredential, resolveCredential } from "./credentials.js";
+import { credentialInstructions, credentialSource, hydrateProfileCredentials, promptCredential, resolveCredential } from "./credentials.js";
 import { runQuotaCommand } from "./quota.js";
 import { runUsageStats } from "./usage/cli.js";
 import { resolveRuntimeNonInteractive } from "./selection.js";
@@ -23,6 +23,7 @@ const HELP: Record<string, string> = {
   proxy: "Start only the local adapter",
   exec: "Run any command with the temporary Anthropic environment",
   auth: "Manage stored provider credentials",
+  config: "Configure providers without launching a client",
   usage: "Show token usage statistics",
   quota: "Query provider quota (remote account balance/limit)",
   doctor: "Inspect the local environment and configuration",
@@ -63,6 +64,15 @@ function helpText(command?: string): string {
       lines.push("Usage: agentx quota --provider <provider>");
       lines.push("Options:");
       lines.push("  --provider <id>     Provider to query (default: opencode or AGENTX_PROVIDER)");
+      return lines.join("\n");
+    } else if (command === "config") {
+      lines.push("Usage: agentx config");
+      lines.push("       agentx config --provider <name> --base-url <url> [--protocol <responses|chat-completions|anthropic>] [--model <id>]");
+      lines.push("Options:");
+      lines.push("  --provider <name>   With --base-url: display name for the custom provider");
+      lines.push("  --base-url <url>    Add or update a custom provider at this endpoint, then exit");
+      lines.push("  --protocol <p>      Upstream protocol for --base-url (default chat-completions)");
+      lines.push("  --model <id>        Model id for a custom provider (default custom-model)");
       return lines.join("\n");
     } else if (command === "doctor") {
       lines.push("Usage: agentx doctor [options]");
@@ -301,6 +311,37 @@ export async function runAuthCommand(args: string[]): Promise<void> {
   throw new Error("Usage: agentx auth <login|status|logout> --provider <provider>");
 }
 
+/** Non-interactive `agentx config` output: every provider with its credential status. */
+function renderProviderList(entries: ProviderEntry[]): string {
+  const lines = ["Providers", ""];
+  for (const entry of entries) {
+    const source = credentialSource(entry.definition);
+    lines.push(`  ${source ? "✓" : "✗"} ${entry.definition.name.padEnd(24)} ${source ? `API key via ${source}` : "API key missing"}`);
+  }
+  lines.push("");
+  lines.push("Add a custom provider with: agentx config --provider <name> --base-url <url> [--protocol <responses|chat-completions|anthropic>]");
+  return lines.join("\n");
+}
+
+/**
+ * `agentx config`: manage providers without starting the adapter or a client.
+ * Interactive terminals get the provider manager (add/remove custom
+ * providers, inspect credential status); `--base-url` registers a custom
+ * provider non-interactively. API keys are never persisted for anyone — the
+ * command prints the environment variable to set instead.
+ */
+export async function runConfigCommand(args: string[]): Promise<void> {
+  const opts = options(args);
+  if (opts["base-url"]) {
+    const definition = await persistCustomProvider(opts);
+    console.log(`✓ ${definition.name} configured — ${definition.models[0].endpoint}`);
+    console.log(credentialInstructions(definition));
+    return;
+  }
+  if (isInteractive()) return runProviderManager();
+  console.log(renderProviderList(await providerEntries()));
+}
+
 export async function runUsageCommand(args: string[]): Promise<void> {
   const opts = options(args);
   if (!opts.provider && !process.env.AGENTX_PROVIDER) {
@@ -394,6 +435,20 @@ function resolveLaunchTarget(command: string, args: string[], opts: Record<strin
 }
 
 /**
+ * Register and persist a custom provider from `--base-url`/`--protocol`
+ * without going through the TUI. Shared by the launch commands (where it
+ * additionally defines the runtime ad hoc) and `agentx config` (where it only
+ * persists). `opts.provider` doubles as the display name.
+ */
+async function persistCustomProvider(opts: Record<string, string | undefined>): Promise<ProviderDefinition> {
+  const baseUrl = opts["base-url"] ?? "";
+  const protocol: ProviderProtocol = opts.protocol === "responses" || opts.protocol === "anthropic" ? opts.protocol : "chat-completions";
+  const definition = registerCustomProvider({ name: opts.provider ?? "custom", baseUrl, protocol, model: opts.model });
+  await saveCustomProvider(definition.id, { name: definition.name, baseUrl, protocol, model: definition.models[0].model });
+  return definition;
+}
+
+/**
  * Shared launch path for `claude`/`codex`/`proxy`/`exec`: runtime
  * resolution (interactive or not), native-launch bypass, credential
  * resolution with a missing-key recovery flow, adapter startup, and finally
@@ -407,9 +462,7 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
   // for exec/scripts/CI, but not restricted to exec: it works the same way
   // for claude/codex. --provider doubles as the display name here.
   if (opts["base-url"]) {
-    const protocol: ProviderProtocol = opts.protocol === "responses" || opts.protocol === "anthropic" ? opts.protocol : "chat-completions";
-    const definition = registerCustomProvider({ name: opts.provider ?? "custom", baseUrl: opts["base-url"], protocol, model: opts.model });
-    await saveCustomProvider(definition.id, { name: definition.name, baseUrl: opts["base-url"], protocol, model: definition.models[0].model });
+    const definition = await persistCustomProvider(opts);
     opts.provider = definition.id;
   }
   // Native launch is only meaningful for claude/codex: they have their own
@@ -553,10 +606,12 @@ async function hydrateCustomProviders(): Promise<void> {
 
 async function main() {
   await hydrateCustomProviders();
+  await hydrateProfileCredentials();
   const [command = "help", ...args] = process.argv.slice(2);
   if (command === "version") return console.log(versionText());
   if (command === "help" || command === "--help" || command === "-h") return console.log(helpText(args[0]));
   if (command === "auth") return runAuthCommand(args);
+  if (command === "config") return runConfigCommand(args);
   if (command === "usage") return runUsageCommand(args);
   if (command === "quota") return runQuotaCliCommand(args);
   if (command === "doctor") return runDoctorCommand(args);

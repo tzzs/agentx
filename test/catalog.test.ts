@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { honorRequestedModel, providerFor } from "../src/catalog.js";
+import { registerCustomProvider, unregisterCustomProvider } from "../src/providers/registry.js";
 import { chatResponseFailure, fromAnthropicResponseToChat, fromChatResponse, fromChatResponseToResponses, fromResponsesResponseToChat, toAnthropicRequestFromChat, toChatCompletionsRequest, toChatRequest, toResponsesRequest, toResponsesRequestFromChat } from "../src/convert/index.js";
 test("routes DeepSeek models through chat completions", () => {
   assert.equal(providerFor("deepseek-v4-flash").protocol, "chat-completions");
@@ -130,6 +131,12 @@ test("falls back to the configured model for unknown or foreign requests", () =>
 });
 test("keeps OpenRouter passthrough semantics for arbitrary ids", () => {
   assert.equal(honorRequestedModel("zoo/any-model", "openai/gpt-4o-mini", "openrouter"), "zoo/any-model");
+});
+test("keeps custom-provider passthrough semantics for arbitrary ids", () => {
+  try {
+    registerCustomProvider({ name: "Passthrough Test", baseUrl: "http://passthrough.invalid", protocol: "chat-completions" });
+    assert.equal(honorRequestedModel("deepseek-flash", "custom-model", "passthrough-test"), "deepseek-flash");
+  } finally { unregisterCustomProvider("passthrough-test"); }
 });
 test("treats normal finish reasons as no failure", () => {
   for (const reason of [undefined, null, "stop", "length", "tool_calls", "function_call"]) {

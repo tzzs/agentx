@@ -402,6 +402,18 @@ test("a registered custom provider resolves through providerFor/apiKeyFor like a
   } finally { unregisterCustomProvider("bench-provider"); }
 });
 
+test("providerFor accepts arbitrary ids for custom providers but keeps rejecting them for built-ins", () => {
+  try {
+    registerCustomProvider({ name: "Bench Provider", baseUrl: "http://bench.local", protocol: "responses" });
+    const model = providerFor("deepseek-flash", "bench-provider");
+    assert.equal(model.model, "deepseek-flash");
+    assert.equal(model.provider, "bench-provider");
+    assert.equal(model.protocol, "responses");
+    assert.equal(model.endpoint, "http://bench.local/responses");
+    assert.throws(() => providerFor("not-a-real-model", "deepseek"), /is not available/);
+  } finally { unregisterCustomProvider("bench-provider"); }
+});
+
 test("unregisterCustomProvider removes a custom provider but refuses to remove a built-in one", () => {
   registerCustomProvider({ name: "Removable", baseUrl: "http://x", protocol: "chat-completions" });
   assert.ok(providerRegistry.some((entry) => entry.id === "removable"));

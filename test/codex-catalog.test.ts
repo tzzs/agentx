@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCodexCatalog, writeCodexCatalog, codexCatalogPath, catalogModels } from "../src/codex-catalog.js";
+import { registerCustomProvider, unregisterCustomProvider } from "../src/providers/registry.js";
 import type { ProviderModel } from "../src/providers/types.js";
 
 test("catalog covers every registry model with the verified field set", () => {
@@ -40,6 +41,15 @@ test("declares DeepSeek's real context window when reached through the OpenCode 
   const entry = catalog.models.find((item) => item.slug === "deepseek-v4-flash")!;
   assert.equal(entry.context_window, 1_000_000);
   assert.equal(entry.max_context_window, 1_000_000);
+});
+
+test("includes a custom provider's free-form model id so Codex can resolve it", () => {
+  try {
+    registerCustomProvider({ name: "Catalog Custom", baseUrl: "http://catalog.invalid", protocol: "chat-completions" });
+    const models = catalogModels({ provider: "catalog-custom", model: "deepseek-flash" }, []);
+    assert.deepEqual(models.map((item) => item.model), ["deepseek-flash"]);
+    assert.equal(models[0].provider, "catalog-custom");
+  } finally { unregisterCustomProvider("catalog-custom"); }
 });
 
 test("prefers real registry limits and falls back to safe defaults", () => {
