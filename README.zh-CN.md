@@ -266,7 +266,7 @@ Claude Code 的所有模型档位（主模型、opus/sonnet/haiku 别名、子�
 
 除了三个内置 Provider，你还可以注册任意 OpenAI 或 Anthropic 兼容的端点——本地模型服务（Ollama、vLLM、LM Studio）、内部网关，或其他任何兼容 API。在交互式启动器的「Change Provider」列表里选择 **Add custom provider…**，先在一屏内选择协议——每个选项标出 AgentX 会追加的路径（`/v1/messages`、`/responses` 或 `/chat/completions`），Chat Completions 行尾还带一个 `legacy` 备注（它是 OpenAI 早期的 API，但几乎所有第三方和本地端点仍只实现这一形态）。接着填 Base URL（提示里会再写明该路径，所以只填 base 即可）和显示名称，随后紧接 API key 提示；已经有自定义 Provider 时,同一个列表还会提供 **Remove custom provider…**。不想启动客户端时，可以用 `agentx config` 完成同样的配置（见上文 [`config`](#config)）。
 
-自定义端点不提供模型列表，因此首次启动会直接询问它的模型 id——内部占位模型不会作为选项出现——之后会像其他模型一样被记住。（非交互运行未传 `--model` 时仍会回退到占位模型，所以脚本里请显式传 `--model`。）
+自定义端点不提供模型列表，因此首次启动会直接询问它的模型 id——内部占位模型不会作为选项出现，也不会出现在 Codex 的模型选择器里——之后会像其他模型一样被记住。（非交互运行未传 `--model` 时仍会回退到占位模型，所以脚本里请显式传 `--model`。）
 
 对于脚本和非交互场景，`agentx config --provider <名称> --base-url <url>` 可以不启动客户端就注册(并持久化)一个自定义 Provider；`exec`/`claude`/`codex` 也接受同样的参数，在启动的同时完成定义。`--provider` 作为它的显示名，`--protocol` 选择上游协议形状(默认 `chat-completions`，也可以是 `responses`/`anthropic`)：
 

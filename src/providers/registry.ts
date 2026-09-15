@@ -295,6 +295,21 @@ function customProviderEndpoint(baseUrl: string, protocol: ProviderModel["protoc
   return `${base}/chat/completions`;
 }
 
+/**
+ * Synthesized model id a custom provider gets when registered without one: a
+ * provider definition needs at least one model, and the upstream exposes no
+ * list. It is not a real id — never offer it in pickers, catalogs, or model
+ * lists (see `isPlaceholderModel`); it only keeps non-interactive fallbacks
+ * routable until the user names a real model.
+ */
+export const CUSTOM_PROVIDER_PLACEHOLDER_MODEL = "custom-model";
+
+/** True when `model` is the synthesized placeholder of a runtime-registered custom provider. */
+export function isPlaceholderModel(model: Pick<ProviderModel, "model" | "provider">): boolean {
+  if (model.model !== CUSTOM_PROVIDER_PLACEHOLDER_MODEL) return false;
+  try { return Boolean(providerById(model.provider).custom); } catch { return false; }
+}
+
 export interface CustomProviderInput {
   name: string;
   baseUrl: string;
@@ -322,7 +337,7 @@ export function registerCustomProvider(input: CustomProviderInput): ProviderDefi
     let suffix = 2;
     while (providerRegistry.some((entry) => entry.id === id)) id = `${base}-${suffix++}`;
   }
-  const model: ProviderModel = { provider: id, model: input.model ?? "custom-model", protocol: input.protocol, endpoint: customProviderEndpoint(input.baseUrl, input.protocol) };
+  const model: ProviderModel = { provider: id, model: input.model ?? CUSTOM_PROVIDER_PLACEHOLDER_MODEL, protocol: input.protocol, endpoint: customProviderEndpoint(input.baseUrl, input.protocol) };
   const definition: ProviderDefinition = { id, name: input.name, apiKeyEnv: envKeyFor(id), models: [model], custom: true };
   const index = providerRegistry.findIndex((entry) => entry.id === id);
   if (index >= 0) providerRegistry[index] = definition;

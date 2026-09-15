@@ -1,6 +1,6 @@
 import { stdin as realStdin, stdout as realStdout } from "node:process";
 import { autocomplete, cancel, confirm, intro, isCancel, multiselect, note, outro, select, text } from "@clack/prompts";
-import { providerRegistry, credentialEnvName, openRouterCatalogIds, providerById, registerCustomProvider, unregisterCustomProvider } from "./providers/registry.js";
+import { providerRegistry, credentialEnvName, isPlaceholderModel, openRouterCatalogIds, providerById, registerCustomProvider, unregisterCustomProvider } from "./providers/registry.js";
 import type { ProviderDefinition, ProviderProtocol } from "./providers/types.js";
 import { credentialInstructions, credentialSource, hydrateProfileCredentials, promptCredential, promptCredentialValue, storedCredential } from "./credentials.js";
 import { shellProfilePath, writeCredentialExport } from "./shell-profile.js";
@@ -404,14 +404,11 @@ const FORGET_MODEL_OPTION = "__forget__";
  * reopens so a fresh selection (or a cancel) is the only way out.
  */
 async function selectModel(provider: string, current: string): Promise<string | symbol> {
-  const definition = providerById(provider);
-  // Runtime-registered custom endpoints carry a synthesized placeholder model
-  // ("custom-model") because a provider definition needs at least one, and the
-  // upstream exposes no list. It is not a real upstream id, so it is never
-  // offered as a choice or shown as "current".
-  const placeholder = definition.custom ? "custom-model" : undefined;
+  // A runtime-registered custom endpoint's synthesized placeholder model is
+  // not a real upstream id, so it is never offered as a choice or shown as
+  // "current" (see `isPlaceholderModel`).
   const options: Array<{ value: string; label: string; hint?: string }> = modelsFor(provider)
-    .filter((entry) => entry.model !== placeholder)
+    .filter((entry) => !isPlaceholderModel({ model: entry.model, provider }))
     .map((entry) => ({ value: entry.model, label: entry.model }));
   const custom = providerAcceptsCustomModels(provider);
   // A saved custom id lives outside the registry; surface it as a pickable
@@ -419,7 +416,7 @@ async function selectModel(provider: string, current: string): Promise<string | 
   // catalog is known and no longer lists it, flag that inline so a renamed or
   // pulled id (e.g. a free launch that became its real vendor id) is visible
   // without opening the forget manager.
-  if (custom && current !== placeholder && !options.some((option) => option.value === current)) {
+  if (custom && !isPlaceholderModel({ model: current, provider }) && !options.some((option) => option.value === current)) {
     // Staleness is only judgeable against OpenRouter's public catalog; custom
     // endpoints have no comparable listing, so their ids are offered as-is.
     const stale = provider === "openrouter" && openRouterCatalogIds().length > 0 && !openRouterCatalogIds().includes(current);
@@ -435,7 +432,7 @@ async function selectModel(provider: string, current: string): Promise<string | 
   if (provider === "openrouter") {
     options.push({ value: BROWSE_CATALOG_OPTION, label: "Browse OpenRouter catalog…", hint: `~${openRouterCatalogIds().length} models` });
   }
-  if (custom && (await rememberedModelIds(provider)).some((id) => id !== placeholder)) {
+  if (custom && (await rememberedModelIds(provider)).some((id) => !isPlaceholderModel({ model: id, provider }))) {
     options.push({ value: FORGET_MODEL_OPTION, label: "Forget a saved model…", hint: "rename / removed ids" });
   }
   // A fresh custom endpoint has no real registry model and no saved id: asking

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { atomicWriteFile } from "./fsutil.js";
-import { allModels, providerFor, withExternalMetadata } from "./providers/registry.js";
+import { allModels, isPlaceholderModel, providerFor, withExternalMetadata } from "./providers/registry.js";
 import type { ProviderModel } from "./providers/types.js";
 import type { Config } from "./config.js";
 
@@ -82,13 +82,17 @@ export function buildCodexCatalog(models: ProviderModel[] = allModels): string {
 /**
  * Catalog input for one bound provider. The selected custom id is appended so
  * Codex can resolve it; models owned by other providers are intentionally
- * omitted because request routing rejects cross-provider ids.
+ * omitted because request routing rejects cross-provider ids, and a custom
+ * provider's synthesized placeholder model is filtered out so it never shows
+ * up in Codex's model picker.
  */
 export function catalogModels(selected: Pick<Config, "provider"> & { model: string }, base: ProviderModel[] = allModels): ProviderModel[] {
-  const scoped = base.filter((model) => !selected.provider || model.provider === selected.provider);
+  const scoped = base.filter((model) => (!selected.provider || model.provider === selected.provider) && !isPlaceholderModel(model));
   if (!selected.model || scoped.some((model) => model.model === selected.model)) return scoped;
   try {
-    return [...scoped, withExternalMetadata(providerFor(selected.model, selected.provider))];
+    const synthesized = withExternalMetadata(providerFor(selected.model, selected.provider));
+    // Selecting the placeholder itself must not resurrect it in the catalog.
+    return isPlaceholderModel(synthesized) ? scoped : [...scoped, synthesized];
   } catch {
     return scoped;
   }

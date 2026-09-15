@@ -52,6 +52,17 @@ test("includes a custom provider's free-form model id so Codex can resolve it", 
   } finally { unregisterCustomProvider("catalog-custom"); }
 });
 
+test("never exposes a custom provider's synthesized placeholder to Codex's model picker", () => {
+  try {
+    registerCustomProvider({ name: "Catalog Custom", baseUrl: "http://catalog.invalid", protocol: "chat-completions" });
+    // The registry holds the placeholder, but the catalog must not: only the
+    // selected real id is listed.
+    assert.deepEqual(catalogModels({ provider: "catalog-custom", model: "deepseek-flash" }).map((item) => item.model), ["deepseek-flash"]);
+    // Selecting the placeholder itself yields no catalog entry at all.
+    assert.deepEqual(catalogModels({ provider: "catalog-custom", model: "custom-model" }), []);
+  } finally { unregisterCustomProvider("catalog-custom"); }
+});
+
 test("prefers real registry limits and falls back to safe defaults", () => {
   const models = [
     { provider: "opencode", model: "known-model", protocol: "chat-completions" as const, endpoint: "https://x", contextWindow: 1000000, maxOutputTokens: 384000, modalities: ["text", "image"] },
