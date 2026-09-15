@@ -89,7 +89,7 @@ export interface ProfileWriteResult {
   /** Path of the pre-write backup, present whenever an existing profile was modified. */
   backup?: string;
   replaced: boolean;
-  /** Final file mode after the write, for the "other users can read this" warning. */
+  /** Final POSIX file mode after the write, for the "other users can read this" warning; undefined on Windows, which has no POSIX modes. */
   mode?: number;
 }
 
@@ -98,13 +98,16 @@ export interface ProfileWriteResult {
  * `<file>.agentx.bak` before its first modification; a fresh file is created
  * with 0600. Existing files keep their permissions — the caller warns when
  * they are group/world-readable, since the profile now holds a secret.
+ * Windows has no POSIX modes, so no mode is reported there (and the caller
+ * skips the chmod advice, which would be pure noise).
  */
 export async function writeCredentialExport(file: string, envName: string, value: string): Promise<ProfileWriteResult> {
+  const posix = process.platform !== "win32";
   let existing = "";
   let mode: number | undefined;
   try {
     existing = await readFile(file, "utf8");
-    mode = (await stat(file)).mode & 0o777;
+    mode = posix ? (await stat(file)).mode & 0o777 : undefined;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
@@ -116,5 +119,5 @@ export async function writeCredentialExport(file: string, envName: string, value
     await copyFile(file, backup);
   }
   await writeFile(file, content, { mode: mode ?? 0o600 });
-  return { file, changed: true, backup, replaced, mode: mode ?? 0o600 };
+  return { file, changed: true, backup, replaced, mode: mode ?? (posix ? 0o600 : undefined) };
 }

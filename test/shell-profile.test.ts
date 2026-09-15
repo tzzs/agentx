@@ -5,11 +5,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { shellProfilePath, shellSingleQuote, parseCredentialExports, readCredentialExports, upsertCredentialExport, writeCredentialExport } from "../src/shell-profile.js";
 
+/** POSIX mode bits don't exist on Windows (writeFile ignores mode, stat reports 0666), so mode assertions are scoped. */
+const posix = process.platform !== "win32";
+
 test("shellProfilePath: zsh honors ZDOTDIR, bash picks the platform login profile, other shells are refused", () => {
-  assert.equal(shellProfilePath({ SHELL: "/bin/zsh", HOME: "/home/u" }, "darwin"), "/home/u/.zshrc");
-  assert.equal(shellProfilePath({ SHELL: "/bin/zsh", HOME: "/home/u", ZDOTDIR: "/home/u/zdot" }, "darwin"), "/home/u/zdot/.zshrc");
-  assert.equal(shellProfilePath({ SHELL: "/bin/bash", HOME: "/home/u" }, "darwin"), "/home/u/.bash_profile");
-  assert.equal(shellProfilePath({ SHELL: "/bin/bash", HOME: "/home/u" }, "linux"), "/home/u/.bashrc");
+  assert.equal(shellProfilePath({ SHELL: "/bin/zsh", HOME: "/home/u" }, "darwin"), join("/home/u", ".zshrc"));
+  assert.equal(shellProfilePath({ SHELL: "/bin/zsh", HOME: "/home/u", ZDOTDIR: "/home/u/zdot" }, "darwin"), join("/home/u/zdot", ".zshrc"));
+  assert.equal(shellProfilePath({ SHELL: "/bin/bash", HOME: "/home/u" }, "darwin"), join("/home/u", ".bash_profile"));
+  assert.equal(shellProfilePath({ SHELL: "/bin/bash", HOME: "/home/u" }, "linux"), join("/home/u", ".bashrc"));
   assert.equal(shellProfilePath({ SHELL: "/usr/bin/fish", HOME: "/home/u" }, "linux"), undefined);
   assert.equal(shellProfilePath({ HOME: "/home/u" }, "linux"), undefined);
 });
@@ -48,8 +51,12 @@ test("writeCredentialExport creates with 0600, backs up an existing profile, and
     const created = await writeCredentialExport(file, "AGENTX_X_API_KEY", "sk-1");
     assert.equal(created.changed, true);
     assert.equal(created.backup, undefined);
-    assert.equal(created.mode, 0o600);
-    assert.equal((await stat(file)).mode & 0o777, 0o600);
+    if (posix) {
+      assert.equal(created.mode, 0o600);
+      assert.equal((await stat(file)).mode & 0o777, 0o600);
+    } else {
+      assert.equal(created.mode, undefined, "Windows has no POSIX modes to report");
+    }
 
     const updated = await writeCredentialExport(file, "AGENTX_X_API_KEY", "sk-2");
     assert.equal(updated.changed, true);
@@ -72,8 +79,10 @@ test("writeCredentialExport leaves an existing profile's permissions alone", asy
     await writeFile(file, "alias x=y\n", { mode: 0o644 });
     const before = (await stat(file)).mode & 0o777;
     const result = await writeCredentialExport(file, "AGENTX_Y_API_KEY", "sk");
-    assert.equal(result.mode, before);
-    assert.equal((await stat(file)).mode & 0o777, before);
+    if (posix) {
+      assert.equal(result.mode, before);
+      assert.equal((await stat(file)).mode & 0o777, before);
+    }
     assert.match(await readFile(file, "utf8"), /export AGENTX_Y_API_KEY='sk'/);
   } finally {
     await rm(dir, { recursive: true, force: true });
