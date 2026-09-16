@@ -287,6 +287,23 @@ test("an unrecognized command rejects before credential resolution or adapter st
   await assert.rejects(() => runClientLaunch("totally-bogus-command", []), /Usage: agentx exec/);
 });
 
+test("--effort is scoped to claude/codex and validated against each client's scale", async () => {
+  await assert.rejects(() => runClientLaunch("exec", ["--effort", "low", "--", "some-command"]), /only supported for `agentx claude` and `agentx codex`/);
+  await assert.rejects(() => runClientLaunch("codex", ["--effort", "ultracode"]), /--effort ultracode is not supported for `agentx codex`/);
+  await assert.rejects(() => runClientLaunch("claude", ["--effort", "minimal"]), /--effort minimal is not supported for `agentx claude`/);
+});
+
+test("passes --effort through to Claude Code's own flag", async () => {
+  process.env.AGENTX_DEEPSEEK_API_KEY = "test-key";
+  let captured: string[] = [];
+  try {
+    await runClientLaunch("claude", ["--provider", "deepseek", "--model", "deepseek-v4-pro", "--effort", "xhigh", "--", "--version"], {
+      runCommand: async (_cmd: string, args: string[]) => { captured = args; return 0; },
+    });
+    assert.deepEqual(captured, ["--bare", "--effort", "xhigh", "--version"]);
+  } finally { delete process.env.AGENTX_DEEPSEEK_API_KEY; }
+});
+
 test("agentx forget --remove-provider deletes a custom provider but refuses a built-in one", async () => {
   registerCustomProvider({ name: "Removable Exec", baseUrl: "http://x", protocol: "chat-completions" });
   await runForgetCommand(["--provider", "removable-exec", "--remove-provider"]);

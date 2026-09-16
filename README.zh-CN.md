@@ -216,6 +216,7 @@ agentx version
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | 具体上游模型 ID |
 | `--provider <id>` | `AGENTX_PROVIDER` | 无 | 上游 Provider（`opencode`、`deepseek`、`openrouter`） |
 | `--background-model <id>` | `AGENTX_BACKGROUND_MODEL` | 无 | Claude Code 后台（haiku）通道使用的模型 |
+| `--effort <level>` | `AGENTX_EFFORT` | 无 | 推理档位：`codex` `none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`/`ultra`；`claude` `low`/`medium`/`high`/`xhigh`/`ultracode` |
 | `--retry <n>` | `AGENTX_RETRY` | `3` | 上游 429/502/503/504 的重试次数(0 表示禁用) |
 | `--client-protocol <anthropic\|openai>` | | `anthropic` | 仅 `exec`:决定给被启动程序注入哪种形状的环境变量 |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | 预留的详细日志选项 |
@@ -261,6 +262,8 @@ agentx codex --provider openrouter --model anthropic/claude-sonnet-4
 这两个参数属于「高级 / 自动化 API」：日常切换 Provider 应该通过交互式运行时配置完成（见[运行时配置](#运行时配置)）。对应的环境变量是 `AGENTX_PROVIDER` 和 `AGENTX_MODEL`（同样会跳过交互式启动器）。Provider 凭据只由 Adapter 使用，不会注入客户端进程。
 
 Claude Code 的所有模型档位（主模型、opus/sonnet/haiku 别名、子代理）都会固定为所选模型——用户的选择对所有流量生效，包括 Claude Code 通过 haiku 档位发起的小型后台请求（权限检查、主题检测、摘要等）。可选地，通过 `--background-model <id>`（或环境变量 `AGENTX_BACKGROUND_MODEL`）可以仅将这一后台通道路由到同一 Provider 下的其他模型——当主模型是重量级推理模型、其非流式辅助调用超过客户端超时时间时会很实用。凡是指定了目标 Provider 实际提供的模型的请求都会按原样转发；未知模型 id 则回退到配置的模型。
+
+Claude Code 的推理档位同样支持：`agentx claude --effort low|medium|high|xhigh|ultracode`（或 `AGENTX_EFFORT`）会把档位作为 Claude Code 自己的 `--effort` 传入本次会话；请求中的 effort 会按上游协议转换。
 
 ### 自定义 Provider
 
@@ -362,6 +365,8 @@ npx @tanzz/agentx codex --model gpt-5.6-luna
 ```
 
 启动器通过 `-c` 参数定义一个内联的 `agentx` 模型 Provider，指向 `http://127.0.0.1:<port>/v1`，其 Bearer Token 是以 `OPENAI_API_KEY` 注入的临时本地 Token。启动时还会生成一份模型目录（`~/.config/agentx/codex-models.json`，经 `model_catalog_json` 传入），让目录中的模型——包括你在启动器中输入的自定义 OpenRouter 模型 id——以真实元数据加载，而不是触发 Codex 的 fallback 元数据警告：上下文窗口与输出上限对所有 Provider 生效，在可用时取自公开注册表 models.dev，models.dev 缺失的模型回退到 OpenRouter 公开目录，否则使用保守默认值。DeepSeek 的 `deepseek-v4-pro`/`deepseek-v4-flash` 是个例外：它们是 OpenCode 自己的品牌命名（同时通过 OpenCode 网关和直连的 DeepSeek Provider 提供），两个公开注册表都没有对应词条，因此目录会显式声明它们约 1M 的真实上下文窗口，而不是回退到保守的 128k——否则 Codex 会比必要时机早得多地对长时间 DeepSeek 会话做自动压缩，这与 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 为 Claude Code 修复的是同一类问题（见[模型和路由](#模型和路由)）。新版 Codex 已不再读取那些环境变量，该方式可以正常工作，并完全绕过 Codex 的登录页——无需 ChatGPT 登录或 `~/.codex/auth.json`，也不会修改你已有的 `~/.codex/config.toml`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
+
+推理档位（Effort）同样可配置。生成的目录为每个模型声明 Codex 的完整档位（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`、`ultra`），因此在 Codex 里选中模型后会进入「Select Reasoning Level」步骤（max/ultra 在它自己的 Advanced Reasoning 子菜单里），选中的档位由 Codex 自己持久化。脚本或一次性运行可以用 `agentx codex --effort <level>`（或 `AGENTX_EFFORT`）覆盖本次启动，对应 Codex 的 `-c model_reasoning_effort`。适配器会把该档位映射到上游的原生控制——DeepSeek 的 thinking/`reasoning_effort`、Anthropic 的 thinking 预算——Responses 上游则原样透传。
 
 ## 模型和路由
 

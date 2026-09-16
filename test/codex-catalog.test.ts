@@ -18,6 +18,15 @@ test("catalog covers every registry model with the verified field set", () => {
   }
 });
 
+test("advertises Codex's full effort scale and honors the launch default", () => {
+  const model: ProviderModel = { provider: "ds", model: "deepseek-flash", protocol: "responses", endpoint: "http://ds/responses" };
+  const [entry] = (JSON.parse(buildCodexCatalog([model], "medium")) as { models: any[] }).models;
+  assert.deepEqual(entry.supported_reasoning_levels.map((level: any) => level.effort), ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+  assert.equal(entry.default_reasoning_level, "medium");
+  const [fallback] = (JSON.parse(buildCodexCatalog([model])) as { models: any[] }).models;
+  assert.equal(fallback.default_reasoning_level, "high");
+});
+
 test("declares DeepSeek's real context window instead of the 131072 unknown-model default", () => {
   // deepseek-v4-flash/pro are OpenCode's own branding, so models.dev/OpenRouter
   // carry no matching entry; without an explicit registry override Codex would

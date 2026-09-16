@@ -226,6 +226,7 @@ For `claude`/`codex`, `--native` (or **Launch native (skip AgentX)** in the laun
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | Concrete upstream model id |
 | `--provider <id>` | `AGENTX_PROVIDER` | none | Upstream provider (`opencode`, `deepseek`, `openrouter`) |
 | `--background-model <id>` | `AGENTX_BACKGROUND_MODEL` | none | Model for Claude Code's background (haiku) lane |
+| `--effort <level>` | `AGENTX_EFFORT` | none | Reasoning effort: `codex` `none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`/`ultra`; `claude` `low`/`medium`/`high`/`xhigh`/`ultracode` |
 | `--retry <n>` | `AGENTX_RETRY` | `3` | Retry attempts on upstream 429/502/503/504 (0 disables) |
 | `--client-protocol <anthropic\|openai>` | | `anthropic` | `exec` only: env vars to inject for the launched program |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | Reserved for verbose logging |
@@ -271,6 +272,8 @@ agentx codex --provider openrouter --model anthropic/claude-sonnet-4
 These flags are the Advanced / Automation API: ordinary day-to-day provider switching happens in the interactive runtime configuration (see [Runtime configuration](#runtime-configuration)). The equivalent environment variables are `AGENTX_PROVIDER` and `AGENTX_MODEL` (they also bypass the interactive launcher). Provider credentials are only used by the adapter and are never injected into the client process.
 
 Every Claude Code model tier (main, opus/sonnet/haiku aliases, subagents) is pinned to the selected model — the user's choice is used for all traffic, including the small background requests Claude Code fires through its haiku tier (permission checks, topic detection, summarization). Optionally, `--background-model <id>` (or `AGENTX_BACKGROUND_MODEL`) routes just that background lane to another model the same provider serves — useful when the main model is a heavyweight reasoning model whose non-streaming auxiliary calls run past client timeouts. Requests naming a model the configured provider serves are honored as-is; unknown ids fall back to the configured model.
+
+Claude Code's reasoning effort is supported the same way: `agentx claude --effort low|medium|high|xhigh|ultracode` (or `AGENTX_EFFORT`) passes its own `--effort` flag for the session, and each request's effort is converted for the upstream protocol.
 
 ### Custom providers
 
@@ -372,6 +375,8 @@ npx @tanzz/agentx codex --model gpt-5.6-luna
 ```
 
 The launcher passes `-c` overrides that define an inline `agentx` model provider pointing at `http://127.0.0.1:<port>/v1`, whose bearer token is the temporary local token injected as `OPENAI_API_KEY`. It also generates a model catalog (`~/.config/agentx/codex-models.json`, passed via `model_catalog_json`) so registry models — and any custom OpenRouter model id you enter in the launcher — resolve with real metadata instead of Codex's fallback-metadata warning: context windows and output limits for every provider come from the public models.dev registry when available, fall back to OpenRouter's public catalog for models models.dev lacks, and use conservative defaults otherwise. DeepSeek's `deepseek-v4-pro`/`deepseek-v4-flash` are an exception: they are OpenCode's own branding (served both through the OpenCode gateway and the direct DeepSeek provider), so neither public registry has a matching entry, and the catalog declares their real ~1M context window explicitly instead of falling back to a conservative 128k — otherwise Codex would auto-compact long DeepSeek sessions far earlier than necessary, the same class of issue `CLAUDE_CODE_MAX_CONTEXT_TOKENS` fixes for Claude Code (see [Models and Routing](#models-and-routing)). This works with current Codex releases (which no longer honor those environment variables) and skips Codex's sign-in screen entirely — no ChatGPT login or `~/.codex/auth.json` required, and your existing `~/.codex/config.toml` stays untouched. Codex can use both Responses and Chat Completions models: Responses models are passed through, while Chat Completions models are translated at the local Responses boundary. Claude Code and Codex can therefore use every model in the provider catalog.
+
+Reasoning effort is configurable too. The generated catalog advertises Codex's full scale (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`) for every model, so Codex's model picker opens a "Select Reasoning Level" step after you choose a model (max/ultra live behind its Advanced Reasoning step), and whatever you pick there is persisted by Codex itself. For one-off or scripted runs, `agentx codex --effort <level>` (or `AGENTX_EFFORT`) overrides it for that launch, becoming Codex's own `-c model_reasoning_effort`. The adapter maps the chosen level onto the upstream's native control — DeepSeek thinking/`reasoning_effort`, Anthropic thinking budgets — or passes it through unchanged for Responses upstreams.
 
 ## Models and Routing
 

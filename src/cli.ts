@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { loadConfig, parseCliOptions as options } from "./config.js";
+import { CLAUDE_EFFORT_LEVELS, CODEX_EFFORT_LEVELS, loadConfig, parseCliOptions as options } from "./config.js";
 import { startAdapter } from "./server.js";
 import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, clientEnvironment, codexLaunchArgs, nativeClientEnvironment } from "./process.js";
 import { providerEntries, runInteractiveLauncher, runProviderManager, runSavedModelManager, LaunchCancelledError, type ProviderEntry } from "./ui.js";
@@ -35,6 +35,7 @@ const HELP: Record<string, string> = {
 const OPTION_LINES = [
   "  --provider <id>     Upstream provider (opencode, deepseek, openrouter)",
   "  --model <model>     Model or auto",
+  "  --effort <level>    Reasoning effort per client: codex none|minimal|low|medium|high|xhigh|max|ultra, claude low|medium|high|xhigh|ultracode",
   "  --background-model <id>  Model for Claude Code's haiku/background tier (default: same as --model)",
   "  --port <port>       Preferred local port (default 8787)",
   "  --host <host>       Local bind address (default 127.0.0.1)",
@@ -132,7 +133,7 @@ function isInteractive(): boolean {
 }
 
 /** Flags the adapter consumes itself; never forwarded to the launched client. */
-const ADAPTER_FLAGS = new Set(["--model", "--background-model", "--provider", "--port", "--host", "--api-key", "--retry", "--client-protocol", "--base-url", "--protocol", "--verbose", "--native"]);
+const ADAPTER_FLAGS = new Set(["--model", "--effort", "--background-model", "--provider", "--port", "--host", "--api-key", "--retry", "--client-protocol", "--base-url", "--protocol", "--verbose", "--native"]);
 /** Boolean-ish adapter flags that never consume the following argument as a value. */
 const BOOLEAN_ADAPTER_FLAGS = new Set(["--verbose", "--native"]);
 
@@ -457,6 +458,14 @@ async function persistCustomProvider(opts: Record<string, string | undefined>): 
  */
 export async function runClientLaunch(command: string, args: string[], deps: ClientLaunchDeps = {}): Promise<void> {
   let opts = options(args);
+  // Reasoning effort is a client setting: each client has its own scale and
+  // its own flag (`codex -c model_reasoning_effort`, `claude --effort`).
+  const requestedEffort = opts.effort ?? process.env.AGENTX_EFFORT;
+  if (requestedEffort !== undefined) {
+    const allowed: readonly string[] | undefined = command === "codex" ? CODEX_EFFORT_LEVELS : command === "claude" ? CLAUDE_EFFORT_LEVELS : undefined;
+    if (!allowed) throw new Error("--effort is only supported for `agentx claude` and `agentx codex`");
+    if (!allowed.includes(requestedEffort)) throw new Error(`--effort ${requestedEffort} is not supported for \`agentx ${command}\` (expected ${allowed.join(", ")})`);
+  }
   // --base-url defines (and persists) a custom provider ad hoc, without going
   // through the TUI's "Add custom provider…" flow — the non-interactive path
   // for exec/scripts/CI, but not restricted to exec: it works the same way
@@ -576,9 +585,9 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
     // Codex needs external context/output limits only now; other launch paths
     // skip both metadata requests and catalog writing entirely.
     await refreshProviderCatalog({ provider: config.provider, metadata: true });
-    codexCatalogFile = await writeCodexCatalog(catalogModels(config));
+    codexCatalogFile = await writeCodexCatalog(catalogModels(config), config.effort);
   }
-  const launchArgs = executable === "claude" && !commandArgs.includes("--bare") ? ["--bare", ...commandArgs]
+  const launchArgs = executable === "claude" && !commandArgs.includes("--bare") ? ["--bare", ...(config.effort ? ["--effort", config.effort] : []), ...commandArgs]
     : executable === "codex" ? [...codexLaunchArgs(config, adapter, codexCatalogFile), ...commandArgs]
       : commandArgs;
 

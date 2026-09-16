@@ -61,6 +61,19 @@ test("deprecated auto falls back to a concrete model", () => {
   assert.equal(loadConfig({ model: "auto" }).model, defaultModelFor("opencode"));
 });
 
+test("effort comes from --effort or AGENTX_EFFORT, with the flag winning and values validated", () => {
+  assert.equal(loadConfig({}).effort, undefined);
+  assert.equal(loadConfig({ effort: "medium" }).effort, "medium");
+  assert.equal(loadConfig({ effort: "minimal" }).effort, "minimal");
+  assert.equal(loadConfig({ effort: "ultracode" }).effort, "ultracode");
+  process.env.AGENTX_EFFORT = "low";
+  try {
+    assert.equal(loadConfig({}).effort, "low");
+    assert.equal(loadConfig({ effort: "xhigh" }).effort, "xhigh");
+  } finally { delete process.env.AGENTX_EFFORT; }
+  assert.throws(() => loadConfig({ effort: "extreme" }), /Invalid effort "extreme"/);
+});
+
 test("parseCliOptions pairs flags with values", () => {
   assert.deepEqual(parseCliOptions(["--model", "gpt-x", "--port", "9000"]), { model: "gpt-x", port: "9000" });
 });
