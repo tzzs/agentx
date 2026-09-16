@@ -26,13 +26,13 @@ export function imageDataUri(source: any): string | undefined {
   return undefined;
 }
 
-/** Normalize Claude/DeepSeek effort names to the Chat Completions values. */
+/** Normalize Claude/DeepSeek/Codex effort names to the Chat Completions values. */
 export function reasoningEffort(input: any): "low" | "high" | "max" | undefined {
   const value = input?.output_config?.effort ?? input?.reasoning?.effort;
   if (typeof value !== "string") return undefined;
-  if (value === "low") return "low";
-  if (value === "max") return "max";
+  if (value === "minimal" || value === "low") return "low";
   if (value === "medium" || value === "high" || value === "xhigh" || value === "ultracode") return "high";
+  if (value === "max" || value === "ultra") return "max";
   return undefined;
 }
 
@@ -104,8 +104,9 @@ export function anthropicToolChoice(value: unknown): unknown {
 export function anthropicThinking(effort: unknown): AnthropicThinking | undefined {
   if (typeof effort !== "string") return undefined;
   if (effort === "none") return { type: "disabled" };
+  if (effort === "minimal") return { type: "enabled", budget_tokens: 1024 };
   if (effort === "low") return { type: "enabled", budget_tokens: 4096 };
-  if (effort === "max") return { type: "enabled", budget_tokens: 32000 };
+  if (effort === "max" || effort === "ultra") return { type: "enabled", budget_tokens: 32000 };
   if (effort === "medium" || effort === "high" || effort === "xhigh" || effort === "ultracode") return { type: "enabled", budget_tokens: 16000 };
   return undefined;
 }

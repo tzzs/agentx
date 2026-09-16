@@ -1,5 +1,11 @@
 import { defaultModelFor } from "./selection.js";
 
+/** Full Codex reasoning-effort scale (ReasoningEffort); max/ultra live behind Codex's Advanced Reasoning step. */
+export const CODEX_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
+/** Claude Code's effort levels; `ultracode` is its workflow mode that runs at xhigh. */
+export const CLAUDE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "ultracode"] as const;
+export type ReasoningEffort = (typeof CODEX_EFFORT_LEVELS)[number] | (typeof CLAUDE_EFFORT_LEVELS)[number];
+
 export interface Config {
   host: string;
   port: number;
@@ -7,10 +13,20 @@ export interface Config {
   provider?: string;
   /** Optional override for Claude Code's background/haiku tier; unset = same as model. */
   backgroundModel?: string;
+  /** Optional reasoning effort; forwarded to the client's own flag. Per-client validation happens at launch. */
+  effort?: ReasoningEffort;
   apiKey: string;
   logLevel: string;
   /** Retry attempts on upstream network failure or 429/502/503/504; 0 disables retry. */
   retry: number;
+}
+
+/** Validate the `--effort`/`AGENTX_EFFORT` value against the union of both clients' scales. */
+export function configuredEffort(value: string | undefined): ReasoningEffort | undefined {
+  if (value === undefined || value === "") return undefined;
+  const allowed = [...new Set<string>([...CODEX_EFFORT_LEVELS, ...CLAUDE_EFFORT_LEVELS])];
+  if (allowed.includes(value)) return value as ReasoningEffort;
+  throw new Error(`Invalid effort "${value}" (expected one of ${allowed.join(", ")})`);
 }
 
 /**
@@ -67,6 +83,7 @@ export function loadConfig(
     model: configuredModel(options.model ?? envModel, rememberedModel, provider),
     provider,
     backgroundModel: options["background-model"] ?? process.env.AGENTX_BACKGROUND_MODEL,
+    effort: configuredEffort(options.effort ?? process.env.AGENTX_EFFORT),
     apiKey,
     logLevel: options.verbose ? "debug" : process.env.AGENTX_LOG_LEVEL ?? "info",
     retry,

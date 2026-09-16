@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCodexCatalog, writeCodexCatalog, codexCatalogPath, catalogModels } from "../src/codex-catalog.js";
+import { registerCustomProvider, unregisterCustomProvider } from "../src/providers/registry.js";
 import type { ProviderModel } from "../src/providers/types.js";
 
 test("catalog covers every registry model with the verified field set", () => {
@@ -15,6 +16,15 @@ test("catalog covers every registry model with the verified field set", () => {
     for (const key of ["slug", "display_name", "context_window", "supported_reasoning_levels", "visibility", "minimal_client_version", "model_messages"]) assert.ok(key in entry, `missing ${key}`);
     assert.equal(entry.visibility, "list");
   }
+});
+
+test("advertises Codex's full effort scale and honors the launch default", () => {
+  const model: ProviderModel = { provider: "ds", model: "deepseek-flash", protocol: "responses", endpoint: "http://ds/responses" };
+  const [entry] = (JSON.parse(buildCodexCatalog([model], "medium")) as { models: any[] }).models;
+  assert.deepEqual(entry.supported_reasoning_levels.map((level: any) => level.effort), ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+  assert.equal(entry.default_reasoning_level, "medium");
+  const [fallback] = (JSON.parse(buildCodexCatalog([model])) as { models: any[] }).models;
+  assert.equal(fallback.default_reasoning_level, "high");
 });
 
 test("declares DeepSeek's real context window instead of the 131072 unknown-model default", () => {
@@ -40,6 +50,26 @@ test("declares DeepSeek's real context window when reached through the OpenCode 
   const entry = catalog.models.find((item) => item.slug === "deepseek-v4-flash")!;
   assert.equal(entry.context_window, 1_000_000);
   assert.equal(entry.max_context_window, 1_000_000);
+});
+
+test("includes a custom provider's free-form model id so Codex can resolve it", () => {
+  try {
+    registerCustomProvider({ name: "Catalog Custom", baseUrl: "http://catalog.invalid", protocol: "chat-completions" });
+    const models = catalogModels({ provider: "catalog-custom", model: "deepseek-flash" }, []);
+    assert.deepEqual(models.map((item) => item.model), ["deepseek-flash"]);
+    assert.equal(models[0].provider, "catalog-custom");
+  } finally { unregisterCustomProvider("catalog-custom"); }
+});
+
+test("never exposes a custom provider's synthesized placeholder to Codex's model picker", () => {
+  try {
+    registerCustomProvider({ name: "Catalog Custom", baseUrl: "http://catalog.invalid", protocol: "chat-completions" });
+    // The registry holds the placeholder, but the catalog must not: only the
+    // selected real id is listed.
+    assert.deepEqual(catalogModels({ provider: "catalog-custom", model: "deepseek-flash" }).map((item) => item.model), ["deepseek-flash"]);
+    // Selecting the placeholder itself yields no catalog entry at all.
+    assert.deepEqual(catalogModels({ provider: "catalog-custom", model: "custom-model" }), []);
+  } finally { unregisterCustomProvider("catalog-custom"); }
 });
 
 test("prefers real registry limits and falls back to safe defaults", () => {

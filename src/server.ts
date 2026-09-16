@@ -6,7 +6,7 @@ import { pipeAnthropicPassthrough, pipeAnthropicStreamToChat, pipeAnthropicStrea
 import type { ProviderModel } from "./providers/types.js";
 import type { TokenUsage } from "./usage/types.js";
 import { honorRequestedModel, providerFor, providers } from "./catalog.js";
-import { apiKeyFor, providerDisplayName } from "./providers/registry.js";
+import { apiKeyFor, isPlaceholderModel, providerDisplayName } from "./providers/registry.js";
 import { extractUsage } from "./providers/usage/index.js";
 import { TokenUsageCollector } from "./usage/collector.js";
 import { defaultUsageStore } from "./usage/storage.js";
@@ -238,7 +238,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     // the former unauthenticated /usage/* HTTP endpoints were removed — see
     // docs/remaining-simplification-todos.md item B.
     if (pathname === "/v1/models" && request.method === "GET") return json(response, 200, {
-      data: providers.filter((item) => !config.provider || item.provider === config.provider).map((item) => ({ id: item.model, object: "model", owned_by: item.provider }))
+      data: providers.filter((item) => (!config.provider || item.provider === config.provider) && !isPlaceholderModel(item)).map((item) => ({ id: item.model, object: "model", owned_by: item.provider }))
     });
     if (pathname === "/v1/responses" && request.method === "POST") {
       // Honor auto routing here too: Codex echoes OPENAI_MODEL=auto back.

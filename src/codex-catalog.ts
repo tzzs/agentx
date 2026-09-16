@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { atomicWriteFile } from "./fsutil.js";
-import { allModels, providerFor, withExternalMetadata } from "./providers/registry.js";
+import { allModels, isPlaceholderModel, providerFor, withExternalMetadata } from "./providers/registry.js";
 import type { ProviderModel } from "./providers/types.js";
 import type { Config } from "./config.js";
 
@@ -37,11 +37,6 @@ const CODEX_CATALOG_BASE = {
   comp_hash: "3000",
   reasoning_summary_format: "experimental",
   default_reasoning_summary: "none",
-  default_reasoning_level: "high",
-  supported_reasoning_levels: [
-    { effort: "low", description: "Light reasoning" },
-    { effort: "high", description: "Deep reasoning" },
-  ],
   visibility: "list",
   minimal_client_version: "0.144.0",
   supported_in_api: true,
@@ -58,8 +53,26 @@ const CODEX_CATALOG_BASE = {
   supports_reasoning_summaries: true,
 };
 
+/**
+ * The full Codex reasoning-effort scale, advertised for every catalog model.
+ * Codex shows the standard levels in "Select Reasoning Level for …" and keeps
+ * max/ultra behind its own Advanced Reasoning step; the chosen level lands on
+ * the request as `reasoning.effort`, and the adapter converts it for
+ * chat-completions / Anthropic upstreams.
+ */
+const REASONING_LEVELS = [
+  { effort: "none", description: "No reasoning — fastest replies" },
+  { effort: "minimal", description: "Very light reasoning" },
+  { effort: "low", description: "Faster replies, lighter reasoning" },
+  { effort: "medium", description: "Balanced speed and reasoning depth" },
+  { effort: "high", description: "Deeper reasoning, slower replies" },
+  { effort: "xhigh", description: "Extended reasoning for hard problems" },
+  { effort: "max", description: "Maximum single-agent reasoning" },
+  { effort: "ultra", description: "Highest reasoning effort" },
+];
+
 /** Per-model deltas on top of CODEX_CATALOG_BASE; `priority` orders Codex's model picker. */
-function catalogEntry(model: ProviderModel, priority: number) {
+function catalogEntry(model: ProviderModel, priority: number, defaultEffort: string) {
   return {
     ...CODEX_CATALOG_BASE,
     slug: model.model,
@@ -70,25 +83,31 @@ function catalogEntry(model: ProviderModel, priority: number) {
     max_output_tokens: model.maxOutputTokens ?? 16384,
     input_modalities: model.modalities?.length ? model.modalities : ["text"],
     priority,
+    default_reasoning_level: defaultEffort,
+    supported_reasoning_levels: REASONING_LEVELS,
   };
 }
 
-export function buildCodexCatalog(models: ProviderModel[] = allModels): string {
+export function buildCodexCatalog(models: ProviderModel[] = allModels, defaultEffort = "high"): string {
   const unique = models.filter((model, index) => models.findIndex((other) => other.model === model.model) === index);
-  const catalog = { models: unique.map(catalogEntry) };
+  const catalog = { models: unique.map((model, index) => catalogEntry(model, index, defaultEffort)) };
   return `${JSON.stringify(catalog, null, 2)}\n`;
 }
 
 /**
  * Catalog input for one bound provider. The selected custom id is appended so
  * Codex can resolve it; models owned by other providers are intentionally
- * omitted because request routing rejects cross-provider ids.
+ * omitted because request routing rejects cross-provider ids, and a custom
+ * provider's synthesized placeholder model is filtered out so it never shows
+ * up in Codex's model picker.
  */
 export function catalogModels(selected: Pick<Config, "provider"> & { model: string }, base: ProviderModel[] = allModels): ProviderModel[] {
-  const scoped = base.filter((model) => !selected.provider || model.provider === selected.provider);
+  const scoped = base.filter((model) => (!selected.provider || model.provider === selected.provider) && !isPlaceholderModel(model));
   if (!selected.model || scoped.some((model) => model.model === selected.model)) return scoped;
   try {
-    return [...scoped, withExternalMetadata(providerFor(selected.model, selected.provider))];
+    const synthesized = withExternalMetadata(providerFor(selected.model, selected.provider));
+    // Selecting the placeholder itself must not resurrect it in the catalog.
+    return isPlaceholderModel(synthesized) ? scoped : [...scoped, synthesized];
   } catch {
     return scoped;
   }
@@ -100,11 +119,11 @@ export function catalogModels(selected: Pick<Config, "provider"> & { model: stri
  * metadata" warning. Returns the written path, or undefined when the write
  * fails — Codex still works, it merely warns.
  */
-export async function writeCodexCatalog(models: ProviderModel[] = allModels): Promise<string | undefined> {
+export async function writeCodexCatalog(models: ProviderModel[] = allModels, defaultEffort = "high"): Promise<string | undefined> {
   if (!models.length) return undefined;
   const file = codexCatalogPath();
   try {
-    await atomicWriteFile(file, buildCodexCatalog(models));
+    await atomicWriteFile(file, buildCodexCatalog(models, defaultEffort));
     return file;
   } catch {
     return undefined;

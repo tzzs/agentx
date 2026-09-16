@@ -42,7 +42,7 @@
 npx @tanzz/agentx claude
 ```
 
-在交互式终端中，首次运行时 AgentX 会提示你输入 OpenCode API Key，并引导你完成 Provider / 模型选择（见[运行时配置](#运行时配置)）——不需要你提前手动配置任何东西。这个 Key 仅在当前会话有效，绝不会写入磁盘或 shell profile，AgentX 会用它来配置适配器，并自动注入 Claude Code 所需的环境变量。随后它会启动仅监听本机回环地址的适配器，等待服务就绪，使用临时 `ANTHROPIC_*` 环境变量启动 Claude Code，转发终端输入输出，并在 Claude Code 退出后关闭适配器。
+在交互式终端中，首次运行时 AgentX 会提示你输入 OpenCode API Key，并引导你完成 Provider / 模型选择（见[运行时配置](#运行时配置)）——不需要你提前手动配置任何东西。这个 Key 仅在当前会话有效，绝不会写入磁盘；把它持久化到 shell profile 是 [`agentx config`](#config) 中单独的显式 opt-in。AgentX 会用它来配置适配器，并自动注入 Claude Code 所需的环境变量。随后它会启动仅监听本机回环地址的适配器，等待服务就绪，使用临时 `ANTHROPIC_*` 环境变量启动 Claude Code，转发终端输入输出，并在 Claude Code 退出后关闭适配器。
 
 真实的 OpenCode Key 不会传给 Claude Code。Claude Code 每次只会收到一个随机生成的本地临时 Token。
 
@@ -153,6 +153,17 @@ agentx auth status --provider deepseek   # 查看当前来源与状态
 agentx auth logout --provider deepseek   # 提示如何从 shell profile 移除
 ```
 
+### `config`
+
+只配置 Provider，不启动 Adapter 或客户端——查看凭据状态、新增或移除自定义端点：
+
+```bash
+agentx config    # 交互式 Provider 管理器
+agentx config --provider "My Local LLM" --base-url http://localhost:11434 --protocol chat-completions   # 非交互新增
+```
+
+AgentX 自身不保存密钥。在交互式管理器里选中未配置的 Provider（或刚新增一个）时，可以选择立即输入 API Key 并写入你的 shell profile——zsh 的 `~/.zshrc`（遵循 `ZDOTDIR`），或 bash 的 `~/.bashrc`/`~/.bash_profile`——以 `# >>> agentx credentials` 标记块包裹的 export 语句形式。写入前会先向你确认目标文件；已有 profile 会备份到 `<profile>.agentx.bak`；重复运行会原地替换该标记块；删除标记块（或恢复备份）即可撤销；如果 profile 对其他本地用户可读还会给出警告。之后的启动会自动读回这些标记块（只读当前 shell 对应的 profile，环境变量仍优先），无需先 source 就能直接使用，但 Key 不会并入被启动客户端继承的环境。不确认就绝不会写入；AgentX 无法安全编辑的 shell（如 fish）则回退为打印手动配置指引。非交互终端打印 Provider 列表及凭据状态。
+
 ### `usage`
 
 打印适配器服务的每个请求累计的 Token 用量统计：
@@ -205,6 +216,7 @@ agentx version
 | `--model <model>` | `AGENTX_MODEL` | `gpt-5.6-luna` | 具体上游模型 ID |
 | `--provider <id>` | `AGENTX_PROVIDER` | 无 | 上游 Provider（`opencode`、`deepseek`、`openrouter`） |
 | `--background-model <id>` | `AGENTX_BACKGROUND_MODEL` | 无 | Claude Code 后台（haiku）通道使用的模型 |
+| `--effort <level>` | `AGENTX_EFFORT` | 无 | 推理档位：`codex` `none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`/`ultra`；`claude` `low`/`medium`/`high`/`xhigh`/`ultracode` |
 | `--retry <n>` | `AGENTX_RETRY` | `3` | 上游 429/502/503/504 的重试次数(0 表示禁用) |
 | `--client-protocol <anthropic\|openai>` | | `anthropic` | 仅 `exec`:决定给被启动程序注入哪种形状的环境变量 |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | 预留的详细日志选项 |
@@ -220,9 +232,9 @@ agentx proxy --host 0.0.0.0
 
 ## 凭据与 Provider Profile
 
-凭据完全通过环境变量提供：AgentX 专用的变量统一带 `AGENTX_` 前缀（如 `AGENTX_OPENCODE_API_KEY`），避免与用户为其他工具设置的同名变量冲突；运行时解析后按原始 Key 注入上游请求，前缀只存在于变量命名空间中。如果已经设置了不带前缀的旧变量（如 `OPENCODE_API_KEY`），也会被直接使用。凭据查找优先级为：`--api-key`、`AGENTX_<PROVIDER>_API_KEY`、旧的 `<PROVIDER>_API_KEY`、交互式输入。交互式输入的 Key 仅当前会话有效，AgentX 会打印可粘贴到 shell profile 的 `export …` 行；AgentX 不会自行修改你的 shell profile。
+凭据完全通过环境变量提供：AgentX 专用的变量统一带 `AGENTX_` 前缀（如 `AGENTX_OPENCODE_API_KEY`），避免与用户为其他工具设置的同名变量冲突；运行时解析后按原始 Key 注入上游请求，前缀只存在于变量命名空间中。如果已经设置了不带前缀的旧变量（如 `OPENCODE_API_KEY`），也会被直接使用。凭据查找优先级为：`--api-key`、`AGENTX_<PROVIDER>_API_KEY`、旧的 `<PROVIDER>_API_KEY`、[`agentx config`](#config) 写入 shell profile 的标记块、交互式输入。启动时 AgentX 会自动读回这些标记块（只读当前 shell 对应的 profile），因此无需先 source 文件即可使用；环境变量始终优先于 profile，且 profile 中的 Key 不会并入进程环境——只有 Adapter 使用它，不会被子客户端进程继承。交互式输入的 Key 仅当前会话有效，AgentX 会打印可粘贴到 shell profile 的 `export …` 行。启动流程不会自行修改你的 shell profile；只有 `agentx config` 会在你显式确认后写入上文描述的标记块。
 
-非敏感运行时状态统一保存在 `~/.config/agentx/runtime.json`：包含每个客户端的默认模型、每个 Provider 最近使用的模型和最近一次选择。API Key 不会写入该文件或任何由 AgentX 管理的存储；AgentX 也不会修改你的 shell profile。
+非敏感运行时状态统一保存在 `~/.config/agentx/runtime.json`：包含每个客户端的默认模型、每个 Provider 最近使用的模型和最近一次选择。API Key 不会写入该文件或任何由 AgentX 管理的存储；唯一可能写入 Key 的地方是 `agentx config` 中经确认管理的 shell profile 标记块，该标记块会在启动时被读回（如上所述）。
 
 对于 Claude Code，本地 Token 会注入为 `ANTHROPIC_AUTH_TOKEN`，而不是 `ANTHROPIC_API_KEY`。这与 DeepSeek 等 Provider 的接入方式一致，可以避免 Claude Code 弹出自定义 API Key 确认页面；上游真实 Key 始终只保留在 Adapter 中。
 
@@ -251,18 +263,25 @@ agentx codex --provider openrouter --model anthropic/claude-sonnet-4
 
 Claude Code 的所有模型档位（主模型、opus/sonnet/haiku 别名、子代理）都会固定为所选模型——用户的选择对所有流量生效，包括 Claude Code 通过 haiku 档位发起的小型后台请求（权限检查、主题检测、摘要等）。可选地，通过 `--background-model <id>`（或环境变量 `AGENTX_BACKGROUND_MODEL`）可以仅将这一后台通道路由到同一 Provider 下的其他模型——当主模型是重量级推理模型、其非流式辅助调用超过客户端超时时间时会很实用。凡是指定了目标 Provider 实际提供的模型的请求都会按原样转发；未知模型 id 则回退到配置的模型。
 
+Claude Code 的推理档位同样支持：`agentx claude --effort low|medium|high|xhigh|ultracode`（或 `AGENTX_EFFORT`）会把档位作为 Claude Code 自己的 `--effort` 传入本次会话；请求中的 effort 会按上游协议转换。
+
 ### 自定义 Provider
 
-除了三个内置 Provider，你还可以注册任意 OpenAI 或 Anthropic 兼容的端点——本地模型服务（Ollama、vLLM、LM Studio）、内部网关，或其他任何兼容 API。在交互式启动器的「Change Provider」列表里选择 **Add custom provider…**，依次填入名称、Base URL 和协议；已经有自定义 Provider 时,同一个列表还会提供 **Remove custom provider…**。
+除了三个内置 Provider，你还可以注册任意 OpenAI 或 Anthropic 兼容的端点——本地模型服务（Ollama、vLLM、LM Studio）、内部网关，或其他任何兼容 API。在交互式启动器的「Change Provider」列表里选择 **Add custom provider…**，先在一屏内选择协议——每个选项标出 AgentX 会追加的路径（`/v1/messages`、`/responses` 或 `/chat/completions`），Chat Completions 行尾还带一个 `legacy` 备注（它是 OpenAI 早期的 API，但几乎所有第三方和本地端点仍只实现这一形态）。接着填 Base URL（提示里会再写明该路径，所以只填 base 即可）和显示名称，随后紧接 API key 提示；已经有自定义 Provider 时,同一个列表还会提供 **Remove custom provider…**。不想启动客户端时，可以用 `agentx config` 完成同样的配置（见上文 [`config`](#config)）。
 
-对于脚本和非交互场景，`--base-url` 可以在不打开启动器的情况下定义(并持久化)一个自定义 Provider——`--provider` 作为它的显示名，`--protocol` 选择上游协议形状(默认 `chat-completions`，也可以是 `responses`/`anthropic`)：
+自定义端点不提供模型列表，因此首次启动会直接询问它的模型 id——内部占位模型不会作为选项出现，也不会出现在 Codex 的模型选择器里——之后会像其他模型一样被记住。（非交互运行未传 `--model` 时仍会回退到占位模型，所以脚本里请显式传 `--model`。）
+
+对于脚本和非交互场景，`agentx config --provider <名称> --base-url <url>` 可以不启动客户端就注册(并持久化)一个自定义 Provider；`exec`/`claude`/`codex` 也接受同样的参数，在启动的同时完成定义。`--provider` 作为它的显示名，`--protocol` 选择上游协议形状(默认 `chat-completions`，也可以是 `responses`/`anthropic`)：
 
 ```bash
-# 本地 OpenAI 兼容服务(例如 Ollama)
+# 只定义本地 OpenAI 兼容服务，不启动客户端
+agentx config --provider "My Local LLM" --base-url http://localhost:11434 --protocol chat-completions --model llama3
+
+# 或者定义并一步启动
 agentx exec --provider "My Local LLM" --base-url http://localhost:11434 --protocol chat-completions --model llama3 -- claude
 
 # 说原生 Anthropic Messages API 协议的 Provider
-agentx exec --provider "Internal Anthropic Gateway" --base-url https://gateway.internal --protocol anthropic --model claude-x -- claude
+agentx config --provider "Internal Anthropic Gateway" --base-url https://gateway.internal --protocol anthropic --model claude-x
 ```
 
 注册之后,直接用它的 id(名称转小写、空格转连字符)复用,不用再重复 `--base-url`：
@@ -271,7 +290,7 @@ agentx exec --provider "Internal Anthropic Gateway" --base-url https://gateway.i
 agentx claude --provider my-local-llm
 ```
 
-凭据的处理方式和内置 Provider 完全一样——在环境变量里设置 `AGENTX_<ID>_API_KEY`(大写、下划线分隔),或者在提示时手动输入；连接元数据会持久化到 `runtime.json`,但 API Key 绝不会。要把一个自定义 Provider 彻底移除(定义本身连同所有保存的记忆,而不只是某个过期的 model id)：
+凭据的处理方式和内置 Provider 完全一样——在环境变量里设置 `AGENTX_<ID>_API_KEY`(大写、下划线分隔),或者在提示时手动输入；连接元数据会持久化到 `runtime.json`,但 API Key 绝不会写在那里(唯一可能写入 Key 的地方是 [`agentx config`](#config) 中经确认的 shell profile 标记块)。要把一个自定义 Provider 彻底移除(定义本身连同所有保存的记忆,而不只是某个过期的 model id)：
 
 ```bash
 agentx forget --provider my-local-llm --remove-provider
@@ -346,6 +365,8 @@ npx @tanzz/agentx codex --model gpt-5.6-luna
 ```
 
 启动器通过 `-c` 参数定义一个内联的 `agentx` 模型 Provider，指向 `http://127.0.0.1:<port>/v1`，其 Bearer Token 是以 `OPENAI_API_KEY` 注入的临时本地 Token。启动时还会生成一份模型目录（`~/.config/agentx/codex-models.json`，经 `model_catalog_json` 传入），让目录中的模型——包括你在启动器中输入的自定义 OpenRouter 模型 id——以真实元数据加载，而不是触发 Codex 的 fallback 元数据警告：上下文窗口与输出上限对所有 Provider 生效，在可用时取自公开注册表 models.dev，models.dev 缺失的模型回退到 OpenRouter 公开目录，否则使用保守默认值。DeepSeek 的 `deepseek-v4-pro`/`deepseek-v4-flash` 是个例外：它们是 OpenCode 自己的品牌命名（同时通过 OpenCode 网关和直连的 DeepSeek Provider 提供），两个公开注册表都没有对应词条，因此目录会显式声明它们约 1M 的真实上下文窗口，而不是回退到保守的 128k——否则 Codex 会比必要时机早得多地对长时间 DeepSeek 会话做自动压缩，这与 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 为 Claude Code 修复的是同一类问题（见[模型和路由](#模型和路由)）。新版 Codex 已不再读取那些环境变量，该方式可以正常工作，并完全绕过 Codex 的登录页——无需 ChatGPT 登录或 `~/.codex/auth.json`，也不会修改你已有的 `~/.codex/config.toml`。Codex 现在同时支持 Responses 和 Chat Completions 模型：Responses 模型直接转发，Chat Completions 模型在本地 Responses 边界进行协议转换。因此 Provider 目录中的模型都可以供 Claude Code 和 Codex 使用。
+
+推理档位（Effort）同样可配置。生成的目录为每个模型声明 Codex 的完整档位（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`、`ultra`），因此在 Codex 里选中模型后会进入「Select Reasoning Level」步骤（max/ultra 在它自己的 Advanced Reasoning 子菜单里），选中的档位由 Codex 自己持久化。脚本或一次性运行可以用 `agentx codex --effort <level>`（或 `AGENTX_EFFORT`）覆盖本次启动，对应 Codex 的 `-c model_reasoning_effort`。适配器会把该档位映射到上游的原生控制——DeepSeek 的 thinking/`reasoning_effort`、Anthropic 的 thinking 预算——Responses 上游则原样透传。
 
 ## 模型和路由
 
@@ -433,7 +454,7 @@ DeepSeek 的思考模式要求每个 assistant 回合的 `reasoning_content` 必
 
 - 上游 API Key 只从 CLI 或环境变量读取，并只发送给所配置的 Provider。
 - Claude Code 每次只收到适配器进程生成的随机本地 Bearer Token，该 Token 不会持久化。
-- 默认监听 `127.0.0.1`，不会修改 shell profile 或永久操作系统环境变量。
+- 默认监听 `127.0.0.1`，启动流程不会修改 shell profile 或永久操作系统环境变量；唯一例外是 [`agentx config`](#config) 中经你显式确认的 profile 写入。
 - 适配器没有 `/usage/*` 之类可读取已存储数据的未认证 HTTP 端点；用量统计只能通过 [`agentx usage`](#usage) 命令在本地读取。
 - 日志不应包含 API Key、Authorization Header、用户 prompt 或敏感工具参数。
 - `--host 0.0.0.0` 会主动暴露网络服务，请配置适当的网络访问控制。

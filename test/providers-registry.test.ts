@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiKeyFor, credentialEnvName, fetchOpenRouterModels, hydrateOpenCodeCatalog, hydrateOpenRouterCatalog, openRouterCatalogIds, providerById, providerFor, providerRegistry, refreshProviderCatalog, registerCustomProvider, resetOpenCodeCatalogCache, setOpenRouterCatalogIds, unregisterCustomProvider, allModels, withExternalMetadata } from "../src/providers/registry.js";
+import { apiKeyFor, credentialEnvName, fetchOpenRouterModels, hydrateOpenCodeCatalog, hydrateOpenRouterCatalog, isPlaceholderModel, openRouterCatalogIds, providerById, providerFor, providerRegistry, refreshProviderCatalog, registerCustomProvider, resetOpenCodeCatalogCache, setOpenRouterCatalogIds, unregisterCustomProvider, allModels, withExternalMetadata } from "../src/providers/registry.js";
 import { loadOpenCodeModels, saveOpenCodeModels, saveOpenRouterModels } from "../src/runtime.js";
 
 // refreshProviderCatalog/hydrateOpenRouterCatalog/hydrateOpenCodeCatalog read
@@ -399,6 +399,21 @@ test("a registered custom provider resolves through providerFor/apiKeyFor like a
     process.env.AGENTX_BENCH_PROVIDER_API_KEY = "bench-key";
     assert.equal(apiKeyFor(model), "bench-key");
     delete process.env.AGENTX_BENCH_PROVIDER_API_KEY;
+  } finally { unregisterCustomProvider("bench-provider"); }
+});
+
+test("providerFor accepts arbitrary ids for custom providers but keeps rejecting them for built-ins", () => {
+  try {
+    registerCustomProvider({ name: "Bench Provider", baseUrl: "http://bench.local", protocol: "responses" });
+    const model = providerFor("deepseek-flash", "bench-provider");
+    assert.equal(model.model, "deepseek-flash");
+    assert.equal(model.provider, "bench-provider");
+    assert.equal(model.protocol, "responses");
+    assert.equal(model.endpoint, "http://bench.local/responses");
+    assert.throws(() => providerFor("not-a-real-model", "deepseek"), /is not available/);
+    // The synthesized default is recognizable as a placeholder, a named id is not.
+    assert.equal(isPlaceholderModel(providerFor("custom-model", "bench-provider")), true);
+    assert.equal(isPlaceholderModel(model), false);
   } finally { unregisterCustomProvider("bench-provider"); }
 });
 

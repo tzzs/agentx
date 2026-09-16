@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chatThinking, chatToolChoice, fromAnthropicResponse, fromResponsesResponse, reasoningEffort, responsesResponseFailure, responsesToolChoice, toAnthropicRequest, toResponsesRequest } from "../src/convert/index.js";
+import { anthropicThinking, chatThinking, chatToolChoice, fromAnthropicResponse, fromResponsesResponse, reasoningEffort, responsesResponseFailure, responsesToolChoice, toAnthropicRequest, toResponsesRequest } from "../src/convert/index.js";
 
 test("converts Anthropic request to Responses request", () => {
   assert.deepEqual(toResponsesRequest({ system: "Be concise", max_tokens: 10, messages: [{ role: "user", content: "Hi" }] }, "gpt-5.6-luna"), { model: "gpt-5.6-luna", input: [{ role: "user", content: "Hi" }], instructions: "Be concise", max_output_tokens: 10 });
@@ -44,8 +44,21 @@ test("normalizes Claude and DeepSeek effort names to Chat Completions values", (
   assert.equal(reasoningEffort({ output_config: { effort: "xhigh" } }), "high");
   assert.equal(reasoningEffort({ output_config: { effort: "ultracode" } }), "high");
   assert.equal(reasoningEffort({ reasoning: { effort: "high" } }), "high");
+  assert.equal(reasoningEffort({ reasoning: { effort: "minimal" } }), "low");
+  assert.equal(reasoningEffort({ reasoning: { effort: "ultra" } }), "max");
   assert.equal(reasoningEffort({ output_config: { effort: "none" } }), undefined);
   assert.equal(reasoningEffort({}), undefined);
+});
+
+test("maps every effort level onto an Anthropic thinking budget", () => {
+  assert.deepEqual(anthropicThinking("none"), { type: "disabled" });
+  assert.deepEqual(anthropicThinking("minimal"), { type: "enabled", budget_tokens: 1024 });
+  assert.deepEqual(anthropicThinking("low"), { type: "enabled", budget_tokens: 4096 });
+  assert.deepEqual(anthropicThinking("medium"), { type: "enabled", budget_tokens: 16000 });
+  assert.deepEqual(anthropicThinking("xhigh"), { type: "enabled", budget_tokens: 16000 });
+  assert.deepEqual(anthropicThinking("ultracode"), { type: "enabled", budget_tokens: 16000 });
+  assert.deepEqual(anthropicThinking("max"), { type: "enabled", budget_tokens: 32000 });
+  assert.deepEqual(anthropicThinking("ultra"), { type: "enabled", budget_tokens: 32000 });
 });
 
 test("converts Anthropic thinking controls to DeepSeek's enabled/disabled shape", () => {

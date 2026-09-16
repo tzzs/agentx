@@ -1,13 +1,14 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { __resetTestIO, __setTestIO, providerEntries, runInteractiveLauncher, runSavedModelManager, selectProvider, type ProviderEntry } from "../src/ui.js";
+import { __resetTestIO, __setTestIO, providerEntries, runInteractiveLauncher, runProviderManager, runSavedModelManager, selectProvider, type ProviderEntry } from "../src/ui.js";
 import { defaultModelFor } from "../src/selection.js";
+import { resetProfileCredentials } from "../src/credentials.js";
 import { providerById, providerRegistry, registerCustomProvider, unregisterCustomProvider } from "../src/providers/registry.js";
-import { loadCustomProviders, loadLastQuickAction, saveCustomProvider, saveDefaultRuntime, saveLastModel, saveLastQuickAction } from "../src/runtime.js";
+import { loadCustomProviders, loadDefaultRuntime, loadLastQuickAction, saveCustomProvider, saveDefaultRuntime, saveLastModel, saveLastQuickAction } from "../src/runtime.js";
 
 test("lists all configured providers from the registry", async () => {
   const entries = await providerEntries();
@@ -107,15 +108,11 @@ test("Add custom provider: registers it, persists connection metadata only, and 
 
   await tty.pressDown(); // -> "Add custom provider…" (the only other option)
   await tty.pressEnter();
-  await tty.type("My Local LLM");
-  await tty.pressEnter(); // name
+  await tty.pressEnter(); // protocol = Anthropic Messages (default, first)
   await tty.type("http://localhost:11434");
   await tty.pressEnter(); // base URL
-  await tty.pressDown(); // Chat Completions -> Responses
-  await tty.pressDown(); // Responses -> Anthropic Messages API
-  await tty.pressEnter(); // protocol = anthropic
-  // Back at the (refreshed) provider picker, the new provider is the initialValue; accept it.
-  await tty.pressEnter();
+  await tty.type("My Local LLM");
+  await tty.pressEnter(); // name — returns straight to the caller, no extra picker screen
 
   const result = await resultPromise;
   try {
@@ -132,6 +129,30 @@ test("Add custom provider: registers it, persists connection metadata only, and 
   }
 });
 
+test("Add custom provider: the single Protocol screen maps each choice to the upstream protocol and endpoint", async () => {
+  const tty = createFakeTTY();
+  __setTestIO({ input: tty.input, output: tty.output });
+  const resultPromise = selectProvider(soloEntries(), "opencode");
+
+  await tty.pressDown(); // -> "Add custom provider…"
+  await tty.pressEnter();
+  await tty.pressDown(); // Anthropic Messages -> OpenAI Responses
+  await tty.pressEnter(); // protocol = responses
+  await tty.type("https://api.openai.com/v1");
+  await tty.pressEnter(); // base URL
+  await tty.type("OpenAI Responses");
+  await tty.pressEnter(); // name
+
+  const result = await resultPromise;
+  try {
+    assert.equal(result, "openai-responses");
+    assert.equal(providerById("openai-responses").models[0].protocol, "responses");
+    assert.equal(providerById("openai-responses").models[0].endpoint, "https://api.openai.com/v1/responses");
+  } finally {
+    unregisterCustomProvider("openai-responses");
+  }
+});
+
 test("Add custom provider: cancelling at the name prompt registers nothing and returns to the original selection", async () => {
   const tty = createFakeTTY();
   __setTestIO({ input: tty.input, output: tty.output });
@@ -140,6 +161,11 @@ test("Add custom provider: cancelling at the name prompt registers nothing and r
 
   await tty.pressDown(); // -> "Add custom provider…"
   await tty.pressEnter();
+  await tty.pressDown(); // Anthropic Messages -> OpenAI Responses
+  await tty.pressDown(); // OpenAI Responses -> OpenAI Chat Completions
+  await tty.pressEnter(); // protocol = chat-completions
+  await tty.type("http://localhost:11434");
+  await tty.pressEnter(); // base URL
   await tty.pressCtrlC(); // cancel at the name prompt
   // The picker reopens with the original "current" (opencode) as initialValue.
   await tty.pressEnter();
@@ -147,6 +173,181 @@ test("Add custom provider: cancelling at the name prompt registers nothing and r
   const result = await resultPromise;
   assert.equal(result, "opencode");
   assert.equal(providerRegistry.length, before);
+});
+
+test("runProviderManager: adds a custom provider, prints its key guidance, and exits on cancel", async () => {
+  const tty = createFakeTTY();
+  __setTestIO({ input: tty.input, output: tty.output });
+  const manager = runProviderManager();
+
+  // The Add sentinel sits right after every registry provider.
+  for (let i = 0; i < providerRegistry.length; i++) await tty.pressDown();
+  await tty.pressEnter(); // -> "Add custom provider…"
+  await tty.pressDown(); // Anthropic Messages -> OpenAI Responses
+  await tty.pressDown(); // OpenAI Responses -> OpenAI Chat Completions
+  await tty.pressEnter(); // protocol = chat-completions
+  await tty.type("http://localhost:11434");
+  await tty.pressEnter(); // base URL
+  await tty.type("Config Test LLM");
+  await tty.pressEnter(); // name
+  await tty.type("n"); // decline persisting the key to the shell profile
+  await tty.pressCtrlC(); // leave the manager
+
+  await manager;
+  try {
+    assert.equal(providerById("config-test-llm").models[0].protocol, "chat-completions");
+    assert.equal(providerById("config-test-llm").models[0].endpoint, "http://localhost:11434/chat/completions");
+    assert.ok((await loadCustomProviders())["config-test-llm"]);
+    // No launch follows, so the manager must print how to persist the key.
+    assert.match(tty.text, /AGENTX_CONFIG_TEST_LLM_API_KEY/);
+  } finally {
+    unregisterCustomProvider("config-test-llm");
+  }
+});
+
+test("runProviderManager: an accepted key setup writes a marked export block to the shell profile", async () => {
+  const tty = createFakeTTY();
+  __setTestIO({ input: tty.input, output: tty.output });
+  const home = await mkdtemp(join(tmpdir(), "agentx-home-"));
+  const savedEnv = { HOME: process.env.HOME, SHELL: process.env.SHELL, ZDOTDIR: process.env.ZDOTDIR };
+  process.env.HOME = home;
+  process.env.SHELL = "/bin/zsh";
+  delete process.env.ZDOTDIR;
+  const manager = runProviderManager();
+
+  // The Add sentinel sits right after every registry provider.
+  for (let i = 0; i < providerRegistry.length; i++) await tty.pressDown();
+  await tty.pressEnter(); // -> "Add custom provider…"
+  await tty.pressDown(); // Anthropic Messages -> OpenAI Responses
+  await tty.pressDown(); // OpenAI Responses -> OpenAI Chat Completions
+  await tty.pressEnter(); // protocol = chat-completions
+  await tty.type("http://localhost:11434");
+  await tty.pressEnter(); // base URL
+  await tty.type("Profile Test LLM");
+  await tty.pressEnter(); // name
+  await tty.pressEnter(); // confirm writing the key to the shell profile (default yes)
+  await tty.type("sk-profile-secret");
+  await tty.pressEnter(); // API key
+  await tty.pressCtrlC(); // leave the manager
+
+  await manager;
+  try {
+    const profile = await readFile(join(home, ".zshrc"), "utf8");
+    assert.match(profile, /# >>> agentx credentials: AGENTX_PROFILE_TEST_LLM_API_KEY >>>/);
+    assert.match(profile, /export AGENTX_PROFILE_TEST_LLM_API_KEY='sk-profile-secret'/);
+    // The key must be masked in the TUI and never echoed back.
+    assert.doesNotMatch(tty.text, /sk-profile-secret/);
+    // The manager's own view is hydrated from the profile right after writing.
+    assert.equal((await providerEntries()).find((entry) => entry.definition.id === "profile-test-llm")?.configured, true);
+  } finally {
+    unregisterCustomProvider("profile-test-llm");
+    resetProfileCredentials();
+    for (const [key, value] of Object.entries(savedEnv)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("pre-selecting a configured provider resolves its own model and never offers OpenRouter's catalog", async () => {
+  await withIsolatedRuntime({ AGENTX_DS_SWITCH_TEST_API_KEY: "test-key" }, async () => {
+    const definition = registerCustomProvider({ name: "Ds Switch Test", baseUrl: "http://ds-switch.invalid", protocol: "chat-completions" });
+    try {
+      const tty = createFakeTTY();
+      __setTestIO({ input: tty.input, output: tty.output });
+      const initial = { provider: "opencode", model: defaultModelFor("opencode"), source: "builtin" as const, defaultApplied: false };
+      const resultPromise = runInteractiveLauncher("codex", initial);
+
+      await tty.pressEnter(); // top-level: "Select provider / model"
+      // With no saved default the launcher pre-selects the configured provider,
+      // so ds-switch-test (the only one) is already highlighted.
+      await tty.pressEnter();
+      await tty.type("deepseek-flash");
+      await tty.pressEnter(); // model id completes the launcher
+
+      const outcome = await resultPromise;
+      assert.equal(outcome.provider, "ds-switch-test");
+      assert.equal(outcome.model, "deepseek-flash");
+      assert.deepEqual(await loadDefaultRuntime("codex"), { provider: "ds-switch-test", model: "deepseek-flash" });
+      assert.match(tty.text, /Custom model id \(Ds Switch Test\)/, "a fresh custom endpoint asks for a real model id directly");
+      assert.doesNotMatch(tty.text, /custom-model/, "the synthesized placeholder is not a real model id");
+      assert.doesNotMatch(tty.text, /gpt-5.6-luna/, "the fallback provider's model must not be carried over as 'current'");
+      assert.doesNotMatch(tty.text, /Browse OpenRouter catalog/, "catalog browsing is OpenRouter-only");
+      assert.doesNotMatch(tty.text, /Forget a saved model/, "nothing is saved for this provider yet");
+    } finally {
+      unregisterCustomProvider(definition.id);
+    }
+  });
+});
+
+test("switching provider in the picker drops the previous provider's model instead of carrying it over", async () => {
+  await withIsolatedRuntime({ AGENTX_DS_SWITCH_TEST_API_KEY: "test-key" }, async () => {
+    const definition = registerCustomProvider({ name: "Ds Switch Test", baseUrl: "http://ds-switch.invalid", protocol: "chat-completions" });
+    try {
+      await saveDefaultRuntime("codex", { provider: "opencode", model: defaultModelFor("opencode") });
+      const tty = createFakeTTY();
+      __setTestIO({ input: tty.input, output: tty.output });
+      const initial = { provider: "opencode", model: defaultModelFor("opencode"), source: "default" as const, defaultApplied: true };
+      const resultPromise = runInteractiveLauncher("codex", initial);
+      const rejection = assert.rejects(resultPromise, { name: "LaunchCancelledError" });
+
+      await tty.pressDown(); // Start -> Launch native
+      await tty.pressDown(); // -> Change provider / model
+      await tty.pressEnter();
+      // Provider picker: ds-switch-test (configured) first, opencode (current) second.
+      await tty.pressUp(); // -> ds-switch-test
+      await tty.pressEnter();
+      await tty.pressCtrlC(); // cancel at the model picker
+
+      await rejection;
+      assert.match(tty.text, /Custom model id \(Ds Switch Test\)/);
+      assert.doesNotMatch(tty.text, /· current/, "the old provider's model must not be carried over");
+    } finally {
+      unregisterCustomProvider(definition.id);
+    }
+  });
+});
+
+test("a custom provider with a saved model shows the picker instead of the placeholder", async () => {
+  await withIsolatedRuntime({ AGENTX_DS_SWITCH_TEST_API_KEY: "test-key" }, async () => {
+    const definition = registerCustomProvider({ name: "Ds Switch Test", baseUrl: "http://ds-switch.invalid", protocol: "chat-completions" });
+    try {
+      await saveLastModel("ds-switch-test", "deepseek-chat");
+      const tty = createFakeTTY();
+      __setTestIO({ input: tty.input, output: tty.output });
+      const initial = { provider: "opencode", model: defaultModelFor("opencode"), source: "builtin" as const, defaultApplied: false };
+      const resultPromise = runInteractiveLauncher("codex", initial);
+      const rejection = assert.rejects(resultPromise, { name: "LaunchCancelledError" });
+
+      await tty.pressEnter(); // top-level: "Select provider / model"
+      await tty.pressEnter(); // provider: ds-switch-test (pre-selected, configured)
+      await tty.pressCtrlC(); // cancel at the model picker
+
+      await rejection;
+      assert.match(tty.text, /deepseek-chat · current/);
+      assert.match(tty.text, /Search \/ enter any model id…/);
+      assert.doesNotMatch(tty.text, /custom-model/);
+    } finally {
+      unregisterCustomProvider(definition.id);
+    }
+  });
+});
+
+test("OpenRouter's model picker still offers the live catalog browse", async () => {
+  await withIsolatedRuntime({ AGENTX_OPENROUTER_API_KEY: "test-key" }, async () => {
+    const tty = createFakeTTY();
+    __setTestIO({ input: tty.input, output: tty.output });
+    const initial = { provider: "opencode", model: defaultModelFor("opencode"), source: "builtin" as const, defaultApplied: false };
+    const resultPromise = runInteractiveLauncher("codex", initial);
+    const rejection = assert.rejects(resultPromise, { name: "LaunchCancelledError" });
+
+    await tty.pressEnter(); // top-level: "Select provider / model"
+    // With no saved default the launcher pre-selects the configured provider,
+    // so openrouter (the only one) is already highlighted.
+    await tty.pressEnter();
+    await tty.pressCtrlC(); // cancel at the model picker
+
+    await rejection;
+    assert.match(tty.text, /Browse OpenRouter catalog/);
+  });
 });
 
 test("Remove custom provider: only offered once a custom provider exists, and removing it clears both the registry and persisted state", async () => {

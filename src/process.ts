@@ -52,6 +52,7 @@ const AGENTX_INPUT_ENV_KEYS = [
   "AGENTX_HOST",
   "AGENTX_PORT",
   "AGENTX_RETRY",
+  "AGENTX_EFFORT",
   "AGENTX_BACKGROUND_MODEL",
   "AGENTX_LOG_LEVEL",
 ];
@@ -123,6 +124,9 @@ export function codexLaunchArgs(config: Config, adapter: Adapter, catalogPath?: 
     "-c", "model_providers.agentx.wire_api='responses'",
     "-c", "model_providers.agentx.env_key='OPENAI_API_KEY'",
     ...(catalogPath ? ["-c", `model_catalog_json='${catalogPath}'`] : []),
+    // `--effort` becomes Codex's own reasoning-effort override for this launch;
+    // without it Codex keeps whatever the user persisted in its own config.
+    ...(config.effort ? ["-c", `model_reasoning_effort='${config.effort}'`] : []),
     "-m", config.model,
   ];
 }

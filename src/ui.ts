@@ -1,10 +1,11 @@
 import { stdin as realStdin, stdout as realStdout } from "node:process";
-import { autocomplete, cancel, intro, isCancel, multiselect, note, outro, select, text } from "@clack/prompts";
-import { providerRegistry, openRouterCatalogIds, registerCustomProvider, unregisterCustomProvider } from "./providers/registry.js";
+import { autocomplete, cancel, confirm, intro, isCancel, multiselect, note, outro, select, text } from "@clack/prompts";
+import { providerRegistry, credentialEnvName, isPlaceholderModel, openRouterCatalogIds, providerById, registerCustomProvider, unregisterCustomProvider } from "./providers/registry.js";
 import type { ProviderDefinition, ProviderProtocol } from "./providers/types.js";
-import { promptCredential, storedCredential } from "./credentials.js";
+import { credentialInstructions, credentialSource, hydrateProfileCredentials, promptCredential, promptCredentialValue, storedCredential } from "./credentials.js";
+import { shellProfilePath, writeCredentialExport } from "./shell-profile.js";
 import {
-  clientDisplayName, defaultModelFor, modelAvailable, providerAcceptsCustomModels, resolveModelForProvider, resolveRuntimeNonInteractive, type RuntimeDecision,
+  clientDisplayName, defaultModelFor, providerAcceptsCustomModels, resolveModelForProvider, resolveRuntimeNonInteractive, type RuntimeDecision,
 } from "./selection.js";
 import {
   forgetCustomProvider, forgetRuntime, loadLastQuickAction, rememberedModelIds, remembererProviders, saveCustomProvider, saveDefaultRuntime,
@@ -105,7 +106,12 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
     // that's already configured (if any) instead of the hardcoded fallback.
     if (!defaultApplied) {
       const configured = providers.find((entry) => entry.configured);
-      if (configured) provider = configured.definition.id;
+      if (configured) {
+        provider = configured.definition.id;
+        // The initial model belonged to the fallback provider; without this
+        // the model picker would offer that foreign id as "current".
+        model = await resolveModelForProvider(provider);
+      }
     }
 
     const action = await selectTopLevelAction(client, providers, provider, model, defaultApplied);
@@ -139,7 +145,11 @@ export async function runInteractiveLauncher(client: string, initial: RuntimeDec
     provider = nextProvider;
     // selectProvider may have added or removed a custom provider along the way.
     providers = await providerEntries();
-    model = modelAvailable(provider, model) ? model : await resolveModelForProvider(provider);
+    // Resolve from the new provider's own memory: model ids are provider-
+    // scoped, so carrying the previous provider's pick over would show a
+    // foreign model as "current" (custom endpoints accept any id, which used
+    // to make the carry-over stick for exactly the wrong providers).
+    model = await resolveModelForProvider(provider);
     changed = true;
   }
 
@@ -189,33 +199,53 @@ const ADD_CUSTOM_PROVIDER_OPTION = "__add_custom_provider__";
 /** Sentinel option value that opens the "remove a custom provider" prompt, shown only once one exists. */
 const REMOVE_CUSTOM_PROVIDER_OPTION = "__remove_custom_provider__";
 
+/**
+ * The three upstream wire shapes, listed one per line: protocol name, then the
+ * path AgentX appends to the base URL. Only the Chat Completions line carries
+ * a trailing note — it is OpenAI's earlier API, which is the one non-obvious
+ * positioning; "native" and "recommended" would just repeat the names. The
+ * name columns are padded because clack renders labels verbatim, so that is
+ * what keeps the paths aligned.
+ */
+function protocolOption(name: string, path: string, tag?: string): string {
+  return `${name.padEnd(24)}· ${path}${tag ? ` · ${tag}` : ""}`;
+}
 const PROTOCOL_OPTIONS: Array<{ value: ProviderProtocol; label: string }> = [
-  { value: "chat-completions", label: "OpenAI Chat Completions" },
-  { value: "responses", label: "OpenAI Responses" },
-  { value: "anthropic", label: "Anthropic Messages API" },
+  { value: "anthropic", label: protocolOption("Anthropic Messages", "/v1/messages") },
+  { value: "responses", label: protocolOption("OpenAI Responses", "/responses") },
+  { value: "chat-completions", label: protocolOption("OpenAI Chat Completions", "/chat/completions", "legacy") },
 ];
 
+/** What the user types is a base URL; AgentX appends this path (see `customProviderEndpoint` in providers/registry.ts). */
+const BASE_URL_PROMPTS: Record<ProviderProtocol, { placeholder: string; appendedPath: string }> = {
+  "chat-completions": { placeholder: "https://api.openai.com/v1", appendedPath: "/chat/completions" },
+  responses: { placeholder: "https://api.openai.com/v1", appendedPath: "/responses" },
+  anthropic: { placeholder: "https://api.anthropic.com", appendedPath: "/v1/messages" },
+};
+
 /**
- * Prompt sequence for a new custom OpenAI/Anthropic-compatible provider: name,
- * base URL, protocol. Registers and persists the connection metadata only —
- * never the API key, matching every other provider. The caller's existing
- * "not configured yet" handling (in `runInteractiveLauncher`, right after
- * provider selection) prompts for the key the same way it does for any other
- * unconfigured provider. Returns the new provider's id, or undefined if
- * cancelled at any step.
+ * Prompt sequence for a new custom OpenAI/Anthropic-compatible provider:
+ * protocol, base URL, then display name. The URL prompt states the path AgentX
+ * appends so nobody pastes a full endpoint path into a base URL. Registers and
+ * persists the connection metadata only — never the API key, matching every
+ * other provider; the name comes last so the caller's existing "not
+ * configured yet" handling (in `runInteractiveLauncher`, right after provider
+ * selection) can immediately prompt for the key with the name at hand.
+ * Returns the new provider's id, or undefined if cancelled at any step.
  */
 async function addCustomProviderFlow(): Promise<string | undefined> {
-  const name = await text({ message: "Provider name", placeholder: "My Local LLM", ...stdio() });
-  if (isCancel(name) || !name.trim()) return undefined;
+  const protocol = await select({ message: "Protocol", options: PROTOCOL_OPTIONS, ...stdio() });
+  if (isCancel(protocol)) return undefined;
+  const { placeholder, appendedPath } = BASE_URL_PROMPTS[protocol];
   const baseUrl = await text({
-    message: "Base URL",
-    placeholder: "http://localhost:11434",
-    validate: (value) => { try { new URL(value ?? ""); return undefined; } catch { return "Enter a full URL, e.g. http://localhost:11434"; } },
+    message: `Base URL (AgentX appends ${appendedPath})`,
+    placeholder,
+    validate: (value) => { try { new URL(value ?? ""); return undefined; } catch { return `Enter a full URL, e.g. ${placeholder}`; } },
     ...stdio(),
   });
   if (isCancel(baseUrl)) return undefined;
-  const protocol = await select({ message: "Protocol", options: PROTOCOL_OPTIONS, ...stdio() });
-  if (isCancel(protocol)) return undefined;
+  const name = await text({ message: "Provider name", placeholder: "My Local LLM", ...stdio() });
+  if (isCancel(name) || !name.trim()) return undefined;
   const definition = registerCustomProvider({ name: name.trim(), baseUrl, protocol });
   await saveCustomProvider(definition.id, { name: definition.name, baseUrl, protocol, model: definition.models[0].model });
   note(`✓ ${definition.name} added`, "Custom provider", stdio());
@@ -233,6 +263,106 @@ async function removeCustomProviderFlow(entries: ProviderEntry[]): Promise<void>
   note(`Removed ${label}.`, "Custom provider", stdio());
 }
 
+/** Sentinel option value that closes the standalone provider manager. */
+const DONE_CONFIG_OPTION = "__done__";
+
+/** Credential status for a provider: where the key comes from, or how to set it. */
+function credentialStatusText(provider: ProviderDefinition): string {
+  const source = credentialSource(provider);
+  return source ? `Credential: configured via ${source}.` : credentialInstructions(provider);
+}
+
+/**
+ * Config-only key setup. Persists the key as a managed `export` block in the
+ * user's shell profile — the one place AgentX ever writes a secret, and only
+ * after the user confirms both the write and the value. Without a supported
+ * profile (fish, SHELL unset) it falls back to manual instructions.
+ */
+async function offerCredentialSetup(provider: ProviderDefinition): Promise<void> {
+  const envName = credentialEnvName(provider);
+  const profile = shellProfilePath();
+  if (!profile) {
+    note(credentialInstructions(provider), provider.name, stdio());
+    return;
+  }
+  const accepted = await confirm({ message: `Write ${envName} to ${profile}?`, initialValue: true, ...stdio() });
+  if (isCancel(accepted) || !accepted) {
+    note(credentialInstructions(provider), provider.name, stdio());
+    return;
+  }
+  let key: string;
+  try {
+    key = await promptCredentialValue(provider, io);
+  } catch {
+    note(credentialInstructions(provider), provider.name, stdio());
+    return;
+  }
+  try {
+    const result = await writeCredentialExport(profile, envName, key);
+    const lines = result.changed
+      ? [
+          `Wrote ${envName} to ${result.file}.`,
+          ...(result.backup ? [`Backup: ${result.backup}`] : []),
+          `Activate it in a new terminal, or run: source ${result.file}`,
+          `Undo: remove the "# >>> agentx credentials" block, or restore the backup.`,
+        ]
+      : [`${envName} is already up to date in ${result.file}.`];
+    if (result.mode !== undefined && (result.mode & 0o077) !== 0) {
+      lines.push(`Warning: ${result.file} is readable by other local users (mode ${result.mode.toString(8)}); consider: chmod 600 ${result.file}`);
+    }
+    // Re-read the profile instead of mutating process.env: keys must never
+    // enter the environment that gets inherited by a launched client.
+    await hydrateProfileCredentials();
+    note(lines.join("\n"), provider.name, stdio());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    note(`${message}\n\n${credentialInstructions(provider)}`, provider.name, stdio());
+  }
+}
+
+/**
+ * Standalone provider manager behind `agentx config`: list providers with
+ * their credential status, add or remove custom providers, and set up API
+ * keys — all without starting the adapter or a client. AgentX keeps no key
+ * store of its own: an opted-in key setup is written to the user's shell
+ * profile (see `offerCredentialSetup`). Runs until the user picks Done or
+ * cancels.
+ */
+export async function runProviderManager(): Promise<void> {
+  intro("AgentX — Provider configuration", stdio());
+  for (;;) {
+    const entries = await providerEntries();
+    const options: Array<{ value: string; label: string; hint?: string }> = entries.map((entry) => ({
+      value: entry.definition.id,
+      label: entry.definition.name,
+      hint: entry.configured ? `connected · ${credentialSource(entry.definition)}` : "API key missing",
+    }));
+    options.push({ value: ADD_CUSTOM_PROVIDER_OPTION, label: "Add custom provider…", hint: "OpenAI or Anthropic-compatible endpoint" });
+    if (entries.some((entry) => entry.definition.custom)) {
+      options.push({ value: REMOVE_CUSTOM_PROVIDER_OPTION, label: "Remove custom provider…", hint: "" });
+    }
+    options.push({ value: DONE_CONFIG_OPTION, label: "Done" });
+
+    const chosen = await select({ message: "Providers", options, ...stdio() });
+    if (isCancel(chosen) || chosen === DONE_CONFIG_OPTION) break;
+    if (chosen === ADD_CUSTOM_PROVIDER_OPTION) {
+      const added = await addCustomProviderFlow();
+      const definition = added ? providerById(added) : undefined;
+      if (definition && !storedCredential(definition)) await offerCredentialSetup(definition);
+      continue;
+    }
+    if (chosen === REMOVE_CUSTOM_PROVIDER_OPTION) {
+      await removeCustomProviderFlow(entries);
+      continue;
+    }
+    const definition = entries.find((entry) => entry.definition.id === chosen)?.definition;
+    if (!definition) continue;
+    if (storedCredential(definition)) note(credentialStatusText(definition), definition.name, stdio());
+    else await offerCredentialSetup(definition);
+  }
+  outro("Provider configuration saved. API keys stay in your environment.", stdio());
+}
+
 /** Exported for tests: drives the Provider picker, including the Add/Remove custom provider sentinels. */
 export async function selectProvider(entries: ProviderEntry[], current: string): Promise<string | symbol> {
   const choices = providerOptions(entries);
@@ -244,7 +374,11 @@ export async function selectProvider(entries: ProviderEntry[], current: string):
   if (isCancel(chosen)) return chosen;
   if (chosen === ADD_CUSTOM_PROVIDER_OPTION) {
     const added = await addCustomProviderFlow();
-    return selectProvider(await providerEntries(), added ?? current);
+    // On success return the new id straight away: the caller's credential
+    // prompt follows immediately, so the user goes URL → name → key without
+    // an extra stop back on the picker. Only a cancellation reopens it.
+    if (added) return added;
+    return selectProvider(await providerEntries(), current);
   }
   if (chosen === REMOVE_CUSTOM_PROVIDER_OPTION) {
     await removeCustomProviderFlow(entries);
@@ -261,22 +395,28 @@ const BROWSE_CATALOG_OPTION = "__catalog__";
 const FORGET_MODEL_OPTION = "__forget__";
 
 /**
- * Model picker for a provider. Registry models come first; OpenRouter also
- * offers the live public catalog for searchable selection (in addition to
- * free-form entry), so users can find ~400 real ids instead of typing them
- * blind. Choosing "Forget a saved model…" opens the manager scoped to this
- * provider; forgetting may drop a saved custom id, and on return the picker
+ * Model picker for a provider. Registry models come first. Providers that
+ * accept arbitrary ids (OpenRouter, runtime-registered custom endpoints) also
+ * offer free-form entry; the live-catalog browse is OpenRouter-specific and
+ * only that provider shows it. "Forget a saved model…" appears only when this
+ * provider actually has saved ids, and opens the manager scoped to it;
+ * forgetting may drop the picker's current model, and on return the picker
  * reopens so a fresh selection (or a cancel) is the only way out.
  */
 async function selectModel(provider: string, current: string): Promise<string | symbol> {
-  const options: Array<{ value: string; label: string; hint?: string }> = modelsFor(provider).map((entry) => ({ value: entry.model, label: entry.model }));
+  // A runtime-registered custom endpoint's synthesized placeholder model is
+  // not a real upstream id, so it is never offered as a choice or shown as
+  // "current" (see `isPlaceholderModel`).
+  const options: Array<{ value: string; label: string; hint?: string }> = modelsFor(provider)
+    .filter((entry) => !isPlaceholderModel({ model: entry.model, provider }))
+    .map((entry) => ({ value: entry.model, label: entry.model }));
   const custom = providerAcceptsCustomModels(provider);
   // A saved custom id lives outside the registry; surface it as a pickable
   // option so the initial value always matches an entry. When the live
   // catalog is known and no longer lists it, flag that inline so a renamed or
   // pulled id (e.g. a free launch that became its real vendor id) is visible
   // without opening the forget manager.
-  if (custom && !options.some((option) => option.value === current)) {
+  if (custom && !isPlaceholderModel({ model: current, provider }) && !options.some((option) => option.value === current)) {
     // Staleness is only judgeable against OpenRouter's public catalog; custom
     // endpoints have no comparable listing, so their ids are offered as-is.
     const stale = provider === "openrouter" && openRouterCatalogIds().length > 0 && !openRouterCatalogIds().includes(current);
@@ -288,8 +428,17 @@ async function selectModel(provider: string, current: string): Promise<string | 
   }
   if (custom) {
     options.push({ value: CUSTOM_MODEL_OPTION, label: "Search / enter any model id…", hint: "type any model id" });
+  }
+  if (provider === "openrouter") {
     options.push({ value: BROWSE_CATALOG_OPTION, label: "Browse OpenRouter catalog…", hint: `~${openRouterCatalogIds().length} models` });
+  }
+  if (custom && (await rememberedModelIds(provider)).some((id) => !isPlaceholderModel({ model: id, provider }))) {
     options.push({ value: FORGET_MODEL_OPTION, label: "Forget a saved model…", hint: "rename / removed ids" });
+  }
+  // A fresh custom endpoint has no real registry model and no saved id: asking
+  // for the model id directly beats a picker whose only entry is free-form.
+  if (custom && options.length === 1 && options[0].value === CUSTOM_MODEL_OPTION) {
+    return promptCustomModelId(providerLabel(provider), "");
   }
   // A stale saved default may hold the removed "auto" marker; show a concrete
   // model instead so the initial value always matches an option.
@@ -358,14 +507,16 @@ function defaultModelFilter(search: string, option: { label?: string; value: str
 
 /**
  * Free-form model id entry for providers that accept arbitrary ids (e.g.
- * OpenRouter). Empty input keeps the suggested id; cancelling propagates so
- * the caller aborts the launch.
+ * OpenRouter, custom endpoints). An empty input keeps the suggested id when
+ * there is one; with no suggestion the entry is required. Cancelling
+ * propagates so the caller aborts the launch.
  */
 async function promptCustomModelId(label: string, suggestion: string): Promise<string | symbol> {
   const entered = await text({
     message: `Custom model id (${label})`,
     placeholder: "vendor/model-name",
-    defaultValue: suggestion,
+    ...(suggestion ? { defaultValue: suggestion } : {}),
+    validate: (value) => (value?.trim() || suggestion ? undefined : "Enter a model id, e.g. deepseek-chat"),
     ...stdio(),
   });
   if (isCancel(entered)) return entered;

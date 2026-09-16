@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  configureMissingProvider, launchClient, runAuthCommand, runClientLaunch, runDoctorCommand, runForgetCommand, runQuotaCliCommand, runUsageCommand, versionText,
+  configureMissingProvider, launchClient, runAuthCommand, runClientLaunch, runConfigCommand, runDoctorCommand, runForgetCommand, runQuotaCliCommand, runUsageCommand, versionText,
 } from "../src/cli.js";
 import { ClientNotFoundError } from "../src/process.js";
 import { providerById, providerRegistry, registerCustomProvider, unregisterCustomProvider } from "../src/providers/registry.js";
@@ -89,6 +89,34 @@ test("runAuthCommand status reports missing then configured", async () => {
 
 test("runAuthCommand rejects an unknown action", async () => {
   await assert.rejects(() => runAuthCommand(["bogus"]), /Usage: agentx auth/);
+});
+
+test("runConfigCommand lists every provider with its credential status in non-interactive mode", async () => {
+  const saved = new Map(["AGENTX_DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY", "AGENTX_OPENCODE_API_KEY", "OPENCODE_API_KEY"].map((key) => [key, process.env[key]]));
+  process.env.AGENTX_DEEPSEEK_API_KEY = "test-key";
+  for (const key of ["AGENTX_OPENCODE_API_KEY", "OPENCODE_API_KEY"]) delete process.env[key];
+  try {
+    await runConfigCommand([]);
+  } finally {
+    for (const [key, value] of saved) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+  const output = logs.join("\n");
+  assert.match(output, /DeepSeek\s+API key via AGENTX_DEEPSEEK_API_KEY/);
+  assert.match(output, /OpenCode\s+API key missing/);
+  assert.match(output, /agentx config --provider/);
+});
+
+test("runConfigCommand --base-url registers and persists a custom provider without launching", async () => {
+  await runConfigCommand(["--provider", "Config CLI LLM", "--base-url", "http://config.local", "--protocol", "responses", "--model", "cfg-model"]);
+  try {
+    assert.equal(providerById("config-cli-llm").models[0].endpoint, "http://config.local/responses");
+    assert.deepEqual((await loadCustomProviders())["config-cli-llm"], { name: "Config CLI LLM", baseUrl: "http://config.local", protocol: "responses", model: "cfg-model" });
+    const output = logs.join("\n");
+    assert.match(output, /Config CLI LLM configured/);
+    assert.match(output, /AGENTX_CONFIG_CLI_LLM_API_KEY/);
+  } finally {
+    unregisterCustomProvider("config-cli-llm");
+  }
 });
 
 test("runQuotaCliCommand and the deprecated runUsageCommand --provider path agree", async () => {
@@ -257,6 +285,23 @@ test("an unrecognized command rejects before credential resolution or adapter st
   // error from credential resolution, which would run first under the old
   // ordering) proves the fix: the command is validated before either step.
   await assert.rejects(() => runClientLaunch("totally-bogus-command", []), /Usage: agentx exec/);
+});
+
+test("--effort is scoped to claude/codex and validated against each client's scale", async () => {
+  await assert.rejects(() => runClientLaunch("exec", ["--effort", "low", "--", "some-command"]), /only supported for `agentx claude` and `agentx codex`/);
+  await assert.rejects(() => runClientLaunch("codex", ["--effort", "ultracode"]), /--effort ultracode is not supported for `agentx codex`/);
+  await assert.rejects(() => runClientLaunch("claude", ["--effort", "minimal"]), /--effort minimal is not supported for `agentx claude`/);
+});
+
+test("passes --effort through to Claude Code's own flag", async () => {
+  process.env.AGENTX_DEEPSEEK_API_KEY = "test-key";
+  let captured: string[] = [];
+  try {
+    await runClientLaunch("claude", ["--provider", "deepseek", "--model", "deepseek-v4-pro", "--effort", "xhigh", "--", "--version"], {
+      runCommand: async (_cmd: string, args: string[]) => { captured = args; return 0; },
+    });
+    assert.deepEqual(captured, ["--bare", "--effort", "xhigh", "--version"]);
+  } finally { delete process.env.AGENTX_DEEPSEEK_API_KEY; }
 });
 
 test("agentx forget --remove-provider deletes a custom provider but refuses a built-in one", async () => {

@@ -60,7 +60,7 @@ npm test          # 先构建，再执行 node --test（在 dist/ 下自动发�
 
 入口 `src/cli.ts` 解析选项（CLI 参数优先于 `AGENTX_*` 环境变量，通过 `loadConfig`），解析 API key，保存非机密 profile，启动适配器（`src/server.ts`），然后用指向本地端点的 `ANTHROPIC_*`（Claude）或 `OPENAI_*`（Codex）环境变量启动客户端（`src/process.ts`）。`src/server.ts` 是无状态的——每个请求都携带完整对话，服务端不持久化任何内容。
 
-凭据完全来自环境变量（在 `src/credentials.ts` 中解析）：`--api-key` → `AGENTX_<PROVIDER>_API_KEY`（带前缀的规范变量）→ 旧的无前缀变量（如 `OPENCODE_API_KEY`，直接兼容使用）→ 交互式提示（仅当前会话有效）。AgentX 自身不持久化任何密钥；带前缀的命名可避免与用户为其他工具设置的同名变量冲突。非敏感运行时状态只保存在 `runtime.json`；API key 绝不会写入任何 AgentX 状态文件。
+凭据完全来自环境变量（在 `src/credentials.ts` 中解析）：`--api-key` → `AGENTX_<PROVIDER>_API_KEY`（带前缀的规范变量）→ 旧的无前缀变量（如 `OPENCODE_API_KEY`，直接兼容使用）→ shell profile 中由 `agentx config` 写入的标记块（启动时 `hydrateProfileCredentials()` 读入独立缓存；环境变量优先，且绝不并入 `process.env`，避免被 `clientEnvironment` 继承给客户端）→ 交互式提示（仅当前会话有效）。AgentX 自身不维护密钥存储；唯一例外是 `agentx config` 中经用户显式确认后，把 `export` 标记块写入用户自己的 shell profile（zsh/bash，逻辑在 `src/shell-profile.ts`：幂等替换、写前备份、权限告警、解析读回），启动流程绝不写 profile。带前缀的命名可避免与用户为其他工具设置的同名变量冲突。非敏感运行时状态只保存在 `runtime.json`；API key 绝不会写入任何 AgentX 状态文件。
 
 ## 关键约束
 

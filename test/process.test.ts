@@ -5,6 +5,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { backgroundModel, clientEnvironment, codexLaunchArgs, nativeClientEnvironment, runCommand, ClientNotFoundError } from "../src/process.js";
+import { hydrateProfileCredentials, resetProfileCredentials } from "../src/credentials.js";
+
+test("never leaks shell-profile credentials into a launched client's environment", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "agentx-process-profile-"));
+  try {
+    writeFileSync(join(dir, ".zshrc"), "# >>> agentx credentials: AGENTX_LEAK_TEST_API_KEY >>>\nexport AGENTX_LEAK_TEST_API_KEY='sk-leak-secret'\n# <<< agentx credentials: AGENTX_LEAK_TEST_API_KEY <<<\n");
+    await hydrateProfileCredentials({ SHELL: "/bin/zsh", HOME: dir }, "linux");
+    const adapter = { port: 8788, token: "local-token" } as any;
+    const config = { host: "127.0.0.1", port: 8787, model: "m", apiKey: "sk-leak-secret", logLevel: "info", retry: 0 };
+    for (const client of ["anthropic", "openai"] as const) {
+      const env = clientEnvironment(config as any, adapter, client);
+      assert.equal(env.AGENTX_LEAK_TEST_API_KEY, undefined);
+      assert.ok(!Object.values(env).includes("sk-leak-secret"), "the upstream key must not reach the client");
+    }
+  } finally {
+    resetProfileCredentials();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("injects OpenAI environment for Codex", async () => {
   const adapter = { port: 8788, token: "local-token" } as any;
@@ -33,6 +52,14 @@ test("attaches the generated model catalog when one was written", () => {
   const config = { host: "127.0.0.1", port: 8787, model: "gpt-5.6-luna", apiKey: "k", logLevel: "info", retry: 0 };
   const args = codexLaunchArgs(config as any, adapter, "/tmp/catalog/models.json");
   assert.deepEqual(args.slice(10), ["-c", "model_catalog_json='/tmp/catalog/models.json'", "-m", "gpt-5.6-luna"]);
+});
+
+test("passes the reasoning effort to Codex only when one is configured", () => {
+  const adapter = { port: 8788, token: "tok" } as any;
+  const base = { host: "127.0.0.1", port: 8787, model: "deepseek-flash", apiKey: "k", logLevel: "info", retry: 0 };
+  const withEffort = codexLaunchArgs({ ...base, effort: "low" } as any, adapter);
+  assert.ok(withEffort.includes("model_reasoning_effort='low'"));
+  assert.ok(!codexLaunchArgs(base as any, adapter).some((arg) => arg.includes("model_reasoning_effort")));
 });
 
 test("keeps every Claude Code tier on the selected model by default", async () => {
