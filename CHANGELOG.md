@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.3.0](https://github.com/tzzs/agentx/compare/v3.2.0...v3.3.0) (2026-09-16)
+
+
+### Features
+
+* add agentx config provider manager and custom-endpoint model routing ([54a0eea](https://github.com/tzzs/agentx/commit/54a0eea5f2fff3d8a2cb9f3112578be2615b838a))
+* add agentx config provider manager and custom-endpoint model routing ([5e3c51a](https://github.com/tzzs/agentx/commit/5e3c51a43912a66c42c3ed7ca0136bc96d6b89ce))
+* support the full reasoning-effort scale for codex and claude ([f922b24](https://github.com/tzzs/agentx/commit/f922b2480eb4477544b8cde4885f1722e5e580c4))
+
+
+### Bug Fixes
+
+* keep custom-provider placeholder models out of Codex's picker ([6699ec1](https://github.com/tzzs/agentx/commit/6699ec160e8e615bf01d674929495597ccacb423))
+* make shell-profile credential handling Windows-safe ([fad5eea](https://github.com/tzzs/agentx/commit/fad5eea8b0c722d5f50109ac64a490960182706e))
+
 ## [3.2.0](https://github.com/tzzs/agentx/compare/v3.1.0...v3.2.0) (2026-09-01)
 
 
