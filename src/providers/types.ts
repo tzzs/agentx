@@ -10,6 +10,13 @@ export interface ProviderModel {
   maxOutputTokens?: number;
   /** Input modalities the upstream accepts, restricted to what clients understand ("text", "image"). */
   modalities?: string[];
+  /**
+   * Extra HTTP headers sent with every upstream request for this model —
+   * attribution headers (OpenRouter's HTTP-Referer/X-Title) or the auth header
+   * shape a private gateway expects. Merged over the defaults, so a gateway
+   * that wants something other than `Authorization: Bearer` can say so.
+   */
+  headers?: Record<string, string>;
 }
 
 export interface ProviderDefinition {

@@ -64,11 +64,18 @@ function respondError(response: ServerResponse, error: unknown) {
   const type = status >= 500 ? "upstream_error" : "invalid_request_error";
   json(response, status, { error: { message: error instanceof Error ? error.message : "Invalid request", type } });
 }
-/** Anthropic's Messages API authenticates via x-api-key + anthropic-version, not Authorization: Bearer. Both forms are sent for an "anthropic" upstream so a gateway that only accepts Bearer still works. */
+/**
+ * Anthropic's Messages API authenticates via x-api-key + anthropic-version,
+ * not Authorization: Bearer. Both forms are sent for an "anthropic" upstream
+ * so a gateway that only accepts Bearer still works.
+ *
+ * A provider's own `headers` are merged last and therefore win, which is the
+ * point: a private gateway may expect its key in a header of its own naming.
+ */
 function authHeaders(provider: ProviderModel, apiKey: string): Record<string, string> {
   const headers: Record<string, string> = { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
   if (provider.protocol === "anthropic") { headers["x-api-key"] = apiKey; headers["anthropic-version"] = "2023-06-01"; }
-  return headers;
+  return { ...headers, ...provider.headers };
 }
 /** POST the converted payload upstream; network failures surface as HTTP 502. */
 async function forward(config: Config, provider: ProviderModel, apiKey: string, payload: unknown, signal: AbortSignal): Promise<Response> {
@@ -84,8 +91,15 @@ async function forward(config: Config, provider: ProviderModel, apiKey: string, 
 /** Base delay, growth factor, and ceiling for the retry backoff below. */
 const RETRY_BASE_MS = 300;
 const RETRY_MAX_DELAY_MS = 4_000;
-/** Upstream statuses worth a retry: rate-limited or transiently unavailable. Other 4xx are client/config errors that retrying cannot fix. */
-const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+/**
+ * Upstream statuses worth a retry: rate-limited, timed out, or transiently
+ * unavailable. 408 is a request timeout — transient by definition — and joins
+ * the set for the same reason 504 is in it. 500 stays out: it is as often a
+ * deterministic upstream fault as a transient one, and retrying it only
+ * delays a failure the caller still has to handle. Other 4xx are
+ * client/config errors that retrying cannot fix.
+ */
+const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
 
 /** Sleep that resolves early (no error) when `signal` aborts, so backoff never outlives a disconnected client or the idle watchdog. */
 function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -137,6 +151,72 @@ export async function forwardWithRetry(
   }
   /* istanbul ignore next -- the loop always returns or throws by the final attempt. */
   throw new Error("forwardWithRetry: unreachable");
+}
+
+/**
+ * Flat per-image token allowance for the estimator below. Anthropic bills an
+ * image by its pixel area, which a request body does not carry, so a single
+ * mid-sized-screenshot figure stands in for it — far closer than counting the
+ * base64 payload as if it were prose.
+ */
+const IMAGE_TOKEN_ESTIMATE = 1_600;
+
+/**
+ * Approximate the input tokens of an Anthropic Messages request. Used by
+ * `/v1/messages/count_tokens` when the upstream protocol has no equivalent
+ * endpoint to ask. Four characters per token is the conventional English
+ * approximation; this is explicitly an estimate, but one made from the actual
+ * request, unlike the blind fallback a 404 used to force on the client.
+ */
+export function estimateInputTokens(input: any): number {
+  let chars = 0;
+  const walk = (value: unknown): void => {
+    if (typeof value === "string") { chars += value.length; return; }
+    if (Array.isArray(value)) { value.forEach(walk); return; }
+    if (!value || typeof value !== "object") return;
+    // An image block's base64 payload is not prose; charge it a flat rate
+    // instead of walking into the data string.
+    if ((value as { type?: string }).type === "image") { chars += IMAGE_TOKEN_ESTIMATE * 4; return; }
+    Object.values(value).forEach(walk);
+  };
+  walk(input?.system); walk(input?.messages); walk(input?.tools);
+  return Math.max(1, Math.ceil(chars / 4));
+}
+
+/**
+ * Ask a native Anthropic upstream for an exact count. Any failure (endpoint
+ * absent, network, malformed body) resolves to `undefined` so the caller
+ * falls back to the local estimate — a token count must never be the reason a
+ * session fails.
+ */
+async function upstreamTokenCount(provider: ProviderModel, apiKey: string, payload: unknown): Promise<number | undefined> {
+  try {
+    const upstream = await fetch(`${provider.endpoint}/count_tokens`, { method: "POST", headers: authHeaders(provider, apiKey), body: JSON.stringify(payload), signal: AbortSignal.timeout(10_000) });
+    if (!upstream.ok) return undefined;
+    const value = await upstream.json();
+    return Number.isFinite(value?.input_tokens) ? Number(value.input_tokens) : undefined;
+  } catch { return undefined; }
+}
+
+/**
+ * Bounded concurrency for upstream requests. `limit <= 0` disables the gate
+ * entirely, which stays the default: a lone client rarely overlaps requests,
+ * and queueing locally only helps when several do. Acquisitions are served
+ * first-come-first-served.
+ */
+export function createConcurrencyGate(limit: number) {
+  if (limit <= 0) return { acquire: async () => () => {} };
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  const releaseOne = () => { const next = waiting.shift(); if (next) next(); else active--; };
+  return {
+    acquire: async (): Promise<() => void> => {
+      if (active < limit) active++;
+      else await new Promise<void>((resolve) => waiting.push(resolve));
+      let released = false;
+      return () => { if (released) return; released = true; releaseOne(); };
+    },
+  };
 }
 
 /** Abort when the upstream sends nothing (headers or body) for this long. */
@@ -225,6 +305,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
   const maxBodyBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
   const closeGraceMs = options.closeGraceMs ?? 3_000;
   const sessionId = randomUUID();
+  const gate = createConcurrencyGate(config.maxConcurrency ?? 0);
   const sessionFor = (input: any) => typeof input?.session_id === "string" ? input.session_id : sessionId;
   /** Record one usage row, swallowing persistence errors into debug logs. */
   const safeRecord = (usage: TokenUsage) => { void collector.record(usage).catch((error) => debug(config, `usage record error=${error instanceof Error ? error.message : "unknown"}`)); };
@@ -237,9 +318,42 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     // Usage statistics are read through `agentx usage` (direct storage access);
     // the former unauthenticated /usage/* HTTP endpoints were removed — see
     // docs/remaining-simplification-todos.md item B.
-    if (pathname === "/v1/models" && request.method === "GET") return json(response, 200, {
-      data: providers.filter((item) => (!config.provider || item.provider === config.provider) && !isPlaceholderModel(item)).map((item) => ({ id: item.model, object: "model", owned_by: item.provider }))
-    });
+    // The model catalog reveals which provider and models this machine is
+    // configured for, so it is authenticated like the proxy routes. /health
+    // stays open: it carries no configuration and is what a supervisor polls.
+    const visibleModels = () => providers.filter((item) => (!config.provider || item.provider === config.provider) && !isPlaceholderModel(item));
+    const modelEntry = (item: ProviderModel) => ({ id: item.model, object: "model", owned_by: item.provider });
+    if (pathname === "/v1/models" && request.method === "GET") {
+      if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
+      return json(response, 200, { data: visibleModels().map(modelEntry) });
+    }
+    if (pathname.startsWith("/v1/models/") && request.method === "GET") {
+      if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
+      const id = decodeURIComponent(pathname.slice("/v1/models/".length));
+      const match = visibleModels().find((item) => item.model === id);
+      if (!match) return json(response, 404, { error: { message: `Model "${id}" not found`, type: "not_found" } });
+      return json(response, 200, modelEntry(match));
+    }
+    if (pathname === "/v1/messages/count_tokens" && request.method === "POST") {
+      if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
+      try {
+        const input = JSON.parse(await body(request, maxBodyBytes));
+        const model = honorRequestedModel(input.model, config.model, config.provider);
+        const provider = providerFor(model, config.provider);
+        // Only a native Anthropic upstream can answer this exactly; the other
+        // protocols have no equivalent endpoint, so the estimate stands in.
+        const exact = provider.protocol === "anthropic" ? await upstreamTokenCount(provider, apiKeyFor(provider, config.apiKey), { ...input, model }) : undefined;
+        return json(response, 200, { input_tokens: exact ?? estimateInputTokens(input) });
+      } catch (error) { return respondError(response, error); }
+    }
+    // Hold a concurrency slot for the whole proxied exchange, streaming
+    // included, and free it once the response is done either way. Acquiring
+    // after the client already left would otherwise strand the slot.
+    if (request.method === "POST" && (pathname === "/v1/responses" || pathname === "/v1/chat/completions" || pathname === "/v1/messages")) {
+      const release = await gate.acquire();
+      if (response.closed || response.writableEnded) release();
+      else { response.on("close", release); response.on("finish", release); }
+    }
     if (pathname === "/v1/responses" && request.method === "POST") {
       // Honor auto routing here too: Codex echoes OPENAI_MODEL=auto back.
       const proxied = await proxyRequest(config, request, response, token, {
@@ -292,7 +406,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
       fallbackModel: config.model,
       payload: (input, model, provider) => {
         if (provider.protocol === "anthropic") return { ...input, model }; // already Anthropic-shaped; zero conversion
-        return provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model, provider.provider);
+        return provider.protocol === "responses" ? toResponsesRequest(input, model, provider) : toChatRequest(input, model, provider);
       },
     }, maxBodyBytes);
     if (!proxied) return;

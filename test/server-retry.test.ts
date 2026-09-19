@@ -35,7 +35,18 @@ test("gives up after exhausting retries on a persistent 503", async () => {
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("does not retry a 500: only 429/502/503/504 are treated as transient", async () => {
+test("retries a 408 request timeout like the other transient statuses", async () => {
+  let calls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => { calls++; return upstreamResponse(408); }) as typeof fetch;
+  try {
+    const result = await forwardWithRetry(config, provider, "key", {}, new AbortController().signal, 3, instantSleep);
+    assert.equal(result.status, 408);
+    assert.equal(calls, 4);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("does not retry a 500: only 408/429/502/503/504 are treated as transient", async () => {
   let calls = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => { calls++; return upstreamResponse(500); }) as typeof fetch;
