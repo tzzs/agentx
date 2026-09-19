@@ -135,3 +135,68 @@ export function chatControlParams(input: any, deepSeek: boolean): Record<string,
 export function parse(value: unknown): unknown {
   try { return typeof value === "string" ? JSON.parse(value) : value ?? {}; } catch { return {}; }
 }
+
+/**
+ * Leading text of the synthetic user message that carries media lifted out of
+ * a tool result. Chat Completions' `role:"tool"` message accepts only a
+ * string, so an image returned by a tool has no legal place there and must
+ * travel as its own user turn.
+ */
+export const TOOL_RESULT_MEDIA_PROMPT = "Attached media from tool result:";
+
+export interface ToolResultContent {
+  /** Plain text of the result; always a string, safe for tool messages that must be string-only. */
+  text: string;
+  /** Image data URIs (or remote URLs) lifted out of the result's content blocks. */
+  images: string[];
+}
+
+/**
+ * Split an Anthropic `tool_result` content value into plain text and images.
+ *
+ * The block array used to be forwarded as `JSON.stringify(content)`, which
+ * turned a tool-returned screenshot into its own base64 payload rendered as
+ * literal text: the model could not see the image, and a 1MB PNG entered the
+ * context as ~1.37M characters. Splitting the two lets each caller place the
+ * image wherever its upstream protocol actually accepts one.
+ */
+export function toolResultContent(content: unknown): ToolResultContent {
+  if (typeof content === "string") return { text: content, images: [] };
+  if (content === undefined || content === null) return { text: "", images: [] };
+  if (!Array.isArray(content)) return { text: JSON.stringify(content), images: [] };
+  const text: string[] = [];
+  const images: string[] = [];
+  for (const part of content as any[]) {
+    if (part?.type === "text") { if (typeof part.text === "string") text.push(part.text); continue; }
+    if (part?.type === "image") { const url = imageDataUri(part.source); if (url) images.push(url); continue; }
+    // Anthropic documents only text and image blocks here; anything else is
+    // kept as text rather than dropped, so an unknown block still reaches the model.
+    if (part !== undefined && part !== null) text.push(typeof part === "string" ? part : JSON.stringify(part));
+  }
+  return { text: text.join("\n"), images };
+}
+
+/**
+ * Non-empty text for a tool message whose content was media only. Several
+ * chat upstreams reject an empty tool message, and the note also tells the
+ * model what it is not seeing when the images could not be forwarded.
+ */
+export function toolResultText(text: string, imageCount: number, forwarded: boolean): string {
+  if (text) return text;
+  if (!imageCount) return "";
+  const plural = imageCount === 1 ? "" : "s";
+  return forwarded
+    ? `[${imageCount} image${plural} returned by the tool]`
+    : `[${imageCount} image${plural} returned by the tool; omitted because this model does not accept image input]`;
+}
+
+/**
+ * Whether images may be forwarded to this model. Metadata is only populated
+ * once models.dev/OpenRouter have been fetched (the Codex catalog path), so
+ * an unset `modalities` means "unknown", not "text only" — and an unknown
+ * model is treated as capable, matching how images in ordinary user messages
+ * have always been forwarded without a capability check.
+ */
+export function acceptsImageInput(provider?: { modalities?: string[] }): boolean {
+  return provider?.modalities === undefined || provider.modalities.includes("image");
+}
