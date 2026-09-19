@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createUsageStore, defaultUsageStore, defaultUsageLocation, periodStart, sqliteAvailable } from "../src/usage/storage.js";
 import { TokenUsageCollector, normalizeUsage } from "../src/usage/collector.js";
 import type { TokenUsage } from "../src/usage/types.js";
+import { runUsageStats } from "../src/usage/cli.js";
 
 const now = Date.now();
 
@@ -141,5 +142,25 @@ test("cache write tokens survive normalization, storage, and stats", async () =>
   const models = await store.modelStats("all");
   assert.equal(models[0].cachedTokens, 600);
   assert.equal(models[0].cacheWriteTokens, 200);
+  await store.close();
+});
+
+test("usage reports session totals and machine-readable JSON", async () => {
+  const store = await createUsageStore({ backend: "memory" });
+  const collector = new TokenUsageCollector(store);
+  await collector.record(sample({ provider: "opencode", model: "glm-5", sessionId: "s-json" }));
+  await collector.record(sample({ provider: "opencode", model: "glm-5", sessionId: "other" }));
+
+  const session = await runUsageStats({ sessionId: "s-json" }, store);
+  assert.match(session, /Token Usage \(session s-json\)/);
+  assert.match(session, /Total:\s+150/);
+
+  const asJson = JSON.parse(await runUsageStats({ json: true }, store));
+  assert.equal(asJson.period, "all");
+  assert.equal(asJson.totals.totalTokens, 300);
+  assert.equal(asJson.models[0].model, "glm-5");
+
+  const sessionJson = JSON.parse(await runUsageStats({ sessionId: "s-json", json: true }, store));
+  assert.deepEqual(sessionJson, { sessionId: "s-json", totals: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } });
   await store.close();
 });

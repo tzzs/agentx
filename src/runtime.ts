@@ -22,6 +22,8 @@ export interface CustomProviderState {
   baseUrl: string;
   protocol: string;
   model?: string;
+  /** Extra request headers for this endpoint. Non-secret by contract: API keys never enter runtime state. */
+  headers?: Record<string, string>;
 }
 
 /**

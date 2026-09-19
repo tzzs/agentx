@@ -316,6 +316,8 @@ export interface CustomProviderInput {
   protocol: ProviderModel["protocol"];
   /** Upstream doesn't expose a model list for an arbitrary endpoint, so this is a single free-form id (defaults to "custom-model"). */
   model?: string;
+  /** Extra HTTP headers the endpoint requires (private gateways, attribution headers). */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -337,7 +339,7 @@ export function registerCustomProvider(input: CustomProviderInput): ProviderDefi
     let suffix = 2;
     while (providerRegistry.some((entry) => entry.id === id)) id = `${base}-${suffix++}`;
   }
-  const model: ProviderModel = { provider: id, model: input.model ?? CUSTOM_PROVIDER_PLACEHOLDER_MODEL, protocol: input.protocol, endpoint: customProviderEndpoint(input.baseUrl, input.protocol) };
+  const model: ProviderModel = { provider: id, model: input.model ?? CUSTOM_PROVIDER_PLACEHOLDER_MODEL, protocol: input.protocol, endpoint: customProviderEndpoint(input.baseUrl, input.protocol), ...(input.headers && Object.keys(input.headers).length ? { headers: input.headers } : {}) };
   const definition: ProviderDefinition = { id, name: input.name, apiKeyEnv: envKeyFor(id), models: [model], custom: true };
   const index = providerRegistry.findIndex((entry) => entry.id === id);
   if (index >= 0) providerRegistry[index] = definition;

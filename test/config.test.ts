@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { loadConfig, parseCliOptions } from "../src/config.js";
+import { loadConfig, parseCliOptions, parseHeaderFlags } from "../src/config.js";
 import { defaultModelFor } from "../src/selection.js";
 import { loadLastSelection, saveLastModel } from "../src/runtime.js";
 
@@ -87,4 +87,19 @@ test("--verbose enables debug logging", () => {
   delete process.env.AGENTX_LOG_LEVEL;
   assert.equal(loadConfig({ verbose: "true" }).logLevel, "debug");
   assert.equal(loadConfig({}).logLevel, "info");
+});
+
+test("--header is repeatable and keeps separators inside the value", () => {
+  const headers = parseHeaderFlags(["--header", "X-Title=agentx", "--header=HTTP-Referer:https://example.com/a=b", "--header", "X-Empty="]);
+  assert.deepEqual(headers, { "X-Title": "agentx", "HTTP-Referer": "https://example.com/a=b", "X-Empty": "" });
+});
+
+test("--header ignores a malformed pair and a flag with no value", () => {
+  assert.deepEqual(parseHeaderFlags(["--header", "nonsense", "--header", "--verbose"]), {});
+});
+
+test("max concurrency defaults to unlimited and rejects a negative value", () => {
+  assert.equal(loadConfig({}).maxConcurrency, 0);
+  assert.equal(loadConfig({ "max-concurrency": "4" }).maxConcurrency, 4);
+  assert.throws(() => loadConfig({ "max-concurrency": "-1" }), /Invalid max concurrency/);
 });
