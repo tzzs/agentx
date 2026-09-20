@@ -2,7 +2,7 @@ import type { ServerResponse } from "node:http";
 import type { TokenUsage } from "../usage/types.js";
 import type { ProviderProtocol } from "../providers/types.js";
 import type { JsonRecord } from "../json.js";
-import { recCount, recObj, recObjs, recStr } from "../json.js";
+import { recObj, recObjs, recStr } from "../json.js";
 import { mapAnthropicUsage, mapChatUsage, mapResponsesUsage } from "../providers/usage/index.js";
 
 export const SSE_HEADERS = { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" };
@@ -121,42 +121,12 @@ export async function drain(reader: ReadableStreamDefaultReader<Uint8Array>, con
   }
 }
 
-/**
- * Cache-token fields shared by chat-completions, Responses, and Anthropic
- * usage payloads. A stream pipe doesn't always know in advance which shape
- * `usage` will turn out to be (pipeResponsesStream in to-anthropic.ts serves
- * whichever of the two non-Anthropic upstream protocols is actually
- * configured, and can even be called with no options at all — see its
- * message_delta construction), so this tries every protocol's field mapper
- * and keeps the first hit; each mapper's own field list is the single source
- * of truth (providers/usage/*.ts), not duplicated here.
- */
-export function cacheTokensOf(usage: JsonRecord | undefined): { cached?: number; reasoning?: number } {
-  const chat = mapChatUsage(usage, {});
-  const responses = mapResponsesUsage(usage, {});
-  const anthropic = mapAnthropicUsage(usage, {});
-  const cached = chat?.cachedInputTokens ?? responses?.cachedInputTokens ?? anthropic?.cachedInputTokens ?? recCount(usage, "cached_tokens");
-  const reasoning = chat?.reasoningTokens ?? responses?.reasoningTokens;
-  return {
-    ...(cached === undefined ? {} : { cached }),
-    ...(reasoning === undefined ? {} : { reasoning }),
-  };
-}
-
-/** Attach captured cache/reasoning tokens to a usage record when present. */
-export function withCacheTokens(usage: TokenUsage, source: JsonRecord | undefined): TokenUsage {
-  const { cached, reasoning } = cacheTokensOf(source);
-  if (cached !== undefined) usage.cachedInputTokens = cached;
-  if (reasoning !== undefined) usage.reasoningTokens = reasoning;
-  return usage;
-}
-
 /** Per-request token counters every pipe tracks; the single store pipes read when emitting and reporting usage. */
 export interface UsageCapture {
   input: number;
   output: number;
-  /** The most recent raw upstream usage payload, for protocol-shape-dependent emission (e.g. Anthropic cache_read). */
-  raw?: JsonRecord;
+  /** Upstream total tokens, mapped from the latest raw usage by the provider field mappers. */
+  total?: number;
   sawUsage: boolean;
   /** Cache/reasoning fields mapped from the latest raw usage via the provider field mappers. */
   cached?: number;
@@ -169,9 +139,10 @@ export function newUsageCapture(): UsageCapture {
 }
 
 function mapRawUsage(raw: JsonRecord | undefined, protocol: ProviderProtocol): TokenUsage | null {
+  // The bare-usage field lists — including each protocol's total-token field —
+  // live in providers/usage/*; the core never parses provider payloads
+  // itself (CLAUDE.md architecture rule).
   switch (protocol) {
-    // Bare-usage field lists live in providers/usage/*; the core never parses
-    // provider payloads itself (CLAUDE.md architecture rule).
     case "anthropic": return mapAnthropicUsage(raw, {});
     case "responses": return mapResponsesUsage(raw, {});
     case "chat-completions": return mapChatUsage(raw, {});
@@ -182,9 +153,8 @@ function mapRawUsage(raw: JsonRecord | undefined, protocol: ProviderProtocol): T
  * Bind usage capture to the upstream protocol so token fields are read via
  * the same provider field mappers as the non-streaming path. `usage()` merges
  * a raw usage object into the capture; `total()` prefers the upstream's own
- * total when it carries one. `enabled=false` (a pipe called with no options)
- * keeps raw payloads as estimation hints without claiming real usage, which
- * `reportUsage`'s fallback then reports.
+ * total as mapped by that protocol's field mapper. `enabled=false` (a pipe
+ * called with no options) captures nothing — there is no client to report to.
  */
 export function usageCapture(capture: UsageCapture, protocol: ProviderProtocol, enabled = true): {
   usage(raw: JsonRecord | undefined): void;
@@ -192,19 +162,19 @@ export function usageCapture(capture: UsageCapture, protocol: ProviderProtocol, 
 } {
   return {
     usage(raw) {
+      if (!enabled) return;
       const mapped = mapRawUsage(raw, protocol);
       if (!mapped) return;
-      capture.raw = raw;
-      if (!enabled) return;
       capture.sawUsage = true;
       if (mapped.inputTokens) capture.input = mapped.inputTokens;
       if (mapped.outputTokens) capture.output = mapped.outputTokens;
+      if (mapped.totalTokens) capture.total = mapped.totalTokens;
       if (mapped.cachedInputTokens !== undefined) capture.cached = mapped.cachedInputTokens;
       if (mapped.reasoningTokens !== undefined) capture.reasoning = mapped.reasoningTokens;
       if (mapped.cacheWriteTokens !== undefined) capture.cacheWrite = mapped.cacheWriteTokens;
     },
     total() {
-      return recCount(capture.raw, "total_tokens") ?? capture.input + capture.output;
+      return capture.total ?? capture.input + capture.output;
     },
   };
 }
@@ -307,8 +277,7 @@ export function functionCallItem(call: { id: string; name: string; arguments: st
 /**
  * Finalize the turn for Responses-facing clients: text/reasoning done events,
  * per-call argument-done + item-done events, then the completed response —
- * Codex strictly requires total_tokens there. Chat-style `calls` carry no
- * `arguments`, so the caller supplies them via `argsOf`.
+ * Codex strictly requires total_tokens there.
  */
 export function emitResponsesCompleted(
   response: ServerResponse,
@@ -321,7 +290,6 @@ export function emitResponsesCompleted(
     msgId?: string;
     reasoning?: ReasoningState;
     calls: Iterable<[number | string, { id: string; name: string; arguments?: string }]>;
-    argsOf?(index: number | string): string;
   },
 ) {
   const { id, model, capture, truncated } = args;
@@ -337,7 +305,7 @@ export function emitResponsesCompleted(
   if (args.reasoning?.id) output.push(reasoningItem(args.reasoning));
   if (args.text) output.push(messageItem(args.msgId ?? "", args.text));
   for (const [index, call] of args.calls) {
-    const callArgs = call.arguments ?? args.argsOf?.(index) ?? "";
+    const callArgs = call.arguments ?? "";
     event(response, "response.function_call_arguments.done", { type: "response.function_call_arguments.done", item_id: `fc_${index}`, call_id: call.id, arguments: callArgs });
     event(response, "response.output_item.done", { type: "response.output_item.done", output_index: index, item: functionCallItem({ ...call, arguments: callArgs }, index) });
     output.push(functionCallItem({ ...call, arguments: callArgs }, index));
