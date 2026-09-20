@@ -228,11 +228,17 @@ function watchedBody(stream: ReadableStream<Uint8Array> | null, progress: () => 
 }
 
 /**
+ * The parsed client request plus its resolved route — the three fields every
+ * payload builder and downstream handler travel with, carried as one value.
+ */
+interface RequestContext { input: JsonRecord; model: string; provider: ProviderModel }
+
+/**
  * Shared proxy pipeline for one request: parse the body, resolve
  * provider/model/key, convert the payload to the upstream protocol, forward it
  * with the idle watchdog, and map failures to errors. Returns `undefined`
  * after answering the request directly (non-OK upstream status); otherwise
- * yields the parsed request and the watched upstream response.
+ * yields the request context and the watched upstream response.
  *
  * Callers authenticate before reaching this: the route table rejects a bad
  * token ahead of the concurrency queue so an unauthorized request cannot make
@@ -243,9 +249,9 @@ async function proxyRequest(
   request: IncomingMessage,
   response: ServerResponse,
   fallbackModel: string,
-  payload: (input: JsonRecord, model: string, provider: ProviderModel) => unknown,
+  payload: (context: RequestContext) => unknown,
   maxBodyBytes = MAX_BODY_BYTES,
-): Promise<{ input: JsonRecord; model: string; provider: ProviderModel; watched: Response } | undefined> {
+): Promise<(RequestContext & { watched: Response }) | undefined> {
   try {
     const input = jsonRecord(JSON.parse(await body(request, maxBodyBytes)));
     // The endpoint decides which model id counts as "configured"; clients
@@ -254,14 +260,15 @@ async function proxyRequest(
     const model = honorRequestedModel(recStr(input, "model"), fallbackModel, config.provider);
     debug(config, `POST ${request.url} model=${model}`);
     const provider = providerFor(model, config.provider); const apiKey = apiKeyFor(provider, config.apiKey);
-    const payloadBody = payload(input, model, provider);
+    const context: RequestContext = { input, model, provider };
+    const payloadBody = payload(context);
     const session = upstreamSession(response, config);
     const upstream = await forwardWithRetry(config, provider, apiKey, payloadBody, session.signal, config.retry);
     session.progress();
     debug(config, `provider status=${upstream.status}`);
     if (!upstream.ok) { await upstreamError(response, providerDisplayName(provider.provider), upstream, upstream.status); return undefined; }
     const watched = new Response(watchedBody(upstream.body, session.progress), { status: upstream.status });
-    return { input, model, provider, watched };
+    return { ...context, watched };
   } catch (error) {
     debug(config, `proxy error=${error instanceof Error ? error.message : "unknown"}`);
     respondError(response, error);
@@ -278,7 +285,7 @@ async function proxyRequest(
  * to the Anthropic pipe, never the Responses one).
  */
 interface EndpointSpec {
-  payloads: Record<ProviderProtocol, (input: JsonRecord, model: string, provider: ProviderModel) => unknown>;
+  payloads: Record<ProviderProtocol, (context: RequestContext) => unknown>;
   pipes: Record<ProviderProtocol, (upstream: Response, response: ServerResponse, model: string, options: StreamUsageOptions) => Promise<void>>;
   /** Non-stream JSON translation; same-protocol entries pass the payload through. */
   finish: Record<ProviderProtocol, (upstream: JsonRecord, provider: ProviderModel, model: string) => unknown>;
@@ -298,9 +305,9 @@ const FAILURE_BY_PROTOCOL: Record<ProviderProtocol, ((upstream: JsonRecord) => s
 const ENDPOINT_SPECS: Record<"responses" | "chat" | "messages", EndpointSpec> = {
   responses: {
     payloads: {
-      "responses": (input, model) => ({ ...input, model }),
-      "chat-completions": (input, model, provider) => toChatCompletionsRequest(input, model, provider.provider),
-      "anthropic": (input, model) => toAnthropicRequest(input, model),
+      "responses": ({ input, model }) => ({ ...input, model }),
+      "chat-completions": ({ input, model, provider }) => toChatCompletionsRequest(input, model, provider.provider),
+      "anthropic": ({ input, model }) => toAnthropicRequest(input, model),
     },
     pipes: {
       "chat-completions": pipeChatStreamToResponses,
@@ -315,9 +322,9 @@ const ENDPOINT_SPECS: Record<"responses" | "chat" | "messages", EndpointSpec> = 
   },
   chat: {
     payloads: {
-      "responses": (input, model) => toResponsesRequestFromChat(input, model),
-      "chat-completions": (input, model) => ({ ...input, model }),
-      "anthropic": (input, model) => toAnthropicRequestFromChat(input, model),
+      "responses": ({ input, model }) => toResponsesRequestFromChat(input, model),
+      "chat-completions": ({ input, model }) => ({ ...input, model }),
+      "anthropic": ({ input, model }) => toAnthropicRequestFromChat(input, model),
     },
     pipes: {
       "chat-completions": pipeChatPassthrough,
@@ -332,10 +339,10 @@ const ENDPOINT_SPECS: Record<"responses" | "chat" | "messages", EndpointSpec> = 
   },
   messages: {
     payloads: {
-      "responses": (input, model, provider) => toResponsesRequest(asAnthropicRequest(input), model, provider),
-      "chat-completions": (input, model, provider) => toChatRequest(asAnthropicRequest(input), model, provider),
+      "responses": ({ input, model, provider }) => toResponsesRequest(asAnthropicRequest(input), model, provider),
+      "chat-completions": ({ input, model, provider }) => toChatRequest(asAnthropicRequest(input), model, provider),
       // already Anthropic-shaped; zero conversion
-      "anthropic": (input, model) => ({ ...input, model }),
+      "anthropic": ({ input, model }) => ({ ...input, model }),
     },
     pipes: {
       "chat-completions": pipeResponsesStream,
@@ -420,7 +427,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     // The endpoint decides which model id counts as "configured"; clients that
     // echo a preferred model (Codex sending OPENAI_MODEL=auto, Claude Code's
     // haiku background lane) are honored per honorRequestedModel's rules.
-    const proxied = await proxyRequest(config, request, response, config.model, (input, model, provider) => endpointSpec.payloads[provider.protocol](input, model, provider), maxBodyBytes);
+    const proxied = await proxyRequest(config, request, response, config.model, (context) => endpointSpec.payloads[context.provider.protocol](context), maxBodyBytes);
     if (!proxied) return;
     const { input, model, provider, watched } = proxied;
     const usageOptions = streamOptions(config, provider, sessionFor(input), safeRecord);
