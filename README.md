@@ -511,7 +511,7 @@ Install Claude Code and ensure `claude` is available in the same shell's `PATH`,
 
 **`Codex not found: the "codex" command is not installed or not on PATH`**
 
-When a client executable is missing, AgentX explains the problem and prints the recommended install command (for example, `npm install -g @openai/codex`). In an interactive terminal it also offers to run that command for you and relaunches the client after a verified install. Decline to install manually; re-run the same `agentx <client>` command afterwards.
+When a client executable is missing, AgentX explains the problem and prints the recommended install command (for example, `npm install -g @openai/codex`), then exits. AgentX never installs clients for you — run the command yourself, then re-run the same `agentx <client>` command.
 
 **The port is busy**
 

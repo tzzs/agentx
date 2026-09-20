@@ -153,7 +153,7 @@ export function defaultUsageLocation(backend: StoreBackend): string {
   return join(base, backend === "json" ? "usage.json" : "usage.db");
 }
 
-export function defaultStoreBackend(): StoreBackend {
+function defaultStoreBackend(): StoreBackend {
   const value = process.env.AGENTX_USAGE_BACKEND;
   return value === "json" || value === "memory" || value === "sqlite" ? value : "sqlite";
 }

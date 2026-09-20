@@ -21,7 +21,6 @@ function stdio() { return { input: io.input, output: io.output }; }
  * Test-only seam: point every prompt this module renders at fake streams
  * instead of real process stdio, so the interactive flows (Add/Remove custom
  * provider, provider/model pickers, …) are actually drivable in tests.
- * Mirrors the `setCachedOpenRouter` isolation seam in providers/registry.ts.
  */
 export function __setTestIO(next: { input: NodeJS.ReadStream; output: NodeJS.WriteStream }): void { io = next; }
 /** Restore real process stdio after a test that called `__setTestIO`. */

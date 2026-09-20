@@ -1,7 +1,7 @@
 import { allModels, providerFor as resolveProvider } from "./providers/registry.js";
 import type { ProviderModel } from "./providers/types.js";
 
-export type ModelProvider = ProviderModel;
+type ModelProvider = ProviderModel;
 export const providers = allModels;
 export function providerFor(model: string, provider?: string): ModelProvider { return resolveProvider(model, provider); }
 

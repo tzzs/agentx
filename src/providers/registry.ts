@@ -138,11 +138,6 @@ export function setOpenRouterCatalogIds(ids: string[]): void {
   }
 }
 
-/** Isolation seam so tests can restore the module-level model cache. */
-export function setCachedOpenRouter(table: MetadataMap): void {
-  cachedOpenRouter = table;
-}
-
 /**
  * Fetch OpenRouter's auth-free public catalog for picker/search use. Failures
  * keep the previously cached ids so a flaky network degrades to the last good

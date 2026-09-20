@@ -497,7 +497,7 @@ GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构�
 
 **`Codex not found: the "codex" command is not installed or not on PATH`**
 
-当客户端可执行文件缺失时，AgentX 会说明问题并给出推荐的安装命令（例如 `npm install -g @openai/codex`）。在交互式终端中还会询问是否立即执行该命令，并在确认安装成功后自动重新启动客户端。也可以选择跳过、手动安装，之后再次运行相同的 `agentx <client>` 命令。
+当客户端可执行文件缺失时，AgentX 会说明问题并给出推荐的安装命令（例如 `npm install -g @openai/codex`），然后退出。AgentX 不会代为执行安装——请自行运行该命令，之后再次运行相同的 `agentx <client>` 命令。
 
 **端口被占用**
 

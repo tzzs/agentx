@@ -43,7 +43,7 @@ export async function queryProviderUsage(providerId: string, apiKey: string): Pr
   return providerId === "deepseek" ? parseDeepSeekBalance(payload) : parseOpenRouterKey(payload);
 }
 
-export function usageProvider(id?: string) { return providerById(id ?? process.env.AGENTX_PROVIDER ?? "opencode"); }
+function usageProvider(id?: string) { return providerById(id ?? process.env.AGENTX_PROVIDER ?? "opencode"); }
 
 /** Resolve credentials, query quota, and format the result; shared by `agentx quota` and the deprecated `agentx usage --provider`. */
 export async function runQuotaCommand(providerId: string | undefined): Promise<{ output: string; exitCode: number }> {

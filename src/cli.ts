@@ -3,11 +3,11 @@ import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CLAUDE_EFFORT_LEVELS, CODEX_EFFORT_LEVELS, loadConfig, parseCliOptions as options } from "./config.js";
 import { startAdapter } from "./server.js";
-import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, clientEnvironment, codexLaunchArgs, nativeClientEnvironment } from "./process.js";
+import { runCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, clientEnvironment, codexLaunchArgs, nativeClientEnvironment } from "./process.js";
 import { providerEntries, runInteractiveLauncher, runProviderManager, runSavedModelManager, LaunchCancelledError, type ProviderEntry } from "./ui.js";
 import { credentialEnvName, providerById, refreshProviderCatalog, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerDisplayName, registerCustomProvider, unregisterCustomProvider } from "./providers/registry.js";
 import type { ProviderDefinition, ProviderProtocol } from "./providers/types.js";
-import { runDoctor, renderDoctor, executableExists } from "./doctor.js";
+import { runDoctor, renderDoctor } from "./doctor.js";
 import { credentialInstructions, credentialSource, hydrateProfileCredentials, promptCredential, resolveCredential } from "./credentials.js";
 import { runQuotaCommand } from "./quota.js";
 import { runUsageStats } from "./usage/cli.js";
@@ -15,7 +15,6 @@ import { resolveRuntimeNonInteractive } from "./selection.js";
 import { forgetCustomProvider, loadCustomProviders, loadLastSelection, loadSessionRecord, remembererProviders, rememberedModelIds, saveCustomProvider, saveLastModel, saveOpenRouterModels, saveSessionRecord } from "./runtime.js";
 import { catalogModels, writeCodexCatalog } from "./codex-catalog.js";
 import { applySessionRecord, discoverClaudeSessionId, discoverCodexSessionId, resumeSessionId } from "./sessions.js";
-import { confirm, isCancel } from "@clack/prompts";
 
 const HELP: Record<string, string> = {
   claude: "Start the local adapter and Claude Code together",
@@ -233,48 +232,24 @@ function reportMissingClient(executable: string): void {
   }
 }
 
-/** Injectable side effects for {@link launchClient}, so tests can exercise the install-recovery flow without a real terminal, shell, or spawned process. */
+/** Injectable side effects for {@link launchClient}, so tests can swap in a fake spawn without a real terminal or process. */
 export interface ClientLaunchDeps {
   runCommand?: typeof runCommand;
-  confirm?: typeof confirm;
-  runShellCommand?: typeof runShellCommand;
-  executableExists?: typeof executableExists;
 }
 
 /**
- * Launch a client, with a recovery path for a missing executable: explain the
- * problem, and — interactively only — offer to run the known install command.
- * After a confirmed, successful install (verified by spawning the binary),
- * retry the launch; otherwise exit with a clear message. The adapter stays up
- * throughout so a successful install flows straight into the client session.
+ * Launch a client. A missing executable is reported with the recommended
+ * install command and exit code 1 — AgentX never installs clients itself.
  */
 export async function launchClient(executable: string, args: string[], env: NodeJS.ProcessEnv, deps: ClientLaunchDeps = {}): Promise<number> {
   const run = deps.runCommand ?? runCommand;
-  const confirmFn = deps.confirm ?? confirm;
-  const runShell = deps.runShellCommand ?? runShellCommand;
-  const exists = deps.executableExists ?? executableExists;
   try {
     return await run(executable, args, env);
   } catch (error) {
     if (!(error instanceof ClientNotFoundError)) throw error;
     reportMissingClient(executable);
-    const installCommand = CLIENT_INSTALL_COMMANDS[executable];
-    if (!isInteractive() || !installCommand) { process.exitCode = 1; return 1; }
-    const proceed = await confirmFn({ message: `Run \`${installCommand}\` now?`, initialValue: false });
-    if (isCancel(proceed) || !proceed) {
-      console.error(`Skipped installation. Re-run agentx ${executable} once installed.`);
-      process.exitCode = 1;
-      return 1;
-    }
-    console.error(`Running: ${installCommand}`);
-    const code = await runShell(installCommand);
-    if (code !== 0 || !(await exists(executable))) {
-      console.error("✗ Installation did not complete or the executable is still missing.\n  Install it manually, then re-run this command.");
-      process.exitCode = 1;
-      return 1;
-    }
-    console.error(`✓ ${CLIENT_LABELS[executable] ?? executable} installed`);
-    return run(executable, args, env);
+    process.exitCode = 1;
+    return 1;
   }
 }
 
@@ -454,7 +429,7 @@ async function persistCustomProvider(opts: Record<string, string | undefined>): 
  * resolution (interactive or not), native-launch bypass, credential
  * resolution with a missing-key recovery flow, adapter startup, and finally
  * handing off to {@link launchClient}. `deps` only affects the final
- * `launchClient` call, so tests can exercise the install-recovery flow.
+ * `launchClient` call, so tests can substitute the spawn.
  */
 export async function runClientLaunch(command: string, args: string[], deps: ClientLaunchDeps = {}): Promise<void> {
   let opts = options(args);
