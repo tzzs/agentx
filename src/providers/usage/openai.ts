@@ -30,7 +30,8 @@ function mapUsage(usage: JsonRecord | undefined, ctx: UsageContext, names: {
   result.inputTokens = recCount(usage, names.input) ?? 0;
   result.outputTokens = recCount(usage, names.output) ?? 0;
   result.totalTokens = recCount(usage, "total_tokens") ?? (result.inputTokens + result.outputTokens);
-  const cached = recCount(recObj(usage, names.cached), "cached_tokens");
+  // Some providers flatten the details objects into a bare top-level cached_tokens; the nested shape is read first.
+  const cached = recCount(recObj(usage, names.cached), "cached_tokens") ?? recCount(usage, "cached_tokens");
   if (cached !== undefined) result.cachedInputTokens = cached;
   const reasoning = recCount(recObj(usage, names.reasoning), "reasoning_tokens");
   if (reasoning !== undefined) result.reasoningTokens = reasoning;

@@ -35,8 +35,8 @@ cli.ts (claude/codex/proxy/exec)
    │
    ├─ server.ts      startAdapter() → 生成本地随机 token，绑定回环端口
    │                     ├─ /health
-   │                     ├─ /v1/models
-   │                     ├─ /v1/messages          (Anthropic)
+   │                     ├─ /v1/models 与 /v1/models/{id}
+   │                     ├─ /v1/messages          (Anthropic；含 POST /v1/messages/count_tokens)
    │                     ├─ /v1/responses         (OpenAI Responses)
    │                     └─ /v1/chat/completions  (OpenAI Chat Completions)
    │
@@ -54,7 +54,7 @@ cli.ts (claude/codex/proxy/exec)
 Claude Code (Anthropic Messages API)
       │  POST /v1/messages   Bearer <本地随机 token>
       ▼
-  server.ts  (校验本地 token，不转发给上游；按 config.retry 对 429/502/503/504 做指数退避重试)
+  server.ts  (校验本地 token，不转发给上游；按 config.retry 对 408/429/502/503/504 做指数退避重试；`--max-concurrency` 限制在途上游请求数)
       │
       ├─ catalog.ts  providerFor（按 model 选路由；纯路由模块，不含转换函数）
       │
@@ -73,9 +73,9 @@ Claude Code (Anthropic Messages API)
               └─ 流式: streaming/anthropic-passthrough.ts, streaming/anthropic-to-responses.ts
 ```
 
-`src/convert/` 是转换函数所在的模块化目录：`shared.ts`（跨方向 helper：图片/effort/thinking/tool-choice 映射、采样参数）、`chat.ts`（上游 = Chat Completions 的全部方向）、`responses.ts`（上游 = Responses）、`anthropic.ts`（上游 = Anthropic，自定义 Provider 专属）、`index.ts`（barrel 导出，公共函数名不变）。`src/catalog.ts` 只保留 `providers`/`providerFor`/`honorRequestedModel` 路由函数。
+`src/convert/` 是转换函数所在的模块化目录：`shared.ts`（跨方向 helper：图片/effort/thinking/tool-choice 映射、采样参数、tool_result 媒体的双向拆分/回填、`count_tokens` 的本地 token 估算）、`chat.ts`（上游 = Chat Completions 的全部方向）、`responses.ts`（上游 = Responses）、`anthropic.ts`（上游 = Anthropic，自定义 Provider 专属）、`index.ts`（barrel 导出，公共函数名不变）。`src/catalog.ts` 只保留 `providers`/`providerFor`/`honorRequestedModel` 路由函数。
 
-所有 wire payload（客户端请求、Provider 响应、SSE 事件）经 `src/json.ts` 的 `JsonRecord` + 字段访问器（`recStr`/`recNum`/`recCount`/`recObj`/`recObjs`/`parse`）读取，代码库里不使用 `any`：字段名写错或漏掉非对象检查由编译器拦下，而不是留成一次 undefined 运行时错误。
+所有 wire payload（客户端请求、Provider 响应、SSE 事件）经 `src/json.ts` 的 `JsonRecord` + 字段访问器（`recStr`/`recNum`/`recCount`/`recObj`/`recObjs`/`parseJson`）读取，代码库里不使用 `any`：字段名写错或漏掉非对象检查由编译器拦下，而不是留成一次 undefined 运行时错误。
 
 `src/streaming/` 同样是拆分后的模块化目录（`common.ts` 收敛公共 SSE 写入/heartbeat/usage capture 逻辑，每条协议转换路径各占一个文件），不是单一的 `streaming.ts`。
 
@@ -108,7 +108,7 @@ Claude Code (Anthropic Messages API)
 - **凭据隔离**：真实 Key 只留在 Adapter 内，客户端只拿到每次启动随机生成的本地 token
 - **工具调用**：只做协议转换（`tool_use`↔`function_call`、`tool_result`↔`function_call_output`），不在 Adapter 内执行
 - **模型路由**：没有隐式 `auto` 路由（已移除）；运行时必须解析为具体模型，解析优先级见 README「Configuration」
-- **上游重试**：`server.ts` 的 `forwardWithRetry` 对网络失败和 429/502/503/504 做指数退避重试（`--retry`/`AGENTX_RETRY`，默认 3，0 禁用），仅发生在流式传输开始之前
+- **上游重试**：`server.ts` 的 `forwardWithRetry` 对网络失败和 408/429/502/503/504 做指数退避重试（`--retry`/`AGENTX_RETRY`，默认 3，0 禁用），仅发生在流式传输开始之前
 - **命令覆盖**：`claude`/`codex`/`proxy`/`exec`/`auth`/`usage`/`quota`/`doctor`/`forget`/`version`/`help`
 - **可选集成**：`agentx quota --provider <id>` 查询 DeepSeek/OpenRouter 额度（OpenCode 返回"不支持"；`usage --provider` 为过渡期别名）；凭据只来自环境变量（`AGENTX_<PROVIDER>_API_KEY`，旧的无前缀变量兼容）
 
@@ -118,7 +118,7 @@ Claude Code (Anthropic Messages API)
 |---|---|
 | `src/cli.ts` | 命令分发、参数解析、编排（`runAuthCommand`/`runDoctorCommand`/`runClientLaunch` 等具名函数） |
 | `src/config.ts` | 配置加载与优先级 |
-| `src/server.ts` | HTTP Adapter、认证、路由、重试、端口回退 |
+| `src/server.ts` | HTTP Adapter、认证、路由、重试、并发闸（`--max-concurrency`）、端口回退 |
 | `src/catalog.ts` | 模型路由（`providers`/`providerFor`/`honorRequestedModel`），不含转换函数 |
 | `src/convert/` | 协议转换函数，按上游协议拆分：`shared.ts`（跨方向 helper）、`chat.ts`（上游 = Chat Completions）、`responses.ts`（上游 = Responses）、`anthropic.ts`（上游 = Anthropic，自定义 Provider 专属）、`index.ts`（barrel） |
 | `src/json.ts` | wire payload 的类型词汇表：`JsonRecord` 与字段访问器，替代 `any` |

@@ -263,3 +263,71 @@ export function toolResultText(text: string, imageCount: number, forwarded: bool
 export function acceptsImageInput(provider?: { modalities?: string[] }): boolean {
   return provider?.modalities === undefined || provider.modalities.includes("image");
 }
+
+/**
+ * Anthropic `tool_result` content built from a Chat Completions or Responses
+ * tool-output value — the inbound counterpart of `toolResultContent()`. Both
+ * dialects can carry images in a tool output (`image_url` / `input_image`
+ * parts), and Anthropic accepts image blocks inside a tool_result directly,
+ * so they are mapped to blocks instead of stringified into the text — the
+ * exact mistake `toolResultContent()` documents for the other direction.
+ * Text-only results collapse back to a plain string.
+ */
+export function toolResultBlocks(value: unknown): JsonValue {
+  if (typeof value === "string") return value;
+  if (value === undefined || value === null) return "";
+  if (!Array.isArray(value)) return JSON.stringify(value);
+  const parts: JsonRecord[] = [];
+  for (const raw of value as JsonValue[]) {
+    if (isRecord(raw)) {
+      if (raw.type === "text" || raw.type === "input_text" || raw.type === "output_text") {
+        const text = recStr(raw, "text");
+        if (text !== undefined) parts.push({ type: "text", text });
+        continue;
+      }
+      const url = recStr(raw, "image_url") ?? recStr(recObj(raw, "image_url"), "url");
+      if ((raw.type === "input_image" || raw.type === "image_url") && url) {
+        const source = toAnthropicImageSource(url);
+        if (source) parts.push({ type: "image", source });
+        continue;
+      }
+    }
+    // Anything Anthropic does not accept as a tool_result block is kept as
+    // text rather than dropped, so an unknown part still reaches the model.
+    if (raw !== undefined && raw !== null) parts.push({ type: "text", text: typeof raw === "string" ? raw : JSON.stringify(raw) });
+  }
+  // Text-only results collapse to a string, newline-joined like
+  // `toolResultContent()` does for the other direction.
+  if (parts.length && parts.every((part) => part.type === "text")) return parts.map((part) => recStr(part, "text") ?? "").join("\n");
+  return collapseAnthropicContent(parts);
+}
+
+/**
+ * Flat per-image token allowance for the estimator below. Anthropic bills an
+ * image by its pixel area, which a request body does not carry, so a single
+ * mid-sized-screenshot figure stands in for it — far closer than counting the
+ * base64 payload as if it were prose.
+ */
+const IMAGE_TOKEN_ESTIMATE = 1_600;
+
+/**
+ * Approximate the input tokens of an Anthropic Messages request. Used by
+ * `/v1/messages/count_tokens` when the upstream protocol has no equivalent
+ * endpoint to ask. Four characters per token is the conventional English
+ * approximation; this is explicitly an estimate, but one made from the actual
+ * request, unlike the blind fallback a 404 used to force on the client.
+ */
+export function estimateInputTokens(input: JsonRecord): number {
+  let chars = 0;
+  const walk = (value: unknown): void => {
+    if (typeof value === "string") { chars += value.length; return; }
+    if (Array.isArray(value)) { value.forEach(walk); return; }
+    if (!isRecord(value)) return;
+    // An image block's base64 payload is not prose; charge it a flat rate
+    // instead of walking into the data string.
+    if (value.type === "image") { chars += IMAGE_TOKEN_ESTIMATE * 4; return; }
+    Object.values(value).forEach(walk);
+  };
+  walk(input.system); walk(input.messages); walk(input.tools);
+  return Math.max(1, Math.ceil(chars / 4));
+}

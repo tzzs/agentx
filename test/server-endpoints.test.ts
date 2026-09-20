@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createConcurrencyGate, estimateInputTokens, startAdapter } from "../src/server.js";
+import { createConcurrencyGate, startAdapter } from "../src/server.js";
+import { estimateInputTokens } from "../src/convert/shared.js";
 import { createUsageStore } from "../src/usage/storage.js";
 import { registerCustomProvider, unregisterCustomProvider } from "../src/providers/registry.js";
 import type { Config } from "../src/config.js";

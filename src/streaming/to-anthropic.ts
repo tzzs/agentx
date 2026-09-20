@@ -2,7 +2,7 @@ import type { ServerResponse } from "node:http";
 import { chatResponseFailure } from "../convert/index.js";
 import { jsonRecord, recNum, recObj, recObjs, recStr } from "../json.js";
 import {
-  cacheTokensOf, dataLine, drain, emitAnthropicError, event, failureMessage, newUsageCapture, reasoningDeltaOf,
+  dataLine, drain, emitAnthropicError, event, failureMessage, newUsageCapture, reasoningDeltaOf,
   reportUsage, usageCapture, withSsePipe, UpstreamFailure, type StreamUsageOptions,
 } from "./common.js";
 
@@ -126,8 +126,7 @@ export async function pipeResponsesStream(upstream: Response, response: ServerRe
       if (!blockStarted) startText();
       stopBlock();
       const stopReason = truncated ? "max_tokens" : toolStop ? "tool_use" : "end_turn";
-      const { cached } = cacheTokensOf(capture.raw);
-      event(response, "message_delta", { type: "message_delta", delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: capture.output, input_tokens: capture.input, cache_creation_input_tokens: 0, cache_read_input_tokens: cached ?? 0 } });
+      event(response, "message_delta", { type: "message_delta", delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: capture.output, input_tokens: capture.input, cache_creation_input_tokens: 0, cache_read_input_tokens: capture.cached ?? 0 } });
       event(response, "message_stop", { type: "message_stop" });
     } catch (error) {
       // Match Anthropic semantics: a terminal error event closes the stream.

@@ -5,9 +5,9 @@ import { extractResponsesUsage, extractChatUsage, mapResponsesUsage, mapChatUsag
 import { extractAnthropicUsage, mapAnthropicUsage } from "./anthropic.js";
 
 export type { TokenUsage, UsageContext } from "../../usage/types.js";
-// Bare-usage-object field mappers, re-exported so src/streaming/common.ts can
-// derive cache/reasoning tokens from a raw usage chunk without keeping its
-// own copy of these field names.
+// Bare-usage-object field mappers, re-exported so the streaming pipes in
+// src/streaming/common.ts can read token fields from raw usage chunks through
+// the same field lists as the non-streaming path.
 export { mapResponsesUsage, mapChatUsage, mapAnthropicUsage };
 
 export function extractUsage(response: JsonRecord, model: ProviderModel, ctx: UsageContext): TokenUsage | null {

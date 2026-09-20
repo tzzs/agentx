@@ -1,7 +1,7 @@
 /** Anthropic Messages API <-> Responses API: the direction whose upstream speaks the Responses protocol. */
 import type { AnthropicMessage, AnthropicRequest, ResponsesItem } from "./shared.js";
 import type { JsonRecord, JsonValue } from "../json.js";
-import { asRecords, isRecord, parse, recNum, recObj, recObjs, recStr } from "../json.js";
+import { asRecords, isRecord, parseJson, recNum, recObj, recObjs, recStr } from "../json.js";
 import { acceptsImageInput, chatThinking, imageDataUri, reasoningEffort, responsesToolChoice, toolResultContent, toolResultText } from "./shared.js";
 import type { ProviderModel } from "../providers/types.js";
 import { fromAnthropicResponseToChat, toAnthropicRequestFromChat } from "./anthropic.js";
@@ -101,7 +101,7 @@ export function fromResponsesResponse(response: JsonRecord, model: string): Json
     .flatMap((item) => asRecords(item.content))
     .filter((part) => part.type === "output_text")
     .map((part) => recStr(part, "text") ?? "").join("");
-  const toolUses = output.filter((item) => item.type === "function_call").map((item) => ({ type: "tool_use", id: recStr(item, "call_id") ?? recStr(item, "id"), name: recStr(item, "name"), input: parse(recStr(item, "arguments")) }));
+  const toolUses = output.filter((item) => item.type === "function_call").map((item) => ({ type: "tool_use", id: recStr(item, "call_id") ?? recStr(item, "id"), name: recStr(item, "name"), input: parseJson(recStr(item, "arguments")) }));
   const thinking = reasoningText(output);
   const usage = recObj(response, "usage");
   const cached = recNum(recObj(usage, "input_tokens_details"), "cached_tokens");

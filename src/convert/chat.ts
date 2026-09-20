@@ -5,7 +5,7 @@
  */
 import type { AnthropicMessage, AnthropicRequest } from "./shared.js";
 import type { JsonRecord, JsonValue } from "../json.js";
-import { isRecord, parse, recNum, recObj, recObjs, recStr } from "../json.js";
+import { isRecord, parseJson, recNum, recObj, recObjs, recStr } from "../json.js";
 import { acceptsImageInput, chatControlParams, collapseAnthropicContent, imageDataUri, samplingParams, toolResultContent, toolResultText, TOOL_RESULT_MEDIA_PROMPT } from "./shared.js";
 import type { ProviderModel } from "../providers/types.js";
 import { isDeepSeekLongContextModel } from "../providers/registry.js";
@@ -112,7 +112,7 @@ export function fromChatResponse(response: JsonRecord, model: string): JsonRecor
   const text = chatText(message.content);
   if (text) content.push({ type: "text", text });
   const toolCalls = recObjs(message, "tool_calls");
-  for (const call of toolCalls) content.push({ type: "tool_use", id: recStr(call, "id"), name: recStr(recObj(call, "function"), "name"), input: parse(recStr(recObj(call, "function"), "arguments")) });
+  for (const call of toolCalls) content.push({ type: "tool_use", id: recStr(call, "id"), name: recStr(recObj(call, "function"), "name"), input: parseJson(recStr(recObj(call, "function"), "arguments")) });
   const usage = recObj(response, "usage");
   return { id: recStr(response, "id") ?? `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model, content, stop_reason: anthropicStopReason(choice.finish_reason, toolCalls.length > 0), stop_sequence: null, usage: { input_tokens: recNum(usage, "prompt_tokens") ?? 0, output_tokens: recNum(usage, "completion_tokens") ?? 0, cache_creation_input_tokens: 0, cache_read_input_tokens: chatUsageDetails(response, "usage", "prompt_tokens_details", "cached_tokens") ?? 0 } };
 }
