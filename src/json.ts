@@ -56,6 +56,6 @@ export function recCount(obj: JsonRecord | undefined, key: string): number | und
 }
 
 /** Best-effort JSON parse of a wire payload; malformed or absent input becomes `{}` rather than throwing. */
-export function parse(value: unknown): JsonValue {
+export function parseJson(value: unknown): JsonValue {
   try { return (typeof value === "string" ? JSON.parse(value) : value ?? {}) as JsonValue; } catch { return {}; }
 }

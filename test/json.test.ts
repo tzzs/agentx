@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { asRecords, isRecord, jsonRecord, parse, recCount, recNum, recObj, recObjs, recStr } from "../src/json.js";
+import { asRecords, isRecord, jsonRecord, parseJson, recCount, recNum, recObj, recObjs, recStr } from "../src/json.js";
 
 test("isRecord accepts objects and rejects arrays, null and primitives", () => {
   assert.equal(isRecord({}), true);
@@ -57,9 +57,9 @@ test("object accessors read nested payloads and drop the wrong shapes", () => {
   assert.deepEqual(recObjs(payload, "usage"), []);
 });
 
-test("parse is best-effort and never throws", () => {
-  assert.deepEqual(parse('{"a":1}'), { a: 1 });
-  assert.deepEqual(parse({ a: 1 }), { a: 1 });
-  assert.deepEqual(parse("not json"), {});
-  assert.deepEqual(parse(undefined), {});
+test("parseJson is best-effort and never throws", () => {
+  assert.deepEqual(parseJson('{"a":1}'), { a: 1 });
+  assert.deepEqual(parseJson({ a: 1 }), { a: 1 });
+  assert.deepEqual(parseJson("not json"), {});
+  assert.deepEqual(parseJson(undefined), {});
 });

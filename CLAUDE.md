@@ -25,7 +25,7 @@ npm run typecheck # tsc --noEmit，同时检查 src/ 与 test/
 
 本包声明了 `"type": "module"` 并使用 `rootDir: "."` 编译，因此**所有 import 都使用 `.js` 后缀，且所有路径以仓库根目录为基准**（例如 `import { loadConfig } from "./config.js"`，测试位于 `test/` 下，导入如 `"../src/catalog.js"`）。
 
-`src/` 中不使用 `any`：客户端请求、Provider 响应与 SSE 事件这类无法预先验证的 JSON 一律建模为 `src/json.ts` 的 `JsonRecord`，通过 `recStr`/`recNum`/`recCount`/`recObj`/`recObjs`/`parse` 读取。字段名写错或漏掉非对象检查会直接编译失败，而不是变成一次运行时 undefined。tsconfig 开启了 `noUncheckedIndexedAccess` 等严格标志，ESLint 只保留 tsc 看不见的规则（见 `eslint.config.js`）。
+`src/` 中不使用 `any`：客户端请求、Provider 响应与 SSE 事件这类无法预先验证的 JSON 一律建模为 `src/json.ts` 的 `JsonRecord`，通过 `recStr`/`recNum`/`recCount`/`recObj`/`recObjs`/`parseJson` 读取。字段名写错或漏掉非对象检查会直接编译失败，而不是变成一次运行时 undefined。tsconfig 开启了 `noUncheckedIndexedAccess` 等严格标志，ESLint 只保留 tsc 看不见的规则（见 `eslint.config.js`）。
 
 ### 两套协议转换路径
 
@@ -38,7 +38,7 @@ npm run typecheck # tsc --noEmit，同时检查 src/ 与 test/
 
 转换函数集中在 `src/convert/`，按**上游协议**（而非转换方向）拆分为四个文件：
 
-- `shared.ts` — 跨方向 helper：图片/effort/thinking/三套 tool-choice 转换、采样参数（JSON 字段的读取统一走 `src/json.ts`）
+- `shared.ts` — 跨方向 helper：图片/effort/thinking/三套 tool-choice 转换、采样参数、tool_result 媒体的双向拆分/回填、`count_tokens` 的本地 token 估算（JSON 字段的读取统一走 `src/json.ts`）
 - `chat.ts` — 上游 = Chat Completions 的全部方向：`toChatRequest` / `fromChatResponse`（Anthropic ↔ Chat Completions）、`toChatCompletionsRequest` / `fromChatResponseToResponses`（Responses ↔ Chat Completions）
 - `responses.ts` — 上游 = Responses：`toResponsesRequest` / `fromResponsesResponse`（Anthropic ↔ Responses）；`toResponsesRequestFromChat` / `fromResponsesResponseToChat`（本地 Chat Completions ↔ Responses；分别复用 `toResponsesRequest`/`fromResponsesResponse` 加 `anthropic.ts` 的两个新函数拼出，不重复写转换逻辑）
 - `anthropic.ts` — 上游 = Anthropic（自定义 Provider 声明 `protocol: "anthropic"` 时专属）：`toAnthropicRequest` / `fromAnthropicResponse`（Responses ↔ Anthropic；Codex 只会看到本地 Responses 端点，仍需经此转换才能到达一个原生 Anthropic 上游）；`toAnthropicRequestFromChat` / `fromAnthropicResponseToChat`（本地 Chat Completions ↔ Anthropic，供 `/v1/chat/completions` 使用，只映射主流字段，不映射 DeepSeek 的 `thinking`/`reasoning_effort` 扩展）
