@@ -154,9 +154,13 @@ export function withCacheTokens(usage: TokenUsage, source: any): TokenUsage {
 export interface UsageCapture {
   input: number;
   output: number;
-  /** The most recent raw upstream usage payload, for cache-field capture. */
+  /** The most recent raw upstream usage payload, for protocol-shape-dependent emission (e.g. Anthropic cache_read). */
   raw?: any;
   sawUsage: boolean;
+  /** Cache/reasoning fields mapped from the latest raw usage via the provider field mappers. */
+  cached?: number;
+  reasoning?: number;
+  cacheWrite?: number;
 }
 
 export function newUsageCapture(): UsageCapture {
@@ -178,9 +182,11 @@ function mapRawUsage(raw: any, protocol: ProviderProtocol): TokenUsage | null {
  * Bind usage capture to the upstream protocol so token fields are read via
  * the same provider field mappers as the non-streaming path. `usage()` merges
  * a raw usage object into the capture; `total()` prefers the upstream's own
- * total when it carries one.
+ * total when it carries one. `enabled=false` (a pipe called with no options)
+ * keeps raw payloads as estimation hints without claiming real usage, which
+ * `reportUsage`'s fallback then reports.
  */
-export function usageCapture(capture: UsageCapture, protocol: ProviderProtocol): {
+export function usageCapture(capture: UsageCapture, protocol: ProviderProtocol, enabled = true): {
   usage(raw: any): void;
   total(): number;
 } {
@@ -189,9 +195,13 @@ export function usageCapture(capture: UsageCapture, protocol: ProviderProtocol):
       const mapped = mapRawUsage(raw, protocol);
       if (!mapped) return;
       capture.raw = raw;
+      if (!enabled) return;
       capture.sawUsage = true;
       if (mapped.inputTokens) capture.input = mapped.inputTokens;
       if (mapped.outputTokens) capture.output = mapped.outputTokens;
+      if (mapped.cachedInputTokens !== undefined) capture.cached = mapped.cachedInputTokens;
+      if (mapped.reasoningTokens !== undefined) capture.reasoning = mapped.reasoningTokens;
+      if (mapped.cacheWriteTokens !== undefined) capture.cacheWrite = mapped.cacheWriteTokens;
     },
     total() {
       return Number(capture.raw?.total_tokens ?? capture.input + capture.output);
@@ -215,12 +225,20 @@ export function reasoningDeltaOf(item: any): string | undefined {
   return undefined;
 }
 
-/** Final usage reporting; called by every pipe. */
-export function reportUsage(options: StreamUsageOptions | undefined, capture: UsageCapture) {
+/** Final usage reporting; called by every pipe. Captured fields ride on the
+ * usage record itself; a stream that never carried a usage payload reports an
+ * estimate from the per-delta counters instead. */
+export function reportUsage(options: StreamUsageOptions | undefined, capture: UsageCapture, totalOverride?: number) {
   if (!options?.onUsage) return;
-  options.onUsage(capture.sawUsage
-    ? withCacheTokens({ provider: options.provider, model: options.model, inputTokens: capture.input, outputTokens: capture.output, totalTokens: capture.input + capture.output, ...(options.sessionId ? { sessionId: options.sessionId } : {}) }, capture.raw)
-    : estimatedUsage(options.provider, options.model, capture.input, capture.output, options.sessionId));
+  if (!capture.sawUsage) {
+    options.onUsage(estimatedUsage(options.provider, options.model, capture.input, capture.output, options.sessionId));
+    return;
+  }
+  const usage: TokenUsage = { provider: options.provider, model: options.model, inputTokens: capture.input, outputTokens: capture.output, totalTokens: totalOverride ?? capture.input + capture.output, ...(options.sessionId ? { sessionId: options.sessionId } : {}) };
+  if (capture.cached !== undefined) usage.cachedInputTokens = capture.cached;
+  if (capture.reasoning !== undefined) usage.reasoningTokens = capture.reasoning;
+  if (capture.cacheWrite !== undefined) usage.cacheWriteTokens = capture.cacheWrite;
+  options.onUsage(usage);
 }
 
 /* ---------- Responses-protocol (Codex-facing) emitters ---------- */
