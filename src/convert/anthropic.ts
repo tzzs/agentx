@@ -6,8 +6,8 @@
  */
 import type { AnthropicMessage, AnthropicRequest, AnthropicThinking } from "./shared.js";
 import type { JsonRecord, JsonValue } from "../json.js";
-import { asRecords, isRecord, parse, recNum, recObj, recObjs, recStr } from "../json.js";
-import { anthropicThinking, anthropicToolChoice, collapseAnthropicContent, textOfBlocks, toAnthropicImageSource } from "./shared.js";
+import { asRecords, isRecord, parseJson, recNum, recObj, recObjs, recStr } from "../json.js";
+import { anthropicThinking, anthropicToolChoice, collapseAnthropicContent, textOfBlocks, toAnthropicImageSource, toolResultBlocks } from "./shared.js";
 
 /** Responses message content (string or input_text/input_image parts) to Anthropic message content. */
 function toAnthropicContent(content: JsonValue): JsonValue {
@@ -44,10 +44,10 @@ export function toAnthropicRequest(input: JsonRecord, model: string): AnthropicR
   const flushAssistant = () => { if (pendingAssistantBlocks.length) { messages.push({ role: "assistant", content: pendingAssistantBlocks }); pendingAssistantBlocks = []; } };
   for (const item of items) {
     if (item.type === "reasoning") continue; // no signature to echo upstream; dropped like other local-only reasoning echoes
-    if (item.type === "function_call") { pendingAssistantBlocks.push({ type: "tool_use", id: recStr(item, "call_id") ?? recStr(item, "id"), name: recStr(item, "name"), input: parse(item.arguments) }); continue; }
+    if (item.type === "function_call") { pendingAssistantBlocks.push({ type: "tool_use", id: recStr(item, "call_id") ?? recStr(item, "id"), name: recStr(item, "name"), input: parseJson(item.arguments) }); continue; }
     if (item.type === "function_call_output") {
       flushAssistant();
-      messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: item.call_id, content: typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "") }] });
+      messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: item.call_id, content: toolResultBlocks(item.output) }] });
       continue;
     }
     if (item.role === "assistant") { const text = responsesItemText(item.content); if (text) pendingAssistantBlocks.push({ type: "text", text }); continue; }
@@ -160,7 +160,7 @@ export function toAnthropicRequestFromChat(input: JsonRecord, model: string): An
     const role = recStr(message, "role");
     if (role === "system") { const content = recStr(message, "content"); if (content) systemParts.push(content); continue; }
     if (role === "tool") {
-      messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: message.tool_call_id, content: typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? "") }] });
+      messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: message.tool_call_id, content: toolResultBlocks(message.content) }] });
       continue;
     }
     if (typeof role !== "string") continue;
@@ -168,7 +168,7 @@ export function toAnthropicRequestFromChat(input: JsonRecord, model: string): An
     const converted = chatContentToAnthropic(message.content);
     if (Array.isArray(converted)) blocks.push(...asRecords(converted));
     else if (converted) blocks.push({ type: "text", text: converted });
-    for (const call of recObjs(message, "tool_calls")) blocks.push({ type: "tool_use", id: recStr(call, "id"), name: recStr(recObj(call, "function"), "name"), input: parse(recStr(recObj(call, "function"), "arguments")) });
+    for (const call of recObjs(message, "tool_calls")) blocks.push({ type: "tool_use", id: recStr(call, "id"), name: recStr(recObj(call, "function"), "name"), input: parseJson(recStr(recObj(call, "function"), "arguments")) });
     if (blocks.length) messages.push({ role, content: blocks });
   }
   const rawStop = input.stop;

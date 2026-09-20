@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fromChatResponse, fromResponsesResponse, toChatRequest, toResponsesRequest } from "../src/convert/index.js";
+import { fromChatResponse, fromResponsesResponse, toAnthropicRequest, toAnthropicRequestFromChat, toChatRequest, toResponsesRequest } from "../src/convert/index.js";
 
 test("converts tools and tool results", () => {
   const result = toResponsesRequest({ tools: [{ name: "bash", description: "Run a command", input_schema: { type: "object" } }], messages: [{ role: "assistant", content: [{ type: "tool_use", id: "call-1", name: "bash", input: { command: "pwd" } }] }, { role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", content: "/tmp" }] }] }, "gpt-5.6-luna");
@@ -95,6 +95,38 @@ test("flattens a text-only tool_result block array instead of forwarding its JSO
     ],
   };
   assert.equal((toChatRequest(blocks as any, "glm-5") as any).messages[1].content, "line one\nline two");
+});
+
+// Anthropic accepts image blocks inside a tool_result directly, so the two
+// inbound directions must map them back to blocks instead of stringifying the
+// part array (which entered the context as the base64 rendered as text).
+
+test("restores tool-result images as Anthropic tool_result blocks from Responses output", () => {
+  const result = toAnthropicRequest({ input: [
+    { type: "function_call", call_id: "call-1", name: "read", arguments: "{}" },
+    { type: "function_call_output", call_id: "call-1", output: [{ type: "input_text", text: "read ok" }, { type: "input_image", image_url: "data:image/png;base64,AAA" }] },
+  ] }, "claude-y") as any;
+  assert.deepEqual(result.messages[1].content[0], {
+    type: "tool_result", tool_use_id: "call-1",
+    content: [{ type: "text", text: "read ok" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "AAA" } }],
+  });
+});
+
+test("restores tool-result images as Anthropic tool_result blocks from chat content parts", () => {
+  const result = toAnthropicRequestFromChat({ messages: [
+    { role: "tool", tool_call_id: "call-1", content: [{ type: "text", text: "ok" }, { type: "image_url", image_url: { url: "https://x.invalid/a.png" } }] },
+  ] }, "claude-y") as any;
+  assert.deepEqual(result.messages[0].content[0], {
+    type: "tool_result", tool_use_id: "call-1",
+    content: [{ type: "text", text: "ok" }, { type: "image", source: { type: "url", url: "https://x.invalid/a.png" } }],
+  });
+});
+
+test("keeps a text-only tool output a plain string for Anthropic upstreams", () => {
+  const result = toAnthropicRequest({ input: [
+    { type: "function_call_output", call_id: "call-1", output: [{ type: "input_text", text: "line one" }, { type: "input_text", text: "line two" }] },
+  ] }, "claude-y") as any;
+  assert.equal(result.messages[0].content[0].content, "line one\nline two");
 });
 
 test("maps an unrecognized finish_reason to end_turn rather than max_tokens", () => {
