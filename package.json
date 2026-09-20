@@ -20,7 +20,11 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && cd dist && node --test"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "npm run build && cd dist && node --test",
+    "test:one": "npm run build && node --test"
   },
   "files": [
     "dist/src",
@@ -30,7 +34,9 @@
   ],
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "typescript": "^5.6.0"
+    "eslint": "^10.11.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.70.0"
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0"

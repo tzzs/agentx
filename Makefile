@@ -4,7 +4,7 @@ CLI := node dist/src/cli.js
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install build test check ci pack install-local link unlink \
+.PHONY: help install build test test-one lint typecheck check ci pack install-local link unlink \
 	claude codex proxy doctor version clean
 
 help: ## Show available targets
@@ -26,10 +26,21 @@ build: node_modules/.package-lock.json ## Compile TypeScript into dist/
 test: node_modules/.package-lock.json ## Build and run the test suite
 	$(NPM) test
 
-check: test ## Run tests and verify the npm package contents
+# make test-one F=test/streaming — a single test file, quoted so a bare
+# `make test-one` doesn't expand to every file in the directory.
+test-one: node_modules/.package-lock.json ## Build and run one test file (F=test/<name>)
+	$(NPM) run test:one -- "dist/$(F).test.js"
+
+lint: node_modules/.package-lock.json ## Lint the repository
+	$(NPM) run lint
+
+typecheck: node_modules/.package-lock.json ## Type-check src/ and test/ without emitting
+	$(NPM) run typecheck
+
+check: test lint ## Run tests, lint and verify the npm package contents
 	$(NPM) pack --dry-run
 
-ci: install test ## Reproduce the GitHub Actions verification locally
+ci: install lint test ## Reproduce the GitHub Actions verification locally
 
 pack: build ## Build and create an npm tarball
 	$(NPM) pack
