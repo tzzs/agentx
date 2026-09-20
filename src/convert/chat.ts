@@ -4,14 +4,16 @@
  * Completions protocol.
  */
 import type { AnthropicMessage, AnthropicRequest } from "./shared.js";
-import { chatControlParams, imageDataUri, parse, samplingParams } from "./shared.js";
+import { acceptsImageInput, chatControlParams, imageDataUri, parse, samplingParams, toolResultContent, toolResultText, TOOL_RESULT_MEDIA_PROMPT } from "./shared.js";
+import type { ProviderModel } from "../providers/types.js";
 import { isDeepSeekLongContextModel } from "../providers/registry.js";
 
-export function toChatRequest(input: AnthropicRequest, model: string, provider?: string) {
+export function toChatRequest(input: AnthropicRequest, model: string, provider?: ProviderModel) {
   const messages: any[] = [];
   if (input.system) messages.push({ role: "system", content: typeof input.system === "string" ? input.system : input.system.map((part) => part.text ?? "").join("\n") });
-  const deepSeek = provider === "deepseek" || isDeepSeekLongContextModel(model);
-  for (const message of input.messages) messages.push(...toChatMessages(message, deepSeek));
+  const deepSeek = provider?.provider === "deepseek" || isDeepSeekLongContextModel(model);
+  const allowImages = acceptsImageInput(provider);
+  for (const message of input.messages) messages.push(...toChatMessages(message, deepSeek, allowImages));
   return { model, messages, ...(input.max_tokens === undefined ? {} : { max_tokens: input.max_tokens }), ...(input.stream ? { stream: true } : {}), ...samplingParams(input as any), ...chatControlParams(input, deepSeek), ...(input.tools ? { tools: input.tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })) } : {}) };
 }
 
@@ -20,11 +22,13 @@ function toChatImagePart(part: any): any | undefined {
   return url ? { type: "image_url", image_url: { url } } : undefined;
 }
 
-function toChatMessages(message: AnthropicMessage, preserveReasoning = false): any[] {
+function toChatMessages(message: AnthropicMessage, preserveReasoning = false, allowImages = true): any[] {
   if (!Array.isArray(message.content)) return [{ role: message.role, content: message.content ?? "" }];
   const parts: any[] = [];
   const toolCalls: any[] = [];
   const toolResults: any[] = [];
+  /** Images lifted out of tool results; they follow as their own user message. */
+  const toolMedia: string[] = [];
   let reasoning = "";
   const pushText = (text: string) => {
     if (!text) return;
@@ -36,7 +40,9 @@ function toChatMessages(message: AnthropicMessage, preserveReasoning = false): a
     if (part.type === "tool_use") {
       toolCalls.push({ id: part.id, type: "function", function: { name: part.name, arguments: JSON.stringify(part.input ?? {}) } });
     } else if (part.type === "tool_result") {
-      toolResults.push({ role: "tool", tool_call_id: part.tool_use_id, content: typeof part.content === "string" ? part.content : JSON.stringify(part.content ?? "") });
+      const { text, images } = toolResultContent(part.content);
+      if (allowImages) toolMedia.push(...images);
+      toolResults.push({ role: "tool", tool_call_id: part.tool_use_id, content: toolResultText(text, images.length, allowImages) });
     } else if (part.type === "text") {
       pushText(part.text ?? "");
     } else if (part.type === "thinking" && preserveReasoning && message.role === "assistant") {
@@ -61,6 +67,11 @@ function toChatMessages(message: AnthropicMessage, preserveReasoning = false): a
     output.push({ role: message.role, content: parts.every((part) => part.type === "text") ? parts.map((part) => part.text).join("") : parts });
   }
   output.push(...toolResults);
+  // Chat Completions has no place for an image inside a tool message, so the
+  // media travels as its own user turn right after the results it came from.
+  if (toolMedia.length) {
+    output.push({ role: "user", content: [{ type: "text", text: TOOL_RESULT_MEDIA_PROMPT }, ...toolMedia.map((url) => ({ type: "image_url", image_url: { url } }))] });
+  }
   return output;
 }
 /** Plain text of a chat message content, ignoring non-text parts (images etc.). */
@@ -70,14 +81,27 @@ function chatText(content: any): string {
   return "";
 }
 
+/**
+ * Map a Chat Completions `finish_reason` to an Anthropic `stop_reason`.
+ * Unrecognized reasons used to fall through to "max_tokens", telling the
+ * client a complete reply had been truncated; "end_turn" is the honest
+ * default. `chatResponseFailure` still turns the genuinely abnormal reasons
+ * into an upstream error before this is reached on the proxy path.
+ */
+function anthropicStopReason(finishReason: unknown, hasToolCalls: boolean): string {
+  if (hasToolCalls) return "tool_use";
+  if (finishReason === "length") return "max_tokens";
+  if (finishReason === "content_filter") return "refusal";
+  return "end_turn";
+}
+
 export function fromChatResponse(response: any, model: string): Record<string, unknown> {
   const choice = response.choices?.[0] ?? {}; const message = choice.message ?? {}; const content = [];
   if (message.reasoning_content) content.push({ type: "thinking", thinking: message.reasoning_content });
   const text = chatText(message.content);
   if (text) content.push({ type: "text", text });
   for (const call of message.tool_calls ?? []) content.push({ type: "tool_use", id: call.id, name: call.function?.name, input: parse(call.function?.arguments) });
-  const finishReason = choice.finish_reason;
-  return { id: response.id ?? `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model, content, stop_reason: message.tool_calls?.length ? "tool_use" : finishReason === "length" ? "max_tokens" : finishReason === "stop" || finishReason === undefined ? "end_turn" : "max_tokens", stop_sequence: null, usage: { input_tokens: response.usage?.prompt_tokens ?? 0, output_tokens: response.usage?.completion_tokens ?? 0, cache_creation_input_tokens: 0, cache_read_input_tokens: response.usage?.prompt_tokens_details?.cached_tokens ?? 0 } };
+  return { id: response.id ?? `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model, content, stop_reason: anthropicStopReason(choice.finish_reason, Boolean(message.tool_calls?.length)), stop_sequence: null, usage: { input_tokens: response.usage?.prompt_tokens ?? 0, output_tokens: response.usage?.completion_tokens ?? 0, cache_creation_input_tokens: 0, cache_read_input_tokens: response.usage?.prompt_tokens_details?.cached_tokens ?? 0 } };
 }
 
 /** Return a failure for a provider completion that is not a normal stop. */

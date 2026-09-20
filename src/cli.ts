@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { CLAUDE_EFFORT_LEVELS, CODEX_EFFORT_LEVELS, loadConfig, parseCliOptions as options } from "./config.js";
+import { CLAUDE_EFFORT_LEVELS, CODEX_EFFORT_LEVELS, loadConfig, parseCliOptions as options, parseHeaderFlags } from "./config.js";
 import { startAdapter } from "./server.js";
 import { runCommand, runShellCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, clientEnvironment, codexLaunchArgs, nativeClientEnvironment } from "./process.js";
 import { providerEntries, runInteractiveLauncher, runProviderManager, runSavedModelManager, LaunchCancelledError, type ProviderEntry } from "./ui.js";
@@ -40,10 +40,12 @@ const OPTION_LINES = [
   "  --port <port>       Preferred local port (default 8787)",
   "  --host <host>       Local bind address (default 127.0.0.1)",
   "  --api-key <key>     Upstream API key",
-  "  --retry <n>         Retry attempts on upstream 429/5xx (default 3, 0 disables)",
+  "  --retry <n>         Retry attempts on upstream 408/429/502/503/504 (default 3, 0 disables)",
+  "  --max-concurrency <n>  Max upstream requests in flight; extra requests queue locally (default 0 = unlimited)",
   "  --client-protocol <anthropic|openai>  exec only: env vars to inject for the launched program (default anthropic)",
   "  --base-url <url>    Define (and persist) a custom provider at this endpoint; --provider names it",
   "  --protocol <responses|chat-completions|anthropic>  Upstream protocol for --base-url (default chat-completions)",
+  "  --header <k=v>      Extra request header for --base-url; repeat for several",
   "  --verbose           Verbose logging",
   "  --native            claude/codex only: launch the real client directly, no adapter or env overrides",
 ];
@@ -56,9 +58,11 @@ function helpText(command?: string): string {
     if (command === "auth") {
       lines.push("Usage: agentx auth <login|status|logout> --provider <provider>");
     } else if (command === "usage") {
-      lines.push("Usage: agentx usage [--period today|week|month|all]");
+      lines.push("Usage: agentx usage [--period today|week|month|all] [--session <id>] [--json]");
       lines.push("Options:");
       lines.push("  --period <range>    Time range for token statistics (default all)");
+      lines.push("  --session <id>      Totals for one client session id instead of the per-model table");
+      lines.push("  --json              Emit JSON instead of the table, for scripts and status lines");
       lines.push("  --provider <id>     Deprecated: use `agentx quota --provider <id>` instead");
       return lines.join("\n");
     } else if (command === "quota") {
@@ -74,6 +78,7 @@ function helpText(command?: string): string {
       lines.push("  --base-url <url>    Add or update a custom provider at this endpoint, then exit");
       lines.push("  --protocol <p>      Upstream protocol for --base-url (default chat-completions)");
       lines.push("  --model <id>        Model id for a custom provider (default custom-model)");
+      lines.push("  --header <k=v>      Extra request header sent to the custom endpoint; repeat for several");
       return lines.join("\n");
     } else if (command === "doctor") {
       lines.push("Usage: agentx doctor [options]");
@@ -133,7 +138,7 @@ function isInteractive(): boolean {
 }
 
 /** Flags the adapter consumes itself; never forwarded to the launched client. */
-const ADAPTER_FLAGS = new Set(["--model", "--effort", "--background-model", "--provider", "--port", "--host", "--api-key", "--retry", "--client-protocol", "--base-url", "--protocol", "--verbose", "--native"]);
+const ADAPTER_FLAGS = new Set(["--model", "--effort", "--background-model", "--provider", "--port", "--host", "--api-key", "--retry", "--max-concurrency", "--client-protocol", "--base-url", "--protocol", "--header", "--verbose", "--native"]);
 /** Boolean-ish adapter flags that never consume the following argument as a value. */
 const BOOLEAN_ADAPTER_FLAGS = new Set(["--verbose", "--native"]);
 
@@ -334,7 +339,7 @@ function renderProviderList(entries: ProviderEntry[]): string {
 export async function runConfigCommand(args: string[]): Promise<void> {
   const opts = options(args);
   if (opts["base-url"]) {
-    const definition = await persistCustomProvider(opts);
+    const definition = await persistCustomProvider(opts, parseHeaderFlags(args));
     console.log(`✓ ${definition.name} configured — ${definition.models[0].endpoint}`);
     console.log(credentialInstructions(definition));
     return;
@@ -347,7 +352,9 @@ export async function runUsageCommand(args: string[]): Promise<void> {
   const opts = options(args);
   if (!opts.provider && !process.env.AGENTX_PROVIDER) {
     const period = opts.period === "today" || opts.period === "week" || opts.period === "month" || opts.period === "all" ? opts.period : "all";
-    console.log(await runUsageStats(period));
+    const json = opts.json !== undefined && opts.json !== "false";
+    const sessionId = opts.session && opts.session !== "true" ? opts.session : undefined;
+    console.log(await runUsageStats({ period, json, sessionId }));
     return;
   }
   console.error("Deprecated: use `agentx quota --provider <id>` instead.");
@@ -441,11 +448,11 @@ function resolveLaunchTarget(command: string, args: string[], opts: Record<strin
  * additionally defines the runtime ad hoc) and `agentx config` (where it only
  * persists). `opts.provider` doubles as the display name.
  */
-async function persistCustomProvider(opts: Record<string, string | undefined>): Promise<ProviderDefinition> {
+async function persistCustomProvider(opts: Record<string, string | undefined>, headers: Record<string, string> = {}): Promise<ProviderDefinition> {
   const baseUrl = opts["base-url"] ?? "";
   const protocol: ProviderProtocol = opts.protocol === "responses" || opts.protocol === "anthropic" ? opts.protocol : "chat-completions";
-  const definition = registerCustomProvider({ name: opts.provider ?? "custom", baseUrl, protocol, model: opts.model });
-  await saveCustomProvider(definition.id, { name: definition.name, baseUrl, protocol, model: definition.models[0].model });
+  const definition = registerCustomProvider({ name: opts.provider ?? "custom", baseUrl, protocol, model: opts.model, headers });
+  await saveCustomProvider(definition.id, { name: definition.name, baseUrl, protocol, model: definition.models[0].model, ...(Object.keys(headers).length ? { headers } : {}) });
   return definition;
 }
 
@@ -471,7 +478,7 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
   // for exec/scripts/CI, but not restricted to exec: it works the same way
   // for claude/codex. --provider doubles as the display name here.
   if (opts["base-url"]) {
-    const definition = await persistCustomProvider(opts);
+    const definition = await persistCustomProvider(opts, parseHeaderFlags(args));
     opts.provider = definition.id;
   }
   // Native launch is only meaningful for claude/codex: they have their own
@@ -609,7 +616,7 @@ export async function runClientLaunch(command: string, args: string[], deps: Cli
 async function hydrateCustomProviders(): Promise<void> {
   const saved = await loadCustomProviders();
   for (const [, definition] of Object.entries(saved)) {
-    registerCustomProvider({ name: definition.name, baseUrl: definition.baseUrl, protocol: definition.protocol as ProviderProtocol, model: definition.model });
+    registerCustomProvider({ name: definition.name, baseUrl: definition.baseUrl, protocol: definition.protocol as ProviderProtocol, model: definition.model, headers: definition.headers });
   }
 }
 

@@ -17,8 +17,10 @@ export interface Config {
   effort?: ReasoningEffort;
   apiKey: string;
   logLevel: string;
-  /** Retry attempts on upstream network failure or 429/502/503/504; 0 disables retry. */
+  /** Retry attempts on upstream network failure or a retryable status; 0 disables retry. */
   retry: number;
+  /** Max upstream requests in flight at once; 0 or unset (the default) disables the local queue. */
+  maxConcurrency?: number;
 }
 
 /** Validate the `--effort`/`AGENTX_EFFORT` value against the union of both clients' scales. */
@@ -48,6 +50,28 @@ export function parseCliOptions(args: string[]): Record<string, string | undefin
   return out;
 }
 
+/**
+ * Collect every `--header` occurrence into one map. The flag is repeatable,
+ * which `parseCliOptions`' last-wins map cannot express, so this reads the raw
+ * argument list instead. Both `--header k=v` and `--header=k:v` are accepted,
+ * and the value keeps any later `=` / `:` characters (URLs are common values).
+ */
+export function parseHeaderFlags(args: string[]): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const add = (raw: string | undefined) => {
+    if (!raw) return;
+    const match = /^\s*([^=:]+?)\s*[=:]\s*(.*)$/.exec(raw);
+    if (!match) return;
+    headers[match[1]] = match[2];
+  };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--header") { const value = args[i + 1]; if (value !== undefined && !value.startsWith("--")) { add(value); i++; } continue; }
+    if (arg?.startsWith("--header=")) add(arg.slice("--header=".length));
+  }
+  return headers;
+}
+
 interface RememberedModel {
   provider?: string;
   model?: string;
@@ -73,6 +97,8 @@ export function loadConfig(
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid port");
   const retry = Number(options.retry ?? process.env.AGENTX_RETRY ?? 3);
   if (!Number.isInteger(retry) || retry < 0) throw new Error("Invalid retry count");
+  const maxConcurrency = Number(options["max-concurrency"] ?? options.maxConcurrency ?? process.env.AGENTX_MAX_CONCURRENCY ?? 0);
+  if (!Number.isInteger(maxConcurrency) || maxConcurrency < 0) throw new Error("Invalid max concurrency");
   const envModel = process.env.AGENTX_MODEL === "auto" ? undefined : process.env.AGENTX_MODEL;
   const rememberedModel = remembered.provider && provider && remembered.provider !== provider
     ? undefined
@@ -87,5 +113,6 @@ export function loadConfig(
     apiKey,
     logLevel: options.verbose ? "debug" : process.env.AGENTX_LOG_LEVEL ?? "info",
     retry,
+    maxConcurrency,
   };
 }
