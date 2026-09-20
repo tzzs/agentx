@@ -2,7 +2,8 @@
 import type { AnthropicMessage, AnthropicRequest, ResponsesItem } from "./shared.js";
 import type { JsonRecord, JsonValue } from "../json.js";
 import { asRecords, isRecord, parse, recNum, recObj, recObjs, recStr } from "../json.js";
-import { chatThinking, imageDataUri, reasoningEffort, responsesToolChoice } from "./shared.js";
+import { acceptsImageInput, chatThinking, imageDataUri, reasoningEffort, responsesToolChoice, toolResultContent, toolResultText } from "./shared.js";
+import type { ProviderModel } from "../providers/types.js";
 import { fromAnthropicResponseToChat, toAnthropicRequestFromChat } from "./anthropic.js";
 
 function convertContent(content: JsonValue[], assistant: boolean): JsonValue[] {
@@ -11,18 +12,39 @@ function convertContent(content: JsonValue[], assistant: boolean): JsonValue[] {
     const part = raw;
     if (part.type === "text") return [{ type: assistant ? "output_text" : "input_text", text: recStr(part, "text") ?? "" }];
     if (part.type === "image") { const url = imageDataUri(recObj(part, "source")); return url ? [{ type: "input_image", image_url: url }] : []; }
-    if (part.type === "tool_result") return [{ type: "function_call_output", call_id: part.tool_use_id, output: typeof part.content === "string" ? part.content : JSON.stringify(part.content) }];
-    if (part.type === "tool_use") return [{ type: "function_call", call_id: recStr(part, "id"), name: recStr(part, "name"), arguments: JSON.stringify(part.input ?? {}) }];
+    // tool_use / tool_result never reach here: toResponsesInput maps those
+    // blocks itself and only sends single non-tool parts through this map.
     return [part];
   });
 }
 
-export function toResponsesRequest(input: AnthropicRequest, model: string): JsonRecord {
+/**
+ * Build a Responses `function_call_output` from an Anthropic tool_result.
+ * Unlike a Chat Completions tool message, `output` accepts either a plain
+ * string or an array of typed parts, so an image a tool returned survives as
+ * a real `input_image` instead of being flattened into a JSON string that
+ * carried its base64 upstream as literal text.
+ */
+function toFunctionCallOutput(part: JsonRecord, allowImages: boolean): ResponsesItem {
+  const { text, images } = toolResultContent(part.content);
+  const media = allowImages ? images : [];
+  if (!media.length) return { type: "function_call_output", call_id: part.tool_use_id, output: toolResultText(text, images.length, false) };
+  return {
+    type: "function_call_output",
+    call_id: part.tool_use_id,
+    output: [
+      ...(text ? [{ type: "input_text", text }] : []),
+      ...media.map((image_url) => ({ type: "input_image", image_url })),
+    ],
+  };
+}
+
+export function toResponsesRequest(input: AnthropicRequest, model: string, provider?: ProviderModel): JsonRecord {
   const thinking = chatThinking(input);
   const effort = reasoningEffort(input);
   const toolChoice = responsesToolChoice(input.tool_choice);
   const body: JsonRecord = {
-    model, input: toResponsesInput(input.messages),
+    model, input: toResponsesInput(input.messages, acceptsImageInput(provider)),
     ...(input.max_tokens === undefined ? {} : { max_output_tokens: input.max_tokens }),
     ...(input.stream ? { stream: true } : {}),
     ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
@@ -42,7 +64,7 @@ export function toResponsesRequest(input: AnthropicRequest, model: string): Json
 /** Thinking blocks are local-only reasoning echoes from Claude Code; upstream providers never accept them. */
 function isThinkingPart(part: JsonRecord): boolean { return part.type === "thinking" || part.type === "redacted_thinking"; }
 
-function toResponsesInput(messages: AnthropicMessage[]): ResponsesItem[] {
+function toResponsesInput(messages: AnthropicMessage[], allowImages = true): ResponsesItem[] {
   const output: ResponsesItem[] = [];
   for (const message of messages) {
     const assistant = message.role === "assistant";
@@ -53,7 +75,7 @@ function toResponsesInput(messages: AnthropicMessage[]): ResponsesItem[] {
       const part = raw;
       if (isThinkingPart(part)) continue;
       if (part.type === "tool_use") { output.push({ type: "function_call", call_id: recStr(part, "id"), name: recStr(part, "name"), arguments: JSON.stringify(part.input ?? {}) }); continue; }
-      if (part.type === "tool_result") { output.push({ type: "function_call_output", call_id: part.tool_use_id, output: typeof part.content === "string" ? part.content : JSON.stringify(part.content ?? "") }); continue; }
+      if (part.type === "tool_result") { output.push(toFunctionCallOutput(part, allowImages)); continue; }
       const converted = convertContent([part], assistant)[0];
       if (isRecord(converted)) textParts.push(converted);
     }

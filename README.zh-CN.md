@@ -113,7 +113,9 @@ agentx exec --client-protocol openai -- my-openai-compatible-tool
 agentx proxy
 ```
 
-本地 API 地址为 `http://127.0.0.1:<port>`，提供 `GET /health`、`GET /v1/models`、`POST /v1/messages`、`POST /v1/responses`、`POST /v1/chat/completions`。启动 `proxy` 时会打印这三个面向客户端端点各自的完整 URL。
+本地 API 地址为 `http://127.0.0.1:<port>`，提供 `GET /health`、`GET /v1/models`、`GET /v1/models/{id}`、`POST /v1/messages`、`POST /v1/messages/count_tokens`、`POST /v1/responses`、`POST /v1/chat/completions`。启动 `proxy` 时会打印这三个面向客户端端点各自的完整 URL。
+
+除 `GET /health` 外的所有路由都需要适配器的本地 token；`/health` 保持开放，便于进程守护轮询。`POST /v1/messages/count_tokens` 回答 Claude Code 的上下文占用查询：原生 Anthropic 上游会被请求精确计数，其余两种协议没有对应端点，则按请求本身在本地估算。
 
 ### `doctor`
 
@@ -123,7 +125,7 @@ agentx proxy
 agentx doctor
 ```
 
-报告包含 Node.js、平台/WSL 状态、CPU 架构、API Key 是否存在、支持的模型，以及 Claude Code 是否可被发现。
+报告包含 Node.js、平台/WSL 状态、CPU 架构、API Key 是否存在、支持的模型、Claude Code 是否可被发现，以及一项上游探测——报告配置的端点是否可达，以及 Key 是否被*接受*（Key 被拒绝是启动失败最常见的原因）。
 
 ### `forget`
 
@@ -171,9 +173,11 @@ AgentX 自身不保存密钥。在交互式管理器里选中未配置的 Provid
 ```bash
 agentx usage                 # 全部时间
 agentx usage --period today  # today / week / month / all
+agentx usage --session <id>  # 单个客户端会话的合计
+agentx usage --json          # 机器可读输出，便于脚本与状态栏消费
 ```
 
-报告按 Provider 和模型分组显示 Token 数，包含输入/输出/总量。统计按适配器运行保存；`--period` 可按时间范围过滤。
+报告按 Provider 和模型分组显示 Token 数，包含输入/输出/总量。统计按适配器运行保存；`--period` 可按时间范围过滤，`--session <id>` 可只看单个客户端会话，`--json` 则以 JSON 输出同样的数字而非表格。
 
 `agentx usage --provider <id>` 是 `agentx quota --provider <id>`（见下文）的过渡期别名，仍然可用，但会打印一行弃用提示。
 
@@ -217,7 +221,8 @@ agentx version
 | `--provider <id>` | `AGENTX_PROVIDER` | 无 | 上游 Provider（`opencode`、`deepseek`、`openrouter`） |
 | `--background-model <id>` | `AGENTX_BACKGROUND_MODEL` | 无 | Claude Code 后台（haiku）通道使用的模型 |
 | `--effort <level>` | `AGENTX_EFFORT` | 无 | 推理档位：`codex` `none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`/`ultra`；`claude` `low`/`medium`/`high`/`xhigh`/`ultracode` |
-| `--retry <n>` | `AGENTX_RETRY` | `3` | 上游 429/502/503/504 的重试次数(0 表示禁用) |
+| `--retry <n>` | `AGENTX_RETRY` | `3` | 上游 408/429/502/503/504 的重试次数(0 表示禁用) |
+| `--max-concurrency <n>` | `AGENTX_MAX_CONCURRENCY` | `0` | 同时在途的上游请求上限，超出的请求在本地排队(0 表示不限) |
 | `--client-protocol <anthropic\|openai>` | | `anthropic` | 仅 `exec`:决定给被启动程序注入哪种形状的环境变量 |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | 预留的详细日志选项 |
 | | `AGENTX_USAGE_DIR` | `~/.config/agentx` | Token 用量统计存储目录 |
@@ -228,7 +233,7 @@ agentx version
 agentx proxy --host 0.0.0.0
 ```
 
-`agentx doctor` 支持 `--client <claude|codex|all>`（默认 `all`）只检查指定客户端，并支持 `--offline` 跳过依赖网络的检查；跳过的项会在报告中标出。
+`agentx doctor` 支持 `--client <claude|codex|all>`（默认 `all`）只检查指定客户端，并支持 `--offline` 跳过上游探测（唯一依赖网络的检查）；跳过的项会在报告中标出。
 
 ## 凭据与 Provider Profile
 
@@ -268,6 +273,15 @@ Claude Code 的推理档位同样支持：`agentx claude --effort low|medium|hig
 ### 自定义 Provider
 
 除了三个内置 Provider，你还可以注册任意 OpenAI 或 Anthropic 兼容的端点——本地模型服务（Ollama、vLLM、LM Studio）、内部网关，或其他任何兼容 API。在交互式启动器的「Change Provider」列表里选择 **Add custom provider…**，先在一屏内选择协议——每个选项标出 AgentX 会追加的路径（`/v1/messages`、`/responses` 或 `/chat/completions`），Chat Completions 行尾还带一个 `legacy` 备注（它是 OpenAI 早期的 API，但几乎所有第三方和本地端点仍只实现这一形态）。接着填 Base URL（提示里会再写明该路径，所以只填 base 即可）和显示名称，随后紧接 API key 提示；已经有自定义 Provider 时,同一个列表还会提供 **Remove custom provider…**。不想启动客户端时，可以用 `agentx config` 完成同样的配置（见上文 [`config`](#config)）。
+
+如果网关需要额外的请求头——归因头，或把 Key 放在自己命名的头里——用 `--header` 指定，可重复传入，并会随 Provider 一起持久化：
+
+```bash
+agentx config --provider MyGateway --base-url https://gw.example/v1 \
+  --header "HTTP-Referer=https://example.com" --header "X-Org-Id=acme"
+```
+
+Provider 自定义头会覆盖 AgentX 的默认头，因此需要非 `Authorization: Bearer` 形态的网关可以自行声明。这些头保存在 `runtime.json` 中，不得携带机密——API Key 应放在凭据环境变量里。
 
 自定义端点不提供模型列表，因此首次启动会直接询问它的模型 id——内部占位模型不会作为选项出现，也不会出现在 Codex 的模型选择器里——之后会像其他模型一样被记住。（非交互运行未传 `--model` 时仍会回退到占位模型，所以脚本里请显式传 `--model`。）
 
@@ -412,7 +426,7 @@ Claude Code 遇到不认识的模型时，会假定它使用默认的约 200k to
 - `max_tokens` 转换为上游输出 Token 限制
 - Anthropic 文本消息与响应文本
 - Anthropic 流式事件与上游 SSE 事件转换
-- Anthropic `tools`、`tool_use`、`tool_result` 与 function tool、function call output 转换
+- Anthropic `tools`、`tool_use`、`tool_result` 与 function tool、function call output 转换；`tool_result` 的 content 为 block 数组时，其中的文本与图片会被分开处理，而不是整体序列化成 JSON（见 [工具结果中的多模态内容](#工具结果中的多模态内容)）
 - Anthropic `thinking` / `output_config.effort` 转换为上游的思考控制参数（Chat Completions 上是 DeepSeek 的 `thinking`/`reasoning_effort`，Responses API 上是 `reasoning.effort`）
 - Anthropic `tool_choice` 转换为上游 Chat Completions 或 Responses 对应的 tool-choice 结构
 - Responses 和 Chat Completions usage 字段转换为 Anthropic usage 字段
@@ -420,6 +434,18 @@ Claude Code 遇到不认识的模型时，会假定它使用默认的约 200k to
 - 本地 `/v1/chat/completions` 端点的请求/响应与原生 Anthropic Messages 或 Responses API 上游之间的双向转换,包括流式响应;这条转换只覆盖主流字段(`messages`/`tools`/`tool_choice`/`max_tokens`/`temperature`/`top_p`/`stop`/`stream`),不映射 DeepSeek 专属的 `thinking`/`reasoning_effort` 扩展字段——一个通用的 Chat Completions 客户端没有理由发送这些字段
 
 DeepSeek 的思考模式要求每个 assistant 回合的 `reasoning_content` 必须回传，并且要挂在它所引出的那个 tool call 所在的同一条消息上；适配器会把一条 assistant 消息的文本、reasoning 与 tool call 保持在同一条消息里，而不是拆分成多条，并且只对 DeepSeek 转发 `reasoning_content`（其它 Chat Completions 上游并不期望这个字段）。当上游以异常方式结束——`content_filter`、`insufficient_system_resource`，或者流结束时既没有 `finish_reason` 也没有 `[DONE]`——都会转换为错误返回，而不是被悄悄当成正常的 `end_turn`。
+
+### 工具结果中的多模态内容
+
+工具可以返回图片——Claude Code 的 `Read` 读取图片文件时就会——形式是 `tool_result.content` 里的 `image` block。三种上游协议对此的接受方式不同，适配器会把图片放到各协议真正接受的位置：
+
+| 上游协议 | 图片的去向 |
+| --- | --- |
+| `anthropic` | 原样透传，请求本来就是 Anthropic 形态 |
+| `responses` | 内联为 `function_call_output` 数组 `output` 中的 `input_image` 部分 |
+| `chat-completions` | 抽出：tool 消息保留文本，图片以紧随其后的一条 user 消息发送——因为 `role:"tool"` 消息只接受字符串 |
+
+当模型的目录元数据明确表示它不接受图片输入时，图片会被丢弃，并在 tool 消息中说明，而不是发送一个上游必定拒绝的请求。只包含图片的工具结果仍会得到非空文本，这是若干上游的硬性要求。
 
 适配器只负责工具协议转换，不会执行工具，也不会持久化 prompt、工具参数或对话状态。
 

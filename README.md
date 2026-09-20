@@ -113,7 +113,9 @@ Start only the local adapter. Press `Ctrl+C` to stop it:
 agentx proxy
 ```
 
-The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`, `GET /v1/models`, `POST /v1/messages`, `POST /v1/responses`, and `POST /v1/chat/completions`. On startup, `proxy` prints the full URL of all three client-facing endpoints.
+The local API is exposed at `http://127.0.0.1:<port>` and provides `GET /health`, `GET /v1/models`, `GET /v1/models/{id}`, `POST /v1/messages`, `POST /v1/messages/count_tokens`, `POST /v1/responses`, and `POST /v1/chat/completions`. On startup, `proxy` prints the full URL of all three client-facing endpoints.
+
+Every route except `GET /health` requires the adapter's local token; `/health` stays open so a supervisor can poll it. `POST /v1/messages/count_tokens` answers Claude Code's context-usage query: a native Anthropic upstream is asked for the exact count, and the other protocols — which have no equivalent endpoint — get a local estimate computed from the request itself.
 
 ### `doctor`
 
@@ -123,7 +125,7 @@ Inspect the local environment and configuration:
 agentx doctor
 ```
 
-The report includes Node.js, platform/WSL status, architecture, API key presence, supported models, and Claude Code discovery.
+The report includes Node.js, platform/WSL status, architecture, API key presence, supported models, Claude Code discovery, and an upstream probe that reports whether the configured endpoint is reachable and whether it *accepts* the key — a rejected key being the most common reason a launch fails.
 
 ### `forget`
 
@@ -178,11 +180,14 @@ Print token usage statistics collected from every request the adapter serves:
 ```bash
 agentx usage                 # all time
 agentx usage --period today  # today / week / month / all
+agentx usage --session <id>  # totals for one client session
+agentx usage --json          # machine-readable output for scripts and status lines
 ```
 
 The report groups tokens by provider and model and shows input/output/total
 counts. Statistics are stored per adapter run; the optional `--period` flag
-filters by time range.
+filters by time range, `--session <id>` narrows the report to a single client
+session, and `--json` emits the same numbers as JSON instead of a table.
 
 `agentx usage --provider <id>` is a deprecated alias for `agentx quota
 --provider <id>` (below); it still works but prints a deprecation notice.
@@ -227,7 +232,8 @@ For `claude`/`codex`, `--native` (or **Launch native (skip AgentX)** in the laun
 | `--provider <id>` | `AGENTX_PROVIDER` | none | Upstream provider (`opencode`, `deepseek`, `openrouter`) |
 | `--background-model <id>` | `AGENTX_BACKGROUND_MODEL` | none | Model for Claude Code's background (haiku) lane |
 | `--effort <level>` | `AGENTX_EFFORT` | none | Reasoning effort: `codex` `none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`/`ultra`; `claude` `low`/`medium`/`high`/`xhigh`/`ultracode` |
-| `--retry <n>` | `AGENTX_RETRY` | `3` | Retry attempts on upstream 429/502/503/504 (0 disables) |
+| `--retry <n>` | `AGENTX_RETRY` | `3` | Retry attempts on upstream 408/429/502/503/504 (0 disables) |
+| `--max-concurrency <n>` | `AGENTX_MAX_CONCURRENCY` | `0` | Max upstream requests in flight; extra requests queue locally (0 = unlimited) |
 | `--client-protocol <anthropic\|openai>` | | `anthropic` | `exec` only: env vars to inject for the launched program |
 | `--verbose` | `AGENTX_LOG_LEVEL` | `info` | Reserved for verbose logging |
 | | `AGENTX_USAGE_DIR` | `~/.config/agentx` | Directory for token usage statistics |
@@ -238,7 +244,7 @@ If the preferred port is already in use, the adapter tries subsequent ports. A n
 agentx proxy --host 0.0.0.0
 ```
 
-`agentx doctor` accepts `--client <claude|codex|all>` (default `all`) to limit checks to one client, and `--offline` to skip network-dependent checks. Skipped checks are noted in the report.
+`agentx doctor` accepts `--client <claude|codex|all>` (default `all`) to limit checks to one client, and `--offline` to skip the upstream probe (the only network-dependent check). Skipped checks are noted in the report.
 
 ## Credentials and Profiles
 
@@ -278,6 +284,15 @@ Claude Code's reasoning effort is supported the same way: `agentx claude --effor
 ### Custom providers
 
 Beyond the three built-in providers, you can register an arbitrary OpenAI- or Anthropic-compatible endpoint — a local model server (Ollama, vLLM, LM Studio), an internal gateway, or any other compatible API. In the interactive launcher's "Change Provider" list, choose **Add custom provider…**, then pick the protocol on a single screen — each option shows the path AgentX appends (`/v1/messages`, `/responses`, or `/chat/completions`), and Chat Completions carries a `legacy` note (it is OpenAI's earlier API, still the shape almost every third-party and local endpoint implements). The Base URL prompt repeats the chosen path, so enter the base URL only — then a display name, and the API key prompt follows. The same picker also offers **Remove custom provider…** once one exists. To do any of this without launching a client, run `agentx config` (see [`config`](#config)).
+
+A gateway that needs extra request headers — attribution headers, or its key under a name of its own — takes them from `--header`, which is repeatable and persists with the provider:
+
+```bash
+agentx config --provider MyGateway --base-url https://gw.example/v1 \
+  --header "HTTP-Referer=https://example.com" --header "X-Org-Id=acme"
+```
+
+Provider headers are merged over AgentX's defaults, so a gateway that wants something other than `Authorization: Bearer` can say so. They are stored in `runtime.json` and must not carry secrets — API keys belong in the credential environment variables.
 
 A custom endpoint exposes no model list, so the first launch asks for its model id directly — the internal placeholder model is never offered as a choice nor exposed to Codex's model picker — and remembers it like any other model afterwards. (Non-interactive runs without `--model` still fall back to the placeholder, so pass `--model` in scripts.)
 
@@ -422,7 +437,7 @@ Supported translation areas include:
 - `max_tokens` to the upstream output-token limit
 - Anthropic text messages and response text
 - Anthropic streaming events to Anthropic SSE events
-- Anthropic `tools`, `tool_use`, and `tool_result` to function tools and function call outputs
+- Anthropic `tools`, `tool_use`, and `tool_result` to function tools and function call outputs, including a `tool_result` whose content is a block array: its text and its images are separated rather than serialized together as JSON (see [Media in tool results](#media-in-tool-results))
 - Anthropic `thinking` / `output_config.effort` to the upstream's reasoning controls (DeepSeek's `thinking`/`reasoning_effort` over Chat Completions, or `reasoning.effort` over the Responses API)
 - Anthropic `tool_choice` to the upstream's Chat Completions or Responses tool-choice shape
 - Responses and Chat Completions usage data to Anthropic usage fields
@@ -430,6 +445,18 @@ Supported translation areas include:
 - Chat Completions requests/responses (the local `/v1/chat/completions` endpoint) to and from a native Anthropic Messages or Responses API upstream, including streaming; this conversion covers mainstream fields only (`messages`/`tools`/`tool_choice`/`max_tokens`/`temperature`/`top_p`/`stop`/`stream`) and does not map DeepSeek's `thinking`/`reasoning_effort` extensions, which a generic Chat Completions client has no reason to send
 
 For DeepSeek specifically, its thinking mode requires every assistant turn's `reasoning_content` to be echoed back anchored to the same message as the tool call it led to; the adapter keeps an assistant message's text, reasoning, and tool calls together instead of splitting them across separate messages, and only forwards `reasoning_content` for DeepSeek (other Chat Completions upstreams do not expect that field). An abnormal upstream stop — `content_filter`, `insufficient_system_resource`, or a stream that ends without either a `finish_reason` or `[DONE]` — surfaces as an error instead of silently reading back as a normal `end_turn`.
+
+### Media in tool results
+
+A tool can return an image — Claude Code's `Read` does, for an image file — as an `image` block inside `tool_result.content`. Each upstream protocol takes that differently, so the adapter places it where the protocol actually accepts one:
+
+| Upstream protocol | Where the image goes |
+| --- | --- |
+| `anthropic` | Unchanged — the request is already Anthropic-shaped and passes through |
+| `responses` | Inline, as `input_image` parts of the `function_call_output`'s array `output` |
+| `chat-completions` | Lifted out: the tool message keeps the text, and the images follow in their own user message, because a `role:"tool"` message accepts only a string |
+
+When a model's catalog metadata states that it does not accept image input, the images are dropped and the tool message says so, rather than sending something the upstream would reject. A tool result that contained nothing but images still gets non-empty text, which several upstreams require.
 
 The adapter translates tool protocols only. It does not execute tools and does not persist prompts, tool arguments, or conversation state.
 

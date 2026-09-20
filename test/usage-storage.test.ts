@@ -147,14 +147,14 @@ test("runUsageStats renders the rows the adapter server recorded", async () => {
     await store.record(normalizeUsage(sample({ provider: "anthropic", model: "claude-sonnet-4", inputTokens: 100, outputTokens: 20, totalTokens: 120 })));
     await store.close();
 
-    const all = await runUsageStats("all");
+    const all = await runUsageStats({ period: "all" });
     assert.match(all, /Token Usage \(All time\)/);
     assert.match(all, /anthropic/);
     assert.match(all, /claude-sonnet-4/);
     // 400+100+100+20 recorded tokens, and only the first row carried a cache read.
     assert.match(all, /620/);
     assert.match(all, /120/);
-    assert.match(await runUsageStats("today"), /Token Usage/);
+    assert.match(await runUsageStats({ period: "today" }), /Token Usage/);
   } finally {
     if (originalDir === undefined) delete process.env.AGENTX_USAGE_DIR; else process.env.AGENTX_USAGE_DIR = originalDir;
     if (originalBackend === undefined) delete process.env.AGENTX_USAGE_BACKEND; else process.env.AGENTX_USAGE_BACKEND = originalBackend;
@@ -169,5 +169,25 @@ test("cache write tokens survive normalization, storage, and stats", async () =>
   const models = await store.modelStats("all");
   assert.equal(models[0]?.cachedTokens, 600);
   assert.equal(models[0]?.cacheWriteTokens, 200);
+  await store.close();
+});
+
+test("usage reports session totals and machine-readable JSON", async () => {
+  const store = await createUsageStore({ backend: "memory" });
+  const collector = new TokenUsageCollector(store);
+  await collector.record(sample({ provider: "opencode", model: "glm-5", sessionId: "s-json" }));
+  await collector.record(sample({ provider: "opencode", model: "glm-5", sessionId: "other" }));
+
+  const session = await runUsageStats({ sessionId: "s-json" }, store);
+  assert.match(session, /Token Usage \(session s-json\)/);
+  assert.match(session, /Total:\s+150/);
+
+  const asJson = JSON.parse(await runUsageStats({ json: true }, store));
+  assert.equal(asJson.period, "all");
+  assert.equal(asJson.totals.totalTokens, 300);
+  assert.equal(asJson.models[0].model, "glm-5");
+
+  const sessionJson = JSON.parse(await runUsageStats({ sessionId: "s-json", json: true }, store));
+  assert.deepEqual(sessionJson, { sessionId: "s-json", totals: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } });
   await store.close();
 });

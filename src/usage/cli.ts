@@ -1,5 +1,5 @@
 import { defaultUsageStore } from "./storage.js";
-import type { ModelUsageStat, UsagePeriod, UsageTotals } from "./types.js";
+import type { ModelUsageStat, UsagePeriod, UsageStore, UsageTotals } from "./types.js";
 
 function formatPeriod(period: UsagePeriod): string {
   return { today: "Today", week: "This week", month: "This month", all: "All time" }[period];
@@ -32,10 +32,39 @@ export function renderUsageStats(stats: { models: ModelUsageStat[]; totals: Usag
   return lines.join("\n");
 }
 
-export async function runUsageStats(period: UsagePeriod = "all"): Promise<string> {
-  const store = await defaultUsageStore();
+/** Human-readable totals for one client session. */
+export function renderSessionTotals(sessionId: string, totals: UsageTotals): string {
+  return [
+    `Token Usage (session ${sessionId})`,
+    "",
+    `Input:  ${compact(totals.inputTokens)}`,
+    `Output: ${compact(totals.outputTokens)}`,
+    `Total:  ${compact(totals.totalTokens)}`,
+  ].join("\n");
+}
+
+export interface UsageQuery {
+  period?: UsagePeriod;
+  /** Emit machine-readable JSON instead of the table, for scripts and status lines. */
+  json?: boolean;
+  /** Restrict the report to one client session id. */
+  sessionId?: string;
+}
+
+/** `injected` is a seam so tests never read or write the real usage file. */
+export async function runUsageStats(query: UsageQuery = {}, injected?: UsageStore): Promise<string> {
+  const period = query.period ?? "all";
+  const store = injected ?? await defaultUsageStore();
   try {
+    if (query.sessionId) {
+      const totals = await store.sessionTotals(query.sessionId);
+      return query.json
+        ? JSON.stringify({ sessionId: query.sessionId, totals }, null, 2)
+        : renderSessionTotals(query.sessionId, totals);
+    }
     const [models, totals] = await Promise.all([store.modelStats(period), store.totals(period)]);
-    return renderUsageStats({ models, totals, period });
+    return query.json
+      ? JSON.stringify({ period, totals, models }, null, 2)
+      : renderUsageStats({ models, totals, period });
   } finally { await store.close(); }
 }

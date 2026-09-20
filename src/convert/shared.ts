@@ -185,3 +185,81 @@ export function chatControlParams(input: JsonRecord, deepSeek: boolean): JsonRec
     ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
   };
 }
+
+/**
+ * Leading text of the synthetic user message that carries media lifted out of
+ * a tool result. Chat Completions' `role:"tool"` message accepts only a
+ * string, so an image returned by a tool has no legal place there and must
+ * travel as its own user turn.
+ */
+export const TOOL_RESULT_MEDIA_PROMPT = "Attached media from tool result:";
+
+export interface ToolResultContent {
+  /** Plain text of the result; always a string, safe for tool messages that must be string-only. */
+  text: string;
+  /** Image data URIs (or remote URLs) lifted out of the result's content blocks. */
+  images: string[];
+}
+
+/**
+ * Split an Anthropic `tool_result` content value into plain text and images.
+ *
+ * The block array used to be forwarded as `JSON.stringify(content)`, which
+ * turned a tool-returned screenshot into its own base64 payload rendered as
+ * literal text: the model could not see the image, and a 1MB PNG entered the
+ * context as ~1.37M characters. Splitting the two lets each caller place the
+ * image wherever its upstream protocol actually accepts one.
+ */
+export function toolResultContent(content: unknown): ToolResultContent {
+  if (typeof content === "string") return { text: content, images: [] };
+  if (content === undefined || content === null) return { text: "", images: [] };
+  if (!Array.isArray(content)) return { text: JSON.stringify(content), images: [] };
+  const text: string[] = [];
+  const images: string[] = [];
+  for (const part of content as JsonValue[]) {
+    if (isRecord(part) && part.type === "text") {
+      const value = recStr(part, "text");
+      if (value !== undefined) text.push(value);
+      continue;
+    }
+    if (isRecord(part) && part.type === "image") {
+      const url = imageDataUri(recObj(part, "source"));
+      if (url) images.push(url);
+      continue;
+    }
+    // Anthropic documents only text and image blocks here; anything else is
+    // kept as text rather than dropped, so an unknown block still reaches the model.
+    if (part !== undefined && part !== null) text.push(typeof part === "string" ? part : JSON.stringify(part));
+  }
+  return { text: text.join("\n"), images };
+}
+
+/**
+ * Text for a tool message, given how many images its result carried and
+ * whether they are being forwarded.
+ *
+ * Two things need saying. A media-only result must not end up with empty
+ * text, which several chat upstreams reject. And an image that is *not*
+ * forwarded has to be announced whatever else the result said — otherwise a
+ * text-only model is silently missing content it was never told about.
+ */
+export function toolResultText(text: string, imageCount: number, forwarded: boolean): string {
+  if (!imageCount) return text;
+  const plural = imageCount === 1 ? "" : "s";
+  // A forwarded image speaks for itself wherever it ended up, so it only needs
+  // a stand-in when it would otherwise leave the tool message empty.
+  if (forwarded) return text || `[${imageCount} image${plural} returned by the tool]`;
+  const note = `[${imageCount} image${plural} returned by the tool; omitted because this model does not accept image input]`;
+  return text ? `${text}\n${note}` : note;
+}
+
+/**
+ * Whether images may be forwarded to this model. Metadata is only populated
+ * once models.dev/OpenRouter have been fetched (the Codex catalog path), so
+ * an unset `modalities` means "unknown", not "text only" — and an unknown
+ * model is treated as capable, matching how images in ordinary user messages
+ * have always been forwarded without a capability check.
+ */
+export function acceptsImageInput(provider?: { modalities?: string[] }): boolean {
+  return provider?.modalities === undefined || provider.modalities.includes("image");
+}

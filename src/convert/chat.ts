@@ -6,17 +6,19 @@
 import type { AnthropicMessage, AnthropicRequest } from "./shared.js";
 import type { JsonRecord, JsonValue } from "../json.js";
 import { isRecord, parse, recNum, recObj, recObjs, recStr } from "../json.js";
-import { chatControlParams, collapseAnthropicContent, imageDataUri, samplingParams } from "./shared.js";
+import { acceptsImageInput, chatControlParams, collapseAnthropicContent, imageDataUri, samplingParams, toolResultContent, toolResultText, TOOL_RESULT_MEDIA_PROMPT } from "./shared.js";
+import type { ProviderModel } from "../providers/types.js";
 import { isDeepSeekLongContextModel } from "../providers/registry.js";
 
 /** One Chat Completions message as sent upstream (or received back). */
 type ChatMessage = JsonRecord;
 
-export function toChatRequest(input: AnthropicRequest, model: string, provider?: string) {
+export function toChatRequest(input: AnthropicRequest, model: string, provider?: ProviderModel) {
   const messages: ChatMessage[] = [];
   if (input.system) messages.push({ role: "system", content: typeof input.system === "string" ? input.system : input.system.map((part) => part.text ?? "").join("\n") });
-  const deepSeek = provider === "deepseek" || isDeepSeekLongContextModel(model);
-  for (const message of input.messages) messages.push(...toChatMessages(message, deepSeek));
+  const deepSeek = provider?.provider === "deepseek" || isDeepSeekLongContextModel(model);
+  const allowImages = acceptsImageInput(provider);
+  for (const message of input.messages) messages.push(...toChatMessages(message, deepSeek, allowImages));
   return { model, messages, ...(input.max_tokens === undefined ? {} : { max_tokens: input.max_tokens }), ...(input.stream ? { stream: true } : {}), ...samplingParams(input), ...chatControlParams(input, deepSeek), ...(input.tools ? { tools: input.tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })) } : {}) };
 }
 
@@ -25,11 +27,13 @@ function toChatImagePart(part: JsonRecord | undefined): ChatMessage | undefined 
   return url ? { type: "image_url", image_url: { url } } : undefined;
 }
 
-function toChatMessages(message: AnthropicMessage, preserveReasoning = false): ChatMessage[] {
+function toChatMessages(message: AnthropicMessage, preserveReasoning = false, allowImages = true): ChatMessage[] {
   if (!Array.isArray(message.content)) return [{ role: message.role, content: message.content ?? "" }];
   const parts: ChatMessage[] = [];
   const toolCalls: ChatMessage[] = [];
   const toolResults: ChatMessage[] = [];
+  /** Images lifted out of tool results; they follow as their own user message. */
+  const toolMedia: string[] = [];
   let reasoning = "";
   const pushText = (text: string) => {
     if (!text) return;
@@ -43,7 +47,9 @@ function toChatMessages(message: AnthropicMessage, preserveReasoning = false): C
     if (part.type === "tool_use") {
       toolCalls.push({ id: recStr(part, "id"), type: "function", function: { name: recStr(part, "name"), arguments: JSON.stringify(part.input ?? {}) } });
     } else if (part.type === "tool_result") {
-      toolResults.push({ role: "tool", tool_call_id: part.tool_use_id, content: typeof part.content === "string" ? part.content : JSON.stringify(part.content ?? "") });
+      const { text, images } = toolResultContent(part.content);
+      if (allowImages) toolMedia.push(...images);
+      toolResults.push({ role: "tool", tool_call_id: part.tool_use_id, content: toolResultText(text, images.length, allowImages) });
     } else if (part.type === "text") {
       pushText(recStr(part, "text") ?? "");
     } else if (part.type === "thinking" && preserveReasoning && message.role === "assistant") {
@@ -66,6 +72,11 @@ function toChatMessages(message: AnthropicMessage, preserveReasoning = false): C
     output.push({ role: message.role, content: collapseAnthropicContent(parts) });
   }
   output.push(...toolResults);
+  // Chat Completions has no place for an image inside a tool message, so the
+  // media travels as its own user turn right after the results it came from.
+  if (toolMedia.length) {
+    output.push({ role: "user", content: [{ type: "text", text: TOOL_RESULT_MEDIA_PROMPT }, ...toolMedia.map((url) => ({ type: "image_url", image_url: { url } }))] });
+  }
   return output;
 }
 /** Plain text of a chat message content, ignoring non-text parts (images etc.). */
@@ -80,17 +91,30 @@ function chatUsageDetails(response: JsonRecord, usageKey: string, detailKey: str
   return recNum(recObj(recObj(response, usageKey), detailKey), field);
 }
 
+/**
+ * Map a Chat Completions `finish_reason` to an Anthropic `stop_reason`.
+ * Unrecognized reasons used to fall through to "max_tokens", telling the
+ * client a complete reply had been truncated; "end_turn" is the honest
+ * default. `chatResponseFailure` still turns the genuinely abnormal reasons
+ * into an upstream error before this is reached on the proxy path.
+ */
+function anthropicStopReason(finishReason: JsonValue, hasToolCalls: boolean): string {
+  if (hasToolCalls) return "tool_use";
+  if (finishReason === "length") return "max_tokens";
+  if (finishReason === "content_filter") return "refusal";
+  return "end_turn";
+}
+
 export function fromChatResponse(response: JsonRecord, model: string): JsonRecord {
   const choice = recObjs(response, "choices")[0] ?? {}; const message = recObj(choice, "message") ?? {}; const content: JsonRecord[] = [];
   const reasoningContent = recStr(message, "reasoning_content");
   if (reasoningContent) content.push({ type: "thinking", thinking: reasoningContent });
   const text = chatText(message.content);
   if (text) content.push({ type: "text", text });
-  for (const call of recObjs(message, "tool_calls")) content.push({ type: "tool_use", id: recStr(call, "id"), name: recStr(recObj(call, "function"), "name"), input: parse(recStr(recObj(call, "function"), "arguments")) });
-  const finishReason = choice.finish_reason;
+  const toolCalls = recObjs(message, "tool_calls");
+  for (const call of toolCalls) content.push({ type: "tool_use", id: recStr(call, "id"), name: recStr(recObj(call, "function"), "name"), input: parse(recStr(recObj(call, "function"), "arguments")) });
   const usage = recObj(response, "usage");
-  const toolCallCount = recObjs(message, "tool_calls").length;
-  return { id: recStr(response, "id") ?? `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model, content, stop_reason: toolCallCount ? "tool_use" : finishReason === "length" ? "max_tokens" : finishReason === "stop" || finishReason === undefined ? "end_turn" : "max_tokens", stop_sequence: null, usage: { input_tokens: recNum(usage, "prompt_tokens") ?? 0, output_tokens: recNum(usage, "completion_tokens") ?? 0, cache_creation_input_tokens: 0, cache_read_input_tokens: chatUsageDetails(response, "usage", "prompt_tokens_details", "cached_tokens") ?? 0 } };
+  return { id: recStr(response, "id") ?? `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model, content, stop_reason: anthropicStopReason(choice.finish_reason, toolCalls.length > 0), stop_sequence: null, usage: { input_tokens: recNum(usage, "prompt_tokens") ?? 0, output_tokens: recNum(usage, "completion_tokens") ?? 0, cache_creation_input_tokens: 0, cache_read_input_tokens: chatUsageDetails(response, "usage", "prompt_tokens_details", "cached_tokens") ?? 0 } };
 }
 
 /** Return a failure for a provider completion that is not a normal stop. */
