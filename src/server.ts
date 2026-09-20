@@ -3,7 +3,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
 import { chatResponseFailure, fromAnthropicResponse, fromAnthropicResponseToChat, fromChatResponse, fromChatResponseToResponses, fromResponsesResponse, fromResponsesResponseToChat, responsesResponseFailure, toAnthropicRequest, toAnthropicRequestFromChat, toChatCompletionsRequest, toChatRequest, toResponsesRequest, toResponsesRequestFromChat } from "./convert/index.js";
 import { pipeAnthropicPassthrough, pipeAnthropicStreamToChat, pipeAnthropicStreamToResponses, pipeChatPassthrough, pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream, pipeResponsesStreamToChat, type StreamUsageOptions } from "./streaming/index.js";
-import type { ProviderModel } from "./providers/types.js";
+import type { ProviderModel, ProviderProtocol } from "./providers/types.js";
 import type { TokenUsage } from "./usage/types.js";
 import { honorRequestedModel, providerFor, providers } from "./catalog.js";
 import { apiKeyFor, isPlaceholderModel, providerDisplayName } from "./providers/registry.js";
@@ -175,32 +175,34 @@ function watchedBody(stream: ReadableStream<Uint8Array> | null, progress: () => 
 }
 
 /**
- * Shared proxy pipeline for both client-facing endpoints: authenticate, parse
- * the body, resolve provider/model/key, convert the payload to the upstream
- * protocol, forward it with the idle watchdog, and map failures to errors.
- * Returns `undefined` after answering the request directly (auth failure,
- * non-OK upstream status); otherwise yields the parsed request and the
- * watched upstream response.
+ * Shared proxy pipeline for one request: authenticate, parse the body,
+ * resolve provider/model/key, convert the payload to the upstream protocol,
+ * forward it with the idle watchdog, and map failures to errors. Returns
+ * `undefined` after answering the request directly (auth failure, non-OK
+ * upstream status); otherwise yields the parsed request and the watched
+ * upstream response.
  */
 async function proxyRequest(
   config: Config,
   request: IncomingMessage,
   response: ServerResponse,
   token: string,
-  route: { fallbackModel: string; payload: (input: any, model: string, provider: ProviderModel) => unknown },
+  fallbackModel: string,
+  payload: (input: any, model: string, provider: ProviderModel) => unknown,
   maxBodyBytes = MAX_BODY_BYTES,
 ): Promise<{ input: any; model: string; provider: ProviderModel; watched: Response } | undefined> {
   if (!authorized(request, token)) { json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } }); return undefined; }
   try {
     const input = JSON.parse(await body(request, maxBodyBytes));
-    // The endpoint decides which model id counts as "configured" (/v1/responses
-    // honors the client-echoed input.model; /v1/messages only config/env).
-    const model = honorRequestedModel(input.model, route.fallbackModel, config.provider);
+    // The endpoint decides which model id counts as "configured"; clients
+    // that echo a preferred model (e.g. Codex sending OPENAI_MODEL=auto back)
+    // are honored per honorRequestedModel's rules.
+    const model = honorRequestedModel(input.model, fallbackModel, config.provider);
     debug(config, `POST ${request.url} model=${model}`);
     const provider = providerFor(model, config.provider); const apiKey = apiKeyFor(provider, config.apiKey);
-    const payload = route.payload(input, model, provider);
+    const payloadBody = payload(input, model, provider);
     const session = upstreamSession(response, config);
-    const upstream = await forwardWithRetry(config, provider, apiKey, payload, session.signal, config.retry);
+    const upstream = await forwardWithRetry(config, provider, apiKey, payloadBody, session.signal, config.retry);
     session.progress();
     debug(config, `provider status=${upstream.status}`);
     if (!upstream.ok) { await upstreamError(response, providerDisplayName(provider.provider), upstream, upstream.status); return undefined; }
@@ -212,6 +214,74 @@ async function proxyRequest(
     return undefined;
   }
 }
+
+/**
+ * Per client-facing endpoint: how to build the upstream payload for each
+ * provider protocol, which pipe serves each streaming combination, and how
+ * to translate a non-streaming upstream JSON back to this endpoint's format.
+ * Invariant: the pipe/translator selected always matches the protocol whose
+ * payload builder ran (e.g. a 200 with no body on an Anthropic upstream goes
+ * to the Anthropic pipe, never the Responses one).
+ */
+interface EndpointSpec {
+  payloads: Record<ProviderProtocol, (input: any, model: string, provider: ProviderModel) => unknown>;
+  pipes: Record<ProviderProtocol, (upstream: Response, response: ServerResponse, model: string, options: StreamUsageOptions) => Promise<void>>;
+  /** Non-stream JSON translation; an upstream-reported failure maps to a 502 instead. */
+  finish(upstream: unknown, provider: ProviderModel, model: string): unknown;
+  /** In-band failure message carried by a non-OK-shaped 200 payload, if any. */
+  failure?(upstream: unknown, provider: ProviderModel): string | undefined;
+}
+
+const ENDPOINT_SPECS: Record<"responses" | "chat" | "messages", EndpointSpec> = {
+  responses: {
+    payloads: {
+      "responses": (input, model) => ({ ...input, model }),
+      "chat-completions": (input, model, provider) => toChatCompletionsRequest(input, model, provider.provider),
+      "anthropic": (input, model) => toAnthropicRequest(input, model),
+    },
+    pipes: {
+      "chat-completions": pipeChatStreamToResponses,
+      "responses": pipeResponsesPassthrough,
+      "anthropic": pipeAnthropicStreamToResponses,
+    },
+    finish: (upstream, provider, model) => provider.protocol === "anthropic"
+      ? fromAnthropicResponse(upstream, model)
+      : provider.protocol === "chat-completions" ? fromChatResponseToResponses(upstream, model) : upstream,
+    failure: (upstream, provider) => provider.protocol === "chat-completions" ? chatResponseFailure(upstream) : provider.protocol === "responses" ? responsesResponseFailure(upstream) : undefined,
+  },
+  chat: {
+    payloads: {
+      "responses": (input, model) => toResponsesRequestFromChat(input, model),
+      "chat-completions": (input, model) => ({ ...input, model }),
+      "anthropic": (input, model) => toAnthropicRequestFromChat(input, model),
+    },
+    pipes: {
+      "chat-completions": pipeChatPassthrough,
+      "responses": pipeResponsesStreamToChat,
+      "anthropic": pipeAnthropicStreamToChat,
+    },
+    finish: (upstream, provider, model) => provider.protocol === "anthropic"
+      ? fromAnthropicResponseToChat(upstream, model)
+      : provider.protocol === "responses" ? fromResponsesResponseToChat(upstream, model) : upstream,
+    failure: (upstream, provider) => provider.protocol === "responses" ? responsesResponseFailure(upstream) : provider.protocol === "chat-completions" ? chatResponseFailure(upstream) : undefined,
+  },
+  messages: {
+    payloads: {
+      "responses": (input, model) => toResponsesRequest(input, model),
+      "chat-completions": (input, model, provider) => toChatRequest(input, model, provider.provider),
+      // already Anthropic-shaped; zero conversion
+      "anthropic": (input, model) => ({ ...input, model }),
+    },
+    pipes: {
+      "chat-completions": pipeResponsesStream,
+      "responses": pipeResponsesStream,
+      "anthropic": pipeAnthropicPassthrough,
+    },
+    // Anthropic upstreams are already Anthropic-shaped; others convert back.
+    finish: (upstream, provider) => provider.protocol === "anthropic" ? upstream : provider.protocol === "responses" ? fromResponsesResponse(upstream, provider.model) : fromChatResponse(upstream, provider.model),
+    failure: (upstream, provider) => provider.protocol === "chat-completions" ? chatResponseFailure(upstream) : provider.protocol === "responses" ? responsesResponseFailure(upstream) : undefined,
+  },
+};
 
 export async function startAdapter(config: Config, options: AdapterOptions = {}): Promise<Adapter> {
   const initialModel = config.model;
@@ -240,71 +310,21 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     if (pathname === "/v1/models" && request.method === "GET") return json(response, 200, {
       data: providers.filter((item) => (!config.provider || item.provider === config.provider) && !isPlaceholderModel(item)).map((item) => ({ id: item.model, object: "model", owned_by: item.provider }))
     });
-    if (pathname === "/v1/responses" && request.method === "POST") {
-      // Honor auto routing here too: Codex echoes OPENAI_MODEL=auto back.
-      const proxied = await proxyRequest(config, request, response, token, {
-        fallbackModel: config.model,
-        payload: (input, model, provider) => {
-          if (provider.protocol === "anthropic") return toAnthropicRequest(input, model);
-          return provider.protocol === "responses" ? { ...input, model } : toChatCompletionsRequest(input, model, provider.provider);
-        },
-      }, maxBodyBytes);
-      if (!proxied) return;
-      const { input, model, provider, watched } = proxied;
-      const options = streamOptions(config, provider, sessionFor(input), safeRecord);
-      if (input.stream && provider.protocol === "chat-completions") return pipeChatStreamToResponses(watched, response, model, options);
-      if (input.stream && provider.protocol === "anthropic") return pipeAnthropicStreamToResponses(watched, response, model, options);
-      if (input.stream) return pipeResponsesPassthrough(watched, response, model, options);
-      if (!watched.body) { response.end(); return; }
-      const value = await watched.json(); recordUsage(value, provider, sessionFor(input));
-      if (provider.protocol === "anthropic") return json(response, watched.status, fromAnthropicResponse(value, model));
-      const failure = provider.protocol === "chat-completions" ? chatResponseFailure(value) : responsesResponseFailure(value);
-      if (failure) return json(response, 502, { error: { message: failure, type: "upstream_error" } });
-      return json(response, watched.status, provider.protocol === "chat-completions" ? fromChatResponseToResponses(value, model) : value);
-    }
-    if (pathname === "/v1/chat/completions" && request.method === "POST") {
-      const proxied = await proxyRequest(config, request, response, token, {
-        fallbackModel: config.model,
-        payload: (input, model, provider) => {
-          if (provider.protocol === "anthropic") return toAnthropicRequestFromChat(input, model);
-          if (provider.protocol === "responses") return toResponsesRequestFromChat(input, model);
-          return { ...input, model }; // already chat-completions-shaped
-        },
-      }, maxBodyBytes);
-      if (!proxied) return;
-      const { input, model, provider, watched } = proxied;
-      const chatOptions = streamOptions(config, provider, sessionFor(input), safeRecord);
-      if (input.stream && provider.protocol === "anthropic") return pipeAnthropicStreamToChat(watched, response, model, chatOptions);
-      if (input.stream && provider.protocol === "responses") return pipeResponsesStreamToChat(watched, response, model, chatOptions);
-      if (input.stream) return pipeChatPassthrough(watched, response, model, chatOptions);
-      if (!watched.body) { response.end(); return; }
-      const value = await watched.json(); recordUsage(value, provider, sessionFor(input));
-      if (provider.protocol === "anthropic") return json(response, watched.status, fromAnthropicResponseToChat(value, model));
-      const failure = provider.protocol === "responses" ? responsesResponseFailure(value) : chatResponseFailure(value);
-      if (failure) return json(response, 502, { error: { message: failure, type: "upstream_error" } });
-      return json(response, watched.status, provider.protocol === "responses" ? fromResponsesResponseToChat(value, model) : value);
-    }
-    if (pathname !== "/v1/messages" || request.method !== "POST") return json(response, 404, { error: { message: "Not found", type: "not_found" } });
-    const proxied = await proxyRequest(config, request, response, token, {
-      // Claude Code pins every tier to the configured model, but its haiku
-      // background lane may carry a faster sibling (see clientEnvironment);
-      // honor such requests instead of forcing the main model.
-      fallbackModel: config.model,
-      payload: (input, model, provider) => {
-        if (provider.protocol === "anthropic") return { ...input, model }; // already Anthropic-shaped; zero conversion
-        return provider.protocol === "responses" ? toResponsesRequest(input, model) : toChatRequest(input, model, provider.provider);
-      },
-    }, maxBodyBytes);
+    const specFor = pathname === "/v1/responses" ? ENDPOINT_SPECS.responses
+      : pathname === "/v1/chat/completions" ? ENDPOINT_SPECS.chat
+        : pathname === "/v1/messages" ? ENDPOINT_SPECS.messages
+          : undefined;
+    if (!specFor || request.method !== "POST") return json(response, 404, { error: { message: "Not found", type: "not_found" } });
+    const proxied = await proxyRequest(config, request, response, token, config.model, (input, model, provider) => specFor.payloads[provider.protocol](input, model, provider), maxBodyBytes);
     if (!proxied) return;
     const { input, model, provider, watched } = proxied;
-    const messagesOptions = streamOptions(config, provider, sessionFor(input), safeRecord);
-    if (input.stream && provider.protocol === "anthropic") return pipeAnthropicPassthrough(watched, response, model, messagesOptions);
-    if (input.stream) return pipeResponsesStream(watched, response, model, messagesOptions);
+    const usageOptions = streamOptions(config, provider, sessionFor(input), safeRecord);
+    if (input.stream) return specFor.pipes[provider.protocol](watched, response, model, usageOptions);
+    if (!watched.body) { response.end(); return; }
     const value = await watched.json(); recordUsage(value, provider, sessionFor(input));
-    if (provider.protocol === "anthropic") return json(response, watched.status, value); // already Anthropic-shaped
-    const failure = provider.protocol === "chat-completions" ? chatResponseFailure(value) : responsesResponseFailure(value);
+    const failure = specFor.failure?.(value, provider);
     if (failure) return json(response, 502, { error: { message: failure, type: "upstream_error" } });
-    return json(response, watched.status, provider.protocol === "responses" ? fromResponsesResponse(value, model) : fromChatResponse(value, model));
+    return json(response, watched.status, specFor.finish(value, provider, model));
   };
   const server = createServer((request, response) => {
     // Last-resort guard: a rejection escaping the per-route handling (an
