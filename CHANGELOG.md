@@ -1,5 +1,25 @@
 # Changelog
 
+## [3.4.0](https://github.com/tzzs/agentx/compare/v3.3.0...v3.4.0) (2026-09-20)
+
+
+### Features
+
+* **cli:** configure custom provider headers and report usage as JSON ([643411b](https://github.com/tzzs/agentx/commit/643411bcd7f3f4caf88ecfe4845fd7ad0fd1e74b))
+* **doctor:** probe the upstream instead of only looking for a key ([128974b](https://github.com/tzzs/agentx/commit/128974b3fc95be9040102afdcf7f423de3f2a2cf))
+* replace the client auto-install prompt with a plain install hint ([7dde998](https://github.com/tzzs/agentx/commit/7dde998d931ae0daf3e6448978111492a12e19a4))
+* **server:** answer count_tokens, serve single models, and bound concurrency ([45a0831](https://github.com/tzzs/agentx/commit/45a083104a0e8897370d6502940c3829d0536540))
+
+
+### Bug Fixes
+
+* announce dropped tool-result images and authenticate before queueing ([ec37d09](https://github.com/tzzs/agentx/commit/ec37d093fe1ba373934589f4456cf7e572984734))
+* apply v3.4.0 code-review follow-ups (usage layering, endpoint tables, tool-result media) ([e228f93](https://github.com/tzzs/agentx/commit/e228f9319f4e1916f8e31e4e46131c38e832e72c))
+* **convert:** keep tool-result images usable on Anthropic upstreams ([daf933c](https://github.com/tzzs/agentx/commit/daf933c3f0749f4090415a4a9e0154c02c341d90))
+* **convert:** keep tool-result images usable on every upstream protocol ([b70e9fb](https://github.com/tzzs/agentx/commit/b70e9fbaa657c1b625a8eac0a3097c7d3fda31f5))
+* retry a locked state-file rename on Windows ([4160069](https://github.com/tzzs/agentx/commit/4160069c6eef95b5de7b607a0e961143c6cd1377))
+* **streaming:** read every usage token field through the provider mappers ([abb17fe](https://github.com/tzzs/agentx/commit/abb17febbf8ed9fb0888305f6c78b44ac054f8a9))
+
 ## [3.3.0](https://github.com/tzzs/agentx/compare/v3.2.0...v3.3.0) (2026-09-16)
 
 
