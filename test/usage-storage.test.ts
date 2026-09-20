@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createUsageStore, defaultUsageStore, periodStart, sqliteAvailable } from "../src/usage/storage.js";
+import { runUsageStats } from "../src/usage/cli.js";
 import { TokenUsageCollector, normalizeUsage } from "../src/usage/collector.js";
 import type { TokenUsage } from "../src/usage/types.js";
 
@@ -132,6 +133,33 @@ test("closing a memory store keeps recorded stats readable", async () => {
   await store.record(normalizeUsage(sample()));
   await store.close();
   assert.equal((await store.totals("all")).totalTokens, 150);
+});
+
+test("runUsageStats renders the rows the adapter server recorded", async () => {
+  const originalDir = process.env.AGENTX_USAGE_DIR;
+  const originalBackend = process.env.AGENTX_USAGE_BACKEND;
+  const dir = await mkdtemp(join(tmpdir(), "agentx-usage-report-"));
+  try {
+    process.env.AGENTX_USAGE_DIR = dir;
+    process.env.AGENTX_USAGE_BACKEND = "json";
+    const store = await defaultUsageStore();
+    await store.record(normalizeUsage(sample({ provider: "anthropic", model: "claude-sonnet-4", inputTokens: 400, outputTokens: 100, totalTokens: 500, cachedInputTokens: 120 })));
+    await store.record(normalizeUsage(sample({ provider: "anthropic", model: "claude-sonnet-4", inputTokens: 100, outputTokens: 20, totalTokens: 120 })));
+    await store.close();
+
+    const all = await runUsageStats("all");
+    assert.match(all, /Token Usage \(All time\)/);
+    assert.match(all, /anthropic/);
+    assert.match(all, /claude-sonnet-4/);
+    // 400+100+100+20 recorded tokens, and only the first row carried a cache read.
+    assert.match(all, /620/);
+    assert.match(all, /120/);
+    assert.match(await runUsageStats("today"), /Token Usage/);
+  } finally {
+    if (originalDir === undefined) delete process.env.AGENTX_USAGE_DIR; else process.env.AGENTX_USAGE_DIR = originalDir;
+    if (originalBackend === undefined) delete process.env.AGENTX_USAGE_BACKEND; else process.env.AGENTX_USAGE_BACKEND = originalBackend;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("cache write tokens survive normalization, storage, and stats", async () => {
