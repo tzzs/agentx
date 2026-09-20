@@ -470,16 +470,21 @@ git clone https://github.com/tzzs/agentx.git
 cd agentx
 npm ci
 npm test
+npm run lint
 npm run build
 ```
 
 项目使用 TypeScript、Node.js 原生 `fetch`、Node.js ESM 和内置 `node:test` 测试运行器。测试会先编译到 `dist/test`，再执行编译后的测试。
 
+`npm run lint` 运行 ESLint（flat config 位于 `eslint.config.js`），`npm run typecheck` 对 `src/` 与 `test/` 执行 `tsc --noEmit`，`make check` 则会连同包校验一起跑完这些检查。`src/` 中不使用 `any`：wire payload 统一通过 `src/json.ts` 的带类型访问器读取。
+
+只跑单个测试文件：`npm run test:one -- dist/test/catalog.test.js`（或 `make test-one F=test/catalog`）。
+
 测试覆盖请求/响应转换、system instructions、流式事件、工具调用、Provider 路由、Chat Completions 转换，以及 Token 用量适配器、存储和用量查询 API。测试不需要 API Key，也不依赖网络。
 
 ## CI 与发布
 
-GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行构建、测试和 npm 包内容检查。`.github/workflows/release-please.yml` 会根据 Conventional Commits 创建版本发布 PR。发布配置位于 `.github/workflows/publish.yml`：
+GitHub Actions 会在每次 push 和针对 `main` 的 Pull Request 中运行一次 lint 与类型检查，并在 Linux、macOS、Windows 三套系统的 Node.js 20/22/24 矩阵上跑测试。`.github/workflows/release-please.yml` 会根据 Conventional Commits 创建版本发布 PR。发布配置位于 `.github/workflows/publish.yml`：
 
 1. 在 GitHub 的 `npm` environment 中添加 `NPM_TOKEN` Secret。
 2. 推送匹配 `v*.*.*` 的版本标签，或手动运行 **Publish package** 工作流。

@@ -307,8 +307,7 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     const pathname = url.pathname;
     if (pathname === "/health" && request.method === "GET") return json(response, 200, { status: "ok" });
     // Usage statistics are read through `agentx usage` (direct storage access);
-    // the former unauthenticated /usage/* HTTP endpoints were removed — see
-    // docs/remaining-simplification-todos.md item B.
+    // the former unauthenticated /usage/* HTTP endpoints were removed.
     if (pathname === "/v1/models" && request.method === "GET") return json(response, 200, {
       data: providers.filter((item) => (!config.provider || item.provider === config.provider) && !isPlaceholderModel(item)).map((item) => ({ id: item.model, object: "model", owned_by: item.provider }))
     });

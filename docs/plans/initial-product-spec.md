@@ -1,4 +1,10 @@
-# 项目：agentx
+# Plan: AgentX 初始产品规格
+
+Status: Shipped — 这是项目从零开始时的规格说明，保留作为设计初衷的历史记录；
+与现状的偏差（命令集、目录结构、provider 范围）以 `docs/architecture.md` 为准。
+Date: 2026-08-18
+
+## 原始规格
 
 请实现一个生产可用的 npm CLI 工具 **`agentx`**。
 

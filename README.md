@@ -484,16 +484,21 @@ git clone https://github.com/tzzs/agentx.git
 cd agentx
 npm ci
 npm test
+npm run lint
 npm run build
 ```
 
 The project uses TypeScript, native Node.js `fetch`, Node.js ESM, and the built-in `node:test` runner. Tests are compiled into `dist/test` before execution.
 
+`npm run lint` runs ESLint (flat config in `eslint.config.js`), `npm run typecheck` runs `tsc --noEmit` over `src/` and `test/`, and `make check` runs both plus the package check. `src/` is free of `any`: wire payloads are read through the typed accessors in `src/json.ts`.
+
+To run one test file: `npm run test:one -- dist/test/catalog.test.js` (or `make test-one F=test/catalog`).
+
 The test suite covers request/response conversion, system instructions, streaming events, tool calls, provider routing, chat-completion conversion, token usage adapters, storage, and the usage query API. Tests do not require an API key or network access.
 
 ## CI and Publishing
 
-GitHub Actions runs the build, tests, and package dry-run for every push and pull request against `main`. Release Please is configured in `.github/workflows/release-please.yml` and creates a release PR from conventional commits. Publishing is configured in `.github/workflows/publish.yml`:
+GitHub Actions runs lint and type-check once per push, and the test suite on Node.js 20/22/24 across Linux, macOS and Windows, for every push and pull request against `main`. Release Please is configured in `.github/workflows/release-please.yml` and creates a release PR from conventional commits. Publishing is configured in `.github/workflows/publish.yml`:
 
 1. Add an `NPM_TOKEN` secret to the `npm` GitHub environment.
 2. Push a tag matching `v*.*.*`, or manually run **Publish package**.
