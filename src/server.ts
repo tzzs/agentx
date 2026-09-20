@@ -49,6 +49,7 @@ function body(request: IncomingMessage, limit = MAX_BODY_BYTES): Promise<string>
   });
 }
 function json(response: ServerResponse, status: number, value: unknown) { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(value)); }
+function unauthorized(response: ServerResponse) { return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } }); }
 function debug(config: Config, message: string) { if (config.logLevel === "debug") console.error(`[adapter] ${message}`); }
 function streamOptions(config: Config, provider: ProviderModel, sessionId: string, onUsage?: (usage: TokenUsage) => void): StreamUsageOptions {
   return { provider: provider.provider, model: provider.model, protocol: provider.protocol, sessionId, onUsage, onDiagnostic: (message) => debug(config, `stream diagnostic: ${message}`) };
@@ -270,7 +271,7 @@ async function proxyRequest(
   route: { fallbackModel: string; payload: (input: any, model: string, provider: ProviderModel) => unknown },
   maxBodyBytes = MAX_BODY_BYTES,
 ): Promise<{ input: any; model: string; provider: ProviderModel; watched: Response } | undefined> {
-  if (!authorized(request, token)) { json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } }); return undefined; }
+  if (!authorized(request, token)) { unauthorized(response); return undefined; }
   try {
     const input = JSON.parse(await body(request, maxBodyBytes));
     // The endpoint decides which model id counts as "configured" (/v1/responses
@@ -324,18 +325,18 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     const visibleModels = () => providers.filter((item) => (!config.provider || item.provider === config.provider) && !isPlaceholderModel(item));
     const modelEntry = (item: ProviderModel) => ({ id: item.model, object: "model", owned_by: item.provider });
     if (pathname === "/v1/models" && request.method === "GET") {
-      if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
+      if (!authorized(request, token)) return unauthorized(response);
       return json(response, 200, { data: visibleModels().map(modelEntry) });
     }
     if (pathname.startsWith("/v1/models/") && request.method === "GET") {
-      if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
+      if (!authorized(request, token)) return unauthorized(response);
       const id = decodeURIComponent(pathname.slice("/v1/models/".length));
       const match = visibleModels().find((item) => item.model === id);
       if (!match) return json(response, 404, { error: { message: `Model "${id}" not found`, type: "not_found" } });
       return json(response, 200, modelEntry(match));
     }
     if (pathname === "/v1/messages/count_tokens" && request.method === "POST") {
-      if (!authorized(request, token)) return json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } });
+      if (!authorized(request, token)) return unauthorized(response);
       try {
         const input = JSON.parse(await body(request, maxBodyBytes));
         const model = honorRequestedModel(input.model, config.model, config.provider);
@@ -349,7 +350,11 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
     // Hold a concurrency slot for the whole proxied exchange, streaming
     // included, and free it once the response is done either way. Acquiring
     // after the client already left would otherwise strand the slot.
+    //
+    // Authentication comes first: a request that is going to be rejected must
+    // not sit in the queue ahead of a legitimate one.
     if (request.method === "POST" && (pathname === "/v1/responses" || pathname === "/v1/chat/completions" || pathname === "/v1/messages")) {
+      if (!authorized(request, token)) return unauthorized(response);
       const release = await gate.acquire();
       if (response.closed || response.writableEnded) release();
       else { response.on("close", release); response.on("finish", release); }

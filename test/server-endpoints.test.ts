@@ -172,3 +172,32 @@ test("a custom provider's own headers are sent upstream and override the default
     assert.equal(seen?.get("authorization"), "Token gateway-scheme");
   } finally { globalThis.fetch = originalFetch; await adapter.close(); unregisterCustomProvider(id); }
 });
+
+test("an unauthenticated proxy request is rejected before it can take a concurrency slot", async () => {
+  // With one slot, a request that never authenticates must not be able to sit
+  // in the queue ahead of a legitimate one.
+  const adapter = await adapterFor({ maxConcurrency: 1 });
+  const originalFetch = globalThis.fetch;
+  let upstreamCalls = 0;
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.includes("127.0.0.1")) return originalFetch(input, init);
+    upstreamCalls++;
+    return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const rejected = await Promise.all([0, 1, 2].map(() => fetch(`http://127.0.0.1:${adapter.port}/v1/messages`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ messages: [] }),
+    })));
+    assert.deepEqual(rejected.map((r) => r.status), [401, 401, 401]);
+    assert.equal(upstreamCalls, 0);
+    // The slot is still free for a caller that does authenticate.
+    const allowed = await fetch(`http://127.0.0.1:${adapter.port}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${adapter.token}` },
+      body: JSON.stringify({ model: "chat-x", messages: [{ role: "user", content: "hi" }] }),
+    });
+    assert.equal(allowed.status, 200);
+    assert.equal(upstreamCalls, 1);
+  } finally { globalThis.fetch = originalFetch; await adapter.close(); }
+});

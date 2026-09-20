@@ -177,17 +177,22 @@ export function toolResultContent(content: unknown): ToolResultContent {
 }
 
 /**
- * Non-empty text for a tool message whose content was media only. Several
- * chat upstreams reject an empty tool message, and the note also tells the
- * model what it is not seeing when the images could not be forwarded.
+ * Text for a tool message, given how many images its result carried and
+ * whether they are being forwarded.
+ *
+ * Two things need saying. A media-only result must not end up with empty
+ * text, which several chat upstreams reject. And an image that is *not*
+ * forwarded has to be announced whatever else the result said — otherwise a
+ * text-only model is silently missing content it was never told about.
  */
 export function toolResultText(text: string, imageCount: number, forwarded: boolean): string {
-  if (text) return text;
-  if (!imageCount) return "";
+  if (!imageCount) return text;
   const plural = imageCount === 1 ? "" : "s";
-  return forwarded
-    ? `[${imageCount} image${plural} returned by the tool]`
-    : `[${imageCount} image${plural} returned by the tool; omitted because this model does not accept image input]`;
+  // A forwarded image speaks for itself wherever it ended up, so it only needs
+  // a stand-in when it would otherwise leave the tool message empty.
+  if (forwarded) return text || `[${imageCount} image${plural} returned by the tool]`;
+  const note = `[${imageCount} image${plural} returned by the tool; omitted because this model does not accept image input]`;
+  return text ? `${text}\n${note}` : note;
 }
 
 /**

@@ -43,7 +43,11 @@ test("inlines tool-result media as Responses input_image parts instead of a JSON
 test("drops tool-result media for a Responses model known not to accept images", () => {
   const provider = { provider: "opencode", model: "text-only", protocol: "responses", endpoint: "https://upstream.invalid/responses", modalities: ["text"] } as const;
   const input = toResponsesRequest(imageResult as any, "text-only", provider as any).input as any[];
-  assert.deepEqual(input[1], { type: "function_call_output", call_id: "call-1", output: "read ok" });
+  assert.deepEqual(input[1], {
+    type: "function_call_output",
+    call_id: "call-1",
+    output: "read ok\n[1 image returned by the tool; omitted because this model does not accept image input]",
+  });
 });
 
 test("lifts tool-result media into a following user message for chat completions", () => {
@@ -70,6 +74,17 @@ test("keeps a media-only tool result non-empty and says so when the image cannot
   const dropped = (toChatRequest(mediaOnly as any, "text-only", provider as any) as any).messages;
   assert.match(dropped[1].content, /omitted because this model does not accept image input/);
   assert.equal(dropped.length, 2); // no synthetic user message
+});
+
+test("announces a dropped image even when the tool result had text of its own", () => {
+  const provider = { provider: "opencode", model: "text-only", protocol: "chat-completions", endpoint: "https://upstream.invalid/chat/completions", modalities: ["text"] };
+  const messages = (toChatRequest(imageResult as any, "text-only", provider as any) as any).messages;
+  // The text alone would leave the model silently missing content it was
+  // never told about.
+  assert.equal(messages[1].content, "read ok\n[1 image returned by the tool; omitted because this model does not accept image input]");
+  assert.equal(messages.length, 2);
+  const responses = toResponsesRequest(imageResult as any, "text-only", provider as any).input as any[];
+  assert.match(String(responses[1].output), /omitted because this model does not accept image input/);
 });
 
 test("flattens a text-only tool_result block array instead of forwarding its JSON", () => {
