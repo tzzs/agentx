@@ -137,7 +137,7 @@ const SIGNAL_NUMBERS: Record<string, number> = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 
 /**
  * Thrown when the client executable itself cannot be spawned — most commonly
  * because it is not installed or not on PATH (`spawn x ENOENT`). Carries the
- * executable name so callers can offer an actionable recovery flow.
+ * executable name so callers can print an actionable install hint.
  */
 export class ClientNotFoundError extends Error {
   constructor(readonly executable: string) {
@@ -151,17 +151,6 @@ export const CLIENT_INSTALL_COMMANDS: Record<string, string> = {
   claude: "npm install -g @anthropic-ai/claude-code",
   codex: "npm install -g @openai/codex",
 };
-
-/** Run a command through the user's shell with inherited stdio; resolves with the exit code.
- * Spawn failures (e.g. no shell) resolve to 1 instead of rejecting, so the caller's
- * install-recovery branch stays in charge of reporting. */
-export function runShellCommand(command: string): Promise<number> {
-  const child = spawn(command, { stdio: "inherit", shell: true });
-  return new Promise((resolve) => {
-    child.once("error", () => resolve(1));
-    child.once("exit", (code) => resolve(code ?? 1));
-  });
-}
 
 /**
  * Windows-only: runCommand spawns with shell:true so npm's .cmd shims resolve

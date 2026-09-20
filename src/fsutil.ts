@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 /**
@@ -12,5 +12,29 @@ export async function atomicWriteFile(file: string, contents: string): Promise<v
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.tmp-${process.pid}-${randomUUID()}`;
   await writeFile(temporary, contents, { mode: 0o600 });
-  await rename(temporary, file);
+  try {
+    await replace(temporary, file);
+  } catch (error) {
+    // A failed rename leaves the payload behind under the temp name; for a state
+    // file that can hold an API key, littering it next to the target is a leak.
+    await rm(temporary, { force: true });
+    throw error;
+  }
+}
+
+/** Codes Windows reports when the destination of a replace-rename is momentarily locked. */
+const LOCKED = new Set(["EPERM", "EACCES", "EBUSY", "ENOTEMPTY"]);
+
+async function replace(temporary: string, file: string): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await rename(temporary, file);
+    } catch (error) {
+      // Unlike POSIX, Windows rename cannot displace an open destination: an
+      // antivirus scan or a sibling writer holding the file yields a transient
+      // permission error rather than a real failure, so back off and retry.
+      if (attempt === 4 || !LOCKED.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 2 ** attempt * 20));
+    }
+  }
 }

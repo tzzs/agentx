@@ -109,7 +109,7 @@ test("runConfigCommand lists every provider with its credential status in non-in
 test("runConfigCommand --base-url registers and persists a custom provider without launching", async () => {
   await runConfigCommand(["--provider", "Config CLI LLM", "--base-url", "http://config.local", "--protocol", "responses", "--model", "cfg-model"]);
   try {
-    assert.equal(providerById("config-cli-llm").models[0].endpoint, "http://config.local/responses");
+    assert.equal(providerById("config-cli-llm").models[0]?.endpoint, "http://config.local/responses");
     assert.deepEqual((await loadCustomProviders())["config-cli-llm"], { name: "Config CLI LLM", baseUrl: "http://config.local", protocol: "responses", model: "cfg-model" });
     const output = logs.join("\n");
     assert.match(output, /Config CLI LLM configured/);
@@ -175,6 +175,14 @@ test("configureMissingProvider returns the key on success and undefined on cance
   assert.equal(cancelled, undefined);
 });
 
+function withTTY<T>(run: () => Promise<T>): Promise<T> {
+  const stdin = process.stdin as unknown as { isTTY?: boolean };
+  const stdout = process.stdout as unknown as { isTTY?: boolean };
+  const originalStdinTTY = stdin.isTTY; const originalStdoutTTY = stdout.isTTY;
+  stdin.isTTY = true; stdout.isTTY = true;
+  return run().finally(() => { stdin.isTTY = originalStdinTTY; stdout.isTTY = originalStdoutTTY; });
+}
+
 test("launchClient returns the exit code from a successful run", async () => {
   const code = await launchClient("claude", [], process.env, { runCommand: async () => 0 });
   assert.equal(code, 0);
@@ -187,58 +195,16 @@ test("launchClient propagates errors that are not a missing executable", async (
   );
 });
 
-test("launchClient exits 1 without prompting when the terminal is not interactive", async () => {
-  const calls: string[] = [];
-  const code = await launchClient("claude", [], process.env, {
-    runCommand: async () => { throw new ClientNotFoundError("claude"); },
-    confirm: async () => { calls.push("confirm"); return true; },
-    runShellCommand: async () => { calls.push("shell"); return 0; },
-  });
-  assert.equal(code, 1);
-  assert.deepEqual(calls, []);
-});
-
-function withTTY<T>(run: () => Promise<T>): Promise<T> {
-  const stdin = process.stdin as unknown as { isTTY?: boolean };
-  const stdout = process.stdout as unknown as { isTTY?: boolean };
-  const originalStdinTTY = stdin.isTTY; const originalStdoutTTY = stdout.isTTY;
-  stdin.isTTY = true; stdout.isTTY = true;
-  return run().finally(() => { stdin.isTTY = originalStdinTTY; stdout.isTTY = originalStdoutTTY; });
-}
-
-test("launchClient install-recovery flow: user declines the install", async () => {
-  let shellCalls = 0;
+test("launchClient reports a missing client with the install command and exits 1, even interactively", async () => {
   const code = await withTTY(() => launchClient("claude", [], process.env, {
     runCommand: async () => { throw new ClientNotFoundError("claude"); },
-    confirm: async () => false,
-    runShellCommand: async () => { shellCalls++; return 0; },
   }));
   assert.equal(code, 1);
-  assert.equal(shellCalls, 0);
+  const output = errors.join("\n");
+  assert.match(output, /Claude Code not found/);
+  assert.match(output, /npm install -g @anthropic-ai\/claude-code/);
+  assert.match(output, /After installing, re-run: agentx claude/);
   process.exitCode = undefined;
-});
-
-test("launchClient install-recovery flow: install succeeds but the executable is still missing", async () => {
-  const code = await withTTY(() => launchClient("claude", [], process.env, {
-    runCommand: async () => { throw new ClientNotFoundError("claude"); },
-    confirm: async () => true,
-    runShellCommand: async () => 0,
-    executableExists: async () => false,
-  }));
-  assert.equal(code, 1);
-  process.exitCode = undefined;
-});
-
-test("launchClient install-recovery flow: install succeeds and the retried launch resolves its exit code", async () => {
-  let runCommandCalls = 0;
-  const code = await withTTY(() => launchClient("claude", [], process.env, {
-    runCommand: async () => { runCommandCalls++; if (runCommandCalls === 1) throw new ClientNotFoundError("claude"); return 0; },
-    confirm: async () => true,
-    runShellCommand: async () => 0,
-    executableExists: async () => true,
-  }));
-  assert.equal(code, 0);
-  assert.equal(runCommandCalls, 2);
 });
 
 test("exec injects OpenAI-shaped env vars only when --client-protocol openai is passed", async () => {
@@ -263,7 +229,7 @@ test("exec --base-url registers and persists a custom provider, reusable without
   const deps = { runCommand: async (_cmd: string, _args: string[], env: NodeJS.ProcessEnv) => { capturedEnv = env; return 0; } };
   try {
     await runClientLaunch("exec", ["--provider", "Bench Exec", "--base-url", "http://bench.local", "--protocol", "responses", "--model", "m1", "--", "some-command"], deps);
-    assert.equal(providerById("bench-exec").models[0].endpoint, "http://bench.local/responses");
+    assert.equal(providerById("bench-exec").models[0]?.endpoint, "http://bench.local/responses");
     const persisted = await loadCustomProviders();
     assert.deepEqual(persisted["bench-exec"], { name: "Bench Exec", baseUrl: "http://bench.local", protocol: "responses", model: "m1" });
     assert.ok(capturedEnv?.ANTHROPIC_AUTH_TOKEN, "the launch itself still proceeds through the adapter as normal");

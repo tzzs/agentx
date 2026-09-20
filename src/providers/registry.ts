@@ -1,3 +1,5 @@
+import type { JsonRecord, JsonValue } from "../json.js";
+import { jsonRecord, recNum, recObj, recObjs, recStr } from "../json.js";
 import type { ProviderDefinition, ProviderModel } from "./types.js";
 import { loadOpenCodeModels, loadOpenRouterModels, saveOpenCodeModels, saveOpenRouterModels } from "../runtime.js";
 
@@ -48,15 +50,24 @@ interface ModelMetadata { contextWindow?: number; maxOutputTokens?: number; moda
 type MetadataSections = Map<string, MetadataMap>;
 type MetadataMap = Map<string, ModelMetadata>;
 
-function parseModelsDevMetadata(payload: any): MetadataSections {
+/** The only modalities the rest of the codebase distinguishes; anything else is dropped. */
+function knownModalities(value: JsonValue | undefined): string[] {
+  return (Array.isArray(value) ? value : []).filter((item): item is "text" | "image" => item === "text" || item === "image");
+}
+
+function parseModelsDevMetadata(payload: JsonRecord): MetadataSections {
   const sections: MetadataSections = new Map();
-  for (const [sectionId, definition] of Object.entries((payload ?? {}) as Record<string, any>)) {
+  for (const [sectionId, definitionValue] of Object.entries(payload)) {
     const table: MetadataMap = new Map();
-    for (const [id, entry] of Object.entries(definition?.models ?? {}) as Array<[string, any]>) {
-      const input = (entry?.modalities?.input ?? []).filter((item: unknown) => item === "text" || item === "image");
+    for (const [id, entryValue] of Object.entries(recObj(jsonRecord(definitionValue), "models") ?? {})) {
+      const entry = jsonRecord(entryValue);
+      const limit = recObj(entry, "limit");
+      const contextWindow = recNum(limit, "context");
+      const maxOutputTokens = recNum(limit, "output");
+      const input = knownModalities(recObj(entry, "modalities")?.input);
       table.set(id, {
-        ...(Number.isFinite(entry?.limit?.context) ? { contextWindow: Number(entry.limit.context) } : {}),
-        ...(Number.isFinite(entry?.limit?.output) ? { maxOutputTokens: Number(entry.limit.output) } : {}),
+        ...(contextWindow === undefined ? {} : { contextWindow }),
+        ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
         ...(input.length ? { modalities: input } : {}),
       });
     }
@@ -66,17 +77,20 @@ function parseModelsDevMetadata(payload: any): MetadataSections {
 }
 
 /** Flatten OpenRouter's public model list into a single table keyed by its vendor-prefixed id. */
-function parseOpenRouterMetadata(payload: any): MetadataMap {
+function parseOpenRouterMetadata(payload: JsonRecord): MetadataMap {
   const table: MetadataMap = new Map();
-  for (const entry of ((payload?.data ?? []) as Array<any>)) {
-    if (!entry?.id) continue;
-    const input = (entry?.architecture?.input_modalities ?? []).filter((item: unknown) => item === "text" || item === "image");
+  for (const entry of recObjs(payload, "data")) {
+    const id = recStr(entry, "id");
+    if (!id) continue;
+    const input = knownModalities(recObj(entry, "architecture")?.input_modalities);
+    const contextWindow = recNum(entry, "context_length");
+    const maxOutputTokens = recNum(recObj(entry, "top_provider"), "max_completion_tokens");
     const meta: ModelMetadata = {
-      ...(Number.isFinite(entry?.context_length) ? { contextWindow: Number(entry.context_length) } : {}),
-      ...(Number.isFinite(entry?.top_provider?.max_completion_tokens) ? { maxOutputTokens: Number(entry.top_provider.max_completion_tokens) } : {}),
+      ...(contextWindow === undefined ? {} : { contextWindow }),
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
       ...(input.length ? { modalities: input } : {}),
     };
-    if (Object.keys(meta).length) table.set(entry.id, meta);
+    if (Object.keys(meta).length) table.set(id, meta);
   }
   return table;
 }
@@ -133,14 +147,9 @@ export function setOpenRouterCatalogIds(ids: string[]): void {
   const preferred = process.env.OPENROUTER_MODEL ?? (ids.length ? ids[0] : undefined);
   const current = provider.models[0]?.model;
   if (preferred && preferred !== current) {
-    provider.models = [models("openrouter", `${openRouterBase}/chat/completions`, [preferred], "chat-completions")[0]];
+    provider.models = [{ provider: "openrouter", model: preferred, protocol: "chat-completions", endpoint: `${openRouterBase}/chat/completions` }];
     rebuildAllModels();
   }
-}
-
-/** Isolation seam so tests can restore the module-level model cache. */
-export function setCachedOpenRouter(table: MetadataMap): void {
-  cachedOpenRouter = table;
 }
 
 /**
@@ -154,9 +163,9 @@ export async function fetchOpenRouterModels(
   try {
     const response = await fetcher(openRouterModelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) });
     if (!response.ok) return cachedOpenRouterIds;
-    const payload = await response.json();
-    const ids = ((payload?.data ?? []) as Array<{ id?: string }>)
-      .map((entry) => entry.id)
+    const payload = jsonRecord(await response.json());
+    const ids = recObjs(payload, "data")
+      .map((entry) => recStr(entry, "id"))
       .filter((id): id is string => Boolean(id));
     if (!ids.length) return cachedOpenRouterIds;
     cachedOpenRouterIds = ids;
@@ -310,6 +319,9 @@ export function isPlaceholderModel(model: Pick<ProviderModel, "model" | "provide
   try { return Boolean(providerById(model.provider).custom); } catch { return false; }
 }
 
+/** A custom provider always registers exactly one model entry, so callers can read `models[0]` directly. */
+export type CustomProviderDefinition = ProviderDefinition & { models: [ProviderModel, ...ProviderModel[]] };
+
 export interface CustomProviderInput {
   name: string;
   baseUrl: string;
@@ -331,7 +343,7 @@ export interface CustomProviderInput {
  * same id are treated as the same provider slot (last write wins), which is
  * acceptable at the scale a single user configures by hand.
  */
-export function registerCustomProvider(input: CustomProviderInput): ProviderDefinition {
+export function registerCustomProvider(input: CustomProviderInput): CustomProviderDefinition {
   const base = slugify(input.name);
   const existingCustom = providerRegistry.some((entry) => entry.id === base && entry.custom);
   let id = base;
@@ -340,7 +352,7 @@ export function registerCustomProvider(input: CustomProviderInput): ProviderDefi
     while (providerRegistry.some((entry) => entry.id === id)) id = `${base}-${suffix++}`;
   }
   const model: ProviderModel = { provider: id, model: input.model ?? CUSTOM_PROVIDER_PLACEHOLDER_MODEL, protocol: input.protocol, endpoint: customProviderEndpoint(input.baseUrl, input.protocol), ...(input.headers && Object.keys(input.headers).length ? { headers: input.headers } : {}) };
-  const definition: ProviderDefinition = { id, name: input.name, apiKeyEnv: envKeyFor(id), models: [model], custom: true };
+  const definition: CustomProviderDefinition = { id, name: input.name, apiKeyEnv: envKeyFor(id), models: [model], custom: true };
   const index = providerRegistry.findIndex((entry) => entry.id === id);
   if (index >= 0) providerRegistry[index] = definition;
   else providerRegistry.push(definition);
@@ -386,19 +398,19 @@ export async function refreshProviderCatalog(
   const [list, sections, openRouter] = await Promise.all([
     needList
       ? fetcher(`${openCodeBase}/models`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5000) })
-          .then((response) => (response.ok ? response.json() : null)).catch(() => null)
+          .then((response) => (response.ok ? jsonRecord(response.json()) : null)).catch((): JsonRecord | null => null)
       : Promise.resolve(null),
     needMetadata
       ? fetcher(modelsDevUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) })
-          .then((response) => (response.ok ? response.json() : null)).then(parseModelsDevMetadata)
+          .then((response) => (response.ok ? response.json() : null)).then((payload) => parseModelsDevMetadata(jsonRecord(payload)))
           .catch((): MetadataSections => new Map())
       : Promise.resolve(new Map()),
     needMetadata
       ? fetcher(openRouterModelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10000) })
-          .then((response) => (response.ok ? response.json() : null)).then(parseOpenRouterMetadata)
+          .then((response) => (response.ok ? response.json() : null)).then((payload) => parseOpenRouterMetadata(jsonRecord(payload)))
           .catch((): MetadataMap => new Map())
       : Promise.resolve(new Map()),
-  ]) as [any, MetadataSections, MetadataMap];
+  ]);
 
   let refreshedMetadata = false;
   if (needMetadata) {
@@ -418,7 +430,7 @@ export async function refreshProviderCatalog(
 
   let refreshedList = false;
   if (!list) return { list: false, metadata: refreshedMetadata };
-  const ids = ((list.data ?? []) as Array<{ id?: string }>).map((item) => item.id).filter((id): id is string => Boolean(id));
+  const ids = recObjs(list, "data").map((item) => recStr(item, "id")).filter((id): id is string => Boolean(id));
   if (ids.length) {
     const openCode = providerRegistry.find((provider) => provider.id === "opencode");
     if (openCode) {

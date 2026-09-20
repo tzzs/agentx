@@ -1,7 +1,7 @@
 import { defaultUsageStore } from "./storage.js";
 import type { ModelUsageStat, UsagePeriod, UsageStore, UsageTotals } from "./types.js";
 
-export function formatPeriod(period: UsagePeriod): string {
+function formatPeriod(period: UsagePeriod): string {
   return { today: "Today", week: "This week", month: "This month", all: "All time" }[period];
 }
 

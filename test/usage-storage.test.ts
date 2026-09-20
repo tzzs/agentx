@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createUsageStore, defaultUsageStore, defaultUsageLocation, periodStart, sqliteAvailable } from "../src/usage/storage.js";
+import { createUsageStore, defaultUsageStore, periodStart, sqliteAvailable } from "../src/usage/storage.js";
+import { runUsageStats } from "../src/usage/cli.js";
 import { TokenUsageCollector, normalizeUsage } from "../src/usage/collector.js";
 import type { TokenUsage } from "../src/usage/types.js";
-import { runUsageStats } from "../src/usage/cli.js";
 
 const now = Date.now();
 
@@ -110,7 +110,7 @@ test("json file store handles concurrent reads after a write", async () => {
     const [models, totals] = await Promise.all([store.modelStats("all"), store.totals("all")]);
     assert.equal(totals.inputTokens, 100);
     assert.equal(totals.outputTokens, 25);
-    assert.equal(models[0].tokens, 125);
+    assert.equal(models[0]?.tokens, 125);
     await store.close();
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
@@ -135,13 +135,40 @@ test("closing a memory store keeps recorded stats readable", async () => {
   assert.equal((await store.totals("all")).totalTokens, 150);
 });
 
+test("runUsageStats renders the rows the adapter server recorded", async () => {
+  const originalDir = process.env.AGENTX_USAGE_DIR;
+  const originalBackend = process.env.AGENTX_USAGE_BACKEND;
+  const dir = await mkdtemp(join(tmpdir(), "agentx-usage-report-"));
+  try {
+    process.env.AGENTX_USAGE_DIR = dir;
+    process.env.AGENTX_USAGE_BACKEND = "json";
+    const store = await defaultUsageStore();
+    await store.record(normalizeUsage(sample({ provider: "anthropic", model: "claude-sonnet-4", inputTokens: 400, outputTokens: 100, totalTokens: 500, cachedInputTokens: 120 })));
+    await store.record(normalizeUsage(sample({ provider: "anthropic", model: "claude-sonnet-4", inputTokens: 100, outputTokens: 20, totalTokens: 120 })));
+    await store.close();
+
+    const all = await runUsageStats({ period: "all" });
+    assert.match(all, /Token Usage \(All time\)/);
+    assert.match(all, /anthropic/);
+    assert.match(all, /claude-sonnet-4/);
+    // 400+100+100+20 recorded tokens, and only the first row carried a cache read.
+    assert.match(all, /620/);
+    assert.match(all, /120/);
+    assert.match(await runUsageStats({ period: "today" }), /Token Usage/);
+  } finally {
+    if (originalDir === undefined) delete process.env.AGENTX_USAGE_DIR; else process.env.AGENTX_USAGE_DIR = originalDir;
+    if (originalBackend === undefined) delete process.env.AGENTX_USAGE_BACKEND; else process.env.AGENTX_USAGE_BACKEND = originalBackend;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("cache write tokens survive normalization, storage, and stats", async () => {
   const store = await createUsageStore({ backend: "memory" });
   await store.record(normalizeUsage(sample({ provider: "anthropic", model: "claude-sonnet-4", cachedInputTokens: 500, cacheWriteTokens: 200 })));
   await store.record(normalizeUsage(sample({ provider: "anthropic", model: "claude-sonnet-4", cachedInputTokens: 100 })));
   const models = await store.modelStats("all");
-  assert.equal(models[0].cachedTokens, 600);
-  assert.equal(models[0].cacheWriteTokens, 200);
+  assert.equal(models[0]?.cachedTokens, 600);
+  assert.equal(models[0]?.cacheWriteTokens, 200);
   await store.close();
 });
 

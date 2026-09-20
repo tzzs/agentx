@@ -42,7 +42,7 @@ export function parseCliOptions(args: string[]): Record<string, string | undefin
   for (let i = 0; i < args.length; i++) {
     const key = args[i];
     if (!key?.startsWith("--")) continue;
-    const [name, inline] = key.slice(2).split("=", 2);
+    const [name = "", inline] = key.slice(2).split("=", 2);
     if (inline !== undefined) { out[name] = inline; continue; }
     const value = args[i + 1];
     out[name] = value === undefined || value.startsWith("--") ? "true" : (i++, value);
@@ -61,8 +61,9 @@ export function parseHeaderFlags(args: string[]): Record<string, string> {
   const add = (raw: string | undefined) => {
     if (!raw) return;
     const match = /^\s*([^=:]+?)\s*[=:]\s*(.*)$/.exec(raw);
-    if (!match) return;
-    headers[match[1]] = match[2];
+    const key = match?.[1]; const value = match?.[2];
+    if (key === undefined || value === undefined) return;
+    headers[key] = value;
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];

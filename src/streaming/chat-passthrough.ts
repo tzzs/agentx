@@ -1,6 +1,9 @@
 import type { ServerResponse } from "node:http";
-import { cancelOnDisconnect, drain, errorMessage, reportUsage, SSE_HEADERS, startHeartbeat, withCacheTokens, type StreamUsageOptions } from "./common.js";
-import type { TokenUsage } from "../usage/types.js";
+import {
+  createChatEmitter, dataLine, drain, emitChatError, newUsageCapture,
+  reportUsage, usageCapture, withSsePipe, type StreamUsageOptions,
+} from "./common.js";
+import { jsonRecord, recObj, recObjs, recStr } from "../json.js";
 
 /**
  * Forward a Chat Completions SSE stream byte-for-byte. Used for the local
@@ -13,33 +16,29 @@ import type { TokenUsage } from "../usage/types.js";
  * not.
  */
 export async function pipeChatPassthrough(upstream: Response, response: ServerResponse, model: string, options?: StreamUsageOptions) {
-  const reader = upstream.body?.getReader();
-  if (!reader) throw new Error("Upstream returned no stream");
-  cancelOnDisconnect(response, reader);
-  response.writeHead(200, SSE_HEADERS);
-  const stopHeartbeat = startHeartbeat(response);
-  try {
-  let usage: TokenUsage | null = null; let inputTokens = 0; let outputTokens = 0; let lastUsage: any;
-  const consume = (line: string) => {
-    if (!line.startsWith("data:")) return; const value = line.slice(5).trim(); if (!value || value === "[DONE]") return;
+  await withSsePipe(upstream, response, async (reader) => {
+    const capture = newUsageCapture();
+    const usage = usageCapture(capture, options?.protocol ?? "chat-completions", !!options);
+    let countedOutput = 0;
+    const chunk = createChatEmitter(response, model);
+    const consume = (line: string) => {
+      const value = dataLine(line);
+      if (!value || value === "[DONE]") return;
+      try {
+        const item = jsonRecord(JSON.parse(value));
+        const delta = recStr(recObj(recObjs(item, "choices")[0], "delta"), "content");
+        if (delta) countedOutput++;
+        const itemUsage = recObj(item, "usage");
+        if (itemUsage) usage.usage(itemUsage);
+      } catch { /* Ignore incomplete provider events. */ }
+    };
     try {
-      const item = JSON.parse(value);
-      const delta = item.choices?.[0]?.delta?.content;
-      if (typeof delta === "string" && delta) outputTokens++;
-      if (item.usage) {
-        inputTokens = item.usage.prompt_tokens ?? inputTokens; const usageOutputTokens = item.usage.completion_tokens ?? outputTokens;
-        lastUsage = item.usage;
-        usage = withCacheTokens({ provider: options?.provider ?? "", model, inputTokens, outputTokens: usageOutputTokens, totalTokens: item.usage.total_tokens ?? (inputTokens + usageOutputTokens), ...(options?.sessionId ? { sessionId: options.sessionId } : {}) }, item.usage);
-      }
-    } catch { /* Ignore incomplete provider events. */ }
-  };
-  try {
-    // Forward the decoded chunks verbatim; SSE is text so this is byte-faithful.
-    await drain(reader, consume, (chunk) => response.write(chunk));
-  } catch (error) {
-    response.write(`data: {"error":{"message":${JSON.stringify(errorMessage(error))},"type":"upstream_error"}}\n\n`);
-  }
-  response.end();
-  reportUsage(options, usage !== null, (usage as TokenUsage | null)?.inputTokens ?? inputTokens, (usage as TokenUsage | null)?.outputTokens ?? outputTokens, lastUsage);
-  } finally { stopHeartbeat(); }
+      // Forward the decoded chunks verbatim; SSE is text so this is byte-faithful.
+      await drain(reader, consume, (chunkText) => response.write(chunkText));
+    } catch (error) {
+      emitChatError(response, chunk, error);
+    }
+    response.end();
+    reportUsage(options, { ...capture, output: capture.output || countedOutput }, usage.total());
+  });
 }

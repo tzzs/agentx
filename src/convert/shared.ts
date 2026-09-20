@@ -1,35 +1,82 @@
 /**
  * Helpers shared across every conversion direction (chat.ts / responses.ts /
- * anthropic.ts): the Anthropic request shape they all consume, image/effort/
- * thinking/tool-choice field mapping, and small parsing utilities.
+ * anthropic.ts): the Anthropic request shape they all consume and the
+ * image/effort/thinking/tool-choice field mapping between dialects. The
+ * dynamic-JSON accessors they read payloads with live in ../json.ts.
  */
+import type { JsonRecord, JsonValue } from "../json.js";
+import { asRecords, isRecord, recObj, recStr } from "../json.js";
 
-export interface AnthropicMessage { role: string; content: unknown; }
-export interface AnthropicThinking { type?: string; budget_tokens?: number; [key: string]: unknown; }
-export interface AnthropicRequest {
-  model?: string; system?: string | Array<{ type: string; text?: string }>;
+/**
+ * The Anthropic Messages request shape the converters consume: a message
+ * list plus the few fields whose structure they rely on. `AnthropicMessage`
+ * is a plain record because a client's messages carry whatever blocks they
+ * carry; each is read through the accessors from ../json.ts.
+ */
+export type AnthropicMessage = JsonRecord;
+export interface AnthropicThinking extends JsonRecord { type?: string; budget_tokens?: number; }
+export interface AnthropicRequest extends JsonRecord {
+  system?: string | Array<{ type: string; text?: string }>;
   max_tokens?: number; messages: AnthropicMessage[]; stream?: boolean;
   temperature?: number; top_p?: number; stop_sequences?: string[];
-  tools?: Array<{ name: string; description?: string; input_schema: unknown }>;
-  thinking?: AnthropicThinking;
-  output_config?: { effort?: string; [key: string]: unknown };
-  tool_choice?: unknown;
-  metadata?: unknown;
-  context_management?: unknown;
+  tools?: Array<{ name: string; description?: string; input_schema: JsonValue }>;
+}
+
+/**
+ * Interpret a payload from the Anthropic-shaped `/v1/messages` endpoint as an
+ * `AnthropicRequest`. The endpoint's contract *is* that shape, so this is the
+ * one place it is asserted rather than re-checked; `messages` is still
+ * filtered to its object entries so converters can iterate it safely, and a
+ * body that violates the rest fails at the upstream.
+ */
+export function asAnthropicRequest(value: JsonRecord): AnthropicRequest {
+  return { ...value, messages: asRecords(value.messages) } as AnthropicRequest;
+}
+
+/**
+ * One top-level entry of a Responses request's `input` (message, function_call,
+ * reasoning, function_call_output…). Raw client JSON, so fields are read
+ * through the accessors above rather than declared here.
+ */
+export type ResponsesItem = JsonRecord;
+
+/** Build an Anthropic image content block from a Responses `input_image.image_url`, which may be a real URL or a data: URI. */
+export function toAnthropicImageSource(url: string | undefined): { type: "url"; url: string } | { type: "base64"; media_type: string; data: string } | undefined {
+  if (!url) return undefined;
+  const dataMatch = /^data:([^;]+);base64,(.+)$/.exec(url);
+  if (dataMatch) {
+    const [, media_type = "", data = ""] = dataMatch;
+    return { type: "base64", media_type, data };
+  }
+  return { type: "url", url };
+}
+
+/** Shared collapse rule for content arrays: pure-text arrays flatten to a joined string; mixed arrays stay blocks; empty becomes "". */
+export function collapseAnthropicContent(parts: JsonRecord[]): JsonValue {
+  if (!parts.length) return "";
+  return parts.every((part) => part.type === "text") ? parts.map((part) => recStr(part, "text") ?? "").join("") : parts;
+}
+
+/** Plain text of an Anthropic content array for the given block type, ignoring everything else. */
+export function textOfBlocks(content: JsonRecord[], type: "text" | "thinking"): string {
+  const key = type === "text" ? "text" : "thinking";
+  return content.filter((part) => part.type === type).map((part) => recStr(part, key) ?? "").join("");
 }
 
 /** Build a data URI (or pass through remote URLs) from an Anthropic image source. */
-export function imageDataUri(source: any): string | undefined {
+export function imageDataUri(source: JsonRecord | undefined): string | undefined {
   if (!source) return undefined;
-  if (source.type === "url" && typeof source.url === "string") return source.url;
-  if (source.type === "base64" && typeof source.data === "string") return `data:${source.media_type ?? "image/png"};base64,${source.data}`;
+  if (source.type === "url") return recStr(source, "url");
+  if (source.type === "base64") {
+    const data = recStr(source, "data");
+    return data ? `data:${recStr(source, "media_type") ?? "image/png"};base64,${data}` : undefined;
+  }
   return undefined;
 }
 
 /** Normalize Claude/DeepSeek/Codex effort names to the Chat Completions values. */
-export function reasoningEffort(input: any): "low" | "high" | "max" | undefined {
-  const value = input?.output_config?.effort ?? input?.reasoning?.effort;
-  if (typeof value !== "string") return undefined;
+export function reasoningEffort(input: JsonRecord | undefined): "low" | "high" | "max" | undefined {
+  const value = recStr(recObj(input, "output_config"), "effort") ?? recStr(recObj(input, "reasoning"), "effort");
   if (value === "minimal" || value === "low") return "low";
   if (value === "medium" || value === "high" || value === "xhigh" || value === "ultracode") return "high";
   if (value === "max" || value === "ultra") return "max";
@@ -37,60 +84,68 @@ export function reasoningEffort(input: any): "low" | "high" | "max" | undefined 
 }
 
 /** Convert Anthropic thinking controls to DeepSeek's OpenAI-shaped control. */
-export function chatThinking(input: any): { type: "enabled" | "disabled" } | undefined {
-  const type = input?.thinking?.type;
+export function chatThinking(input: JsonRecord | undefined): { type: "enabled" | "disabled" } | undefined {
+  const type = recStr(recObj(input, "thinking"), "type");
   if (type === "disabled") return { type: "disabled" };
   if (type === "enabled" || type === "adaptive") return { type: "enabled" };
-  if (input?.reasoning?.effort === "none") return { type: "disabled" };
-  if (input?.reasoning?.effort !== undefined) return { type: "enabled" };
+  const effort = recStr(recObj(input, "reasoning"), "effort");
+  if (effort === "none") return { type: "disabled" };
+  if (effort !== undefined) return { type: "enabled" };
   return undefined;
 }
 
 /** Convert Anthropic tool-choice variants to Chat Completions variants. */
-export function chatToolChoice(value: unknown): unknown {
+export function chatToolChoice(value: JsonValue): JsonValue | undefined {
   if (typeof value === "string") {
     if (value === "none" || value === "auto") return value;
     if (value === "any" || value === "required") return "required";
     return undefined;
   }
-  if (!value || typeof value !== "object") return undefined;
-  const choice = value as { type?: string; name?: string; function?: { name?: string } };
-  if (choice.type === "none" || choice.type === "auto") return choice.type;
-  if (choice.type === "any" || choice.type === "required") return "required";
-  if (choice.type === "tool" && typeof choice.name === "string") {
-    return { type: "function", function: { name: choice.name } };
-  }
-  if (choice.type === "function" && typeof choice.function?.name === "string") return value;
-  return undefined;
+  if (!isRecord(value)) return undefined;
+  const type = recStr(value, "type");
+  if (type === "none" || type === "auto") return type;
+  if (type === "any" || type === "required") return "required";
+  const name = forcedToolName(value);
+  return name ? { type: "function", function: { name } } : undefined;
 }
 
 /** Convert Anthropic tool-choice variants to Responses API variants. */
-export function responsesToolChoice(value: unknown): unknown {
+export function responsesToolChoice(value: JsonValue): JsonValue | undefined {
   if (typeof value === "string") {
     if (value === "none" || value === "auto" || value === "required") return value;
     if (value === "any") return "required";
     return undefined;
   }
-  if (!value || typeof value !== "object") return undefined;
-  const choice = value as { type?: string; name?: string; function?: { name?: string } };
-  if (choice.type === "none" || choice.type === "auto" || choice.type === "required") return choice.type;
-  if (choice.type === "any") return "required";
-  if (choice.type === "tool" && typeof choice.name === "string") return { type: "function", name: choice.name };
-  if (choice.type === "function" && typeof choice.function?.name === "string") return { type: "function", name: choice.function.name };
-  return undefined;
+  if (!isRecord(value)) return undefined;
+  const type = recStr(value, "type");
+  if (type === "none" || type === "auto" || type === "required") return type;
+  if (type === "any") return "required";
+  const name = forcedToolName(value);
+  return name ? { type: "function", name } : undefined;
 }
 
-/** Convert Responses tool-choice variants to Anthropic's object-shaped tool_choice ({"type": "auto"|"any"|"none"|"tool", name?}). */
-export function anthropicToolChoice(value: unknown): unknown {
+/** Name of the tool a `{"type": "tool"|"function"}` choice forces, in either the Anthropic (top-level `name`) or Chat Completions (`function.name`) dialect. */
+function forcedToolName(choice: JsonRecord): string | undefined {
+  const type = recStr(choice, "type");
+  if (type !== "tool" && type !== "function") return undefined;
+  return recStr(choice, "name") ?? recStr(recObj(choice, "function"), "name");
+}
+
+/**
+ * Convert a Responses or Chat Completions tool-choice variant to Anthropic's
+ * object-shaped tool_choice ({"type": "auto"|"any"|"none"|"tool", name?}). The
+ * two dialects name the forced tool differently — Responses uses a top-level
+ * `name`, Chat Completions nests it under `function` — and both are accepted.
+ */
+export function anthropicToolChoice(value: unknown): JsonRecord | undefined {
   if (typeof value === "string") {
     if (value === "none" || value === "auto") return { type: value };
     if (value === "required") return { type: "any" };
     return undefined;
   }
-  if (!value || typeof value !== "object") return undefined;
-  const choice = value as { type?: string; name?: string };
-  if (choice.type === "function" && typeof choice.name === "string") return { type: "tool", name: choice.name };
-  return undefined;
+  if (!isRecord(value) || value.type !== "function") return undefined;
+  const name = recStr(value, "name") ?? recStr(recObj(value, "function"), "name");
+  return name ? { type: "tool", name } : undefined;
 }
 
 /**
@@ -112,7 +167,7 @@ export function anthropicThinking(effort: unknown): AnthropicThinking | undefine
 }
 
 /** Sampling knobs shared by both upstream protocols (undefined drops the key). */
-export function samplingParams(input: Record<string, any>): Record<string, unknown> {
+export function samplingParams(input: JsonRecord): JsonRecord {
   return {
     ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
     ...(input.top_p === undefined ? {} : { top_p: input.top_p }),
@@ -120,7 +175,7 @@ export function samplingParams(input: Record<string, any>): Record<string, unkno
   };
 }
 
-export function chatControlParams(input: any, deepSeek: boolean): Record<string, unknown> {
+export function chatControlParams(input: JsonRecord, deepSeek: boolean): JsonRecord {
   const thinking = deepSeek ? chatThinking(input) : undefined;
   const effort = deepSeek ? reasoningEffort(input) : undefined;
   const toolChoice = chatToolChoice(input.tool_choice);
@@ -129,11 +184,6 @@ export function chatControlParams(input: any, deepSeek: boolean): Record<string,
     ...(effort ? { reasoning_effort: effort } : {}),
     ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
   };
-}
-
-/** Best-effort JSON parse; malformed or absent input becomes `{}` rather than throwing. */
-export function parse(value: unknown): unknown {
-  try { return typeof value === "string" ? JSON.parse(value) : value ?? {}; } catch { return {}; }
 }
 
 /**
@@ -166,9 +216,17 @@ export function toolResultContent(content: unknown): ToolResultContent {
   if (!Array.isArray(content)) return { text: JSON.stringify(content), images: [] };
   const text: string[] = [];
   const images: string[] = [];
-  for (const part of content as any[]) {
-    if (part?.type === "text") { if (typeof part.text === "string") text.push(part.text); continue; }
-    if (part?.type === "image") { const url = imageDataUri(part.source); if (url) images.push(url); continue; }
+  for (const part of content as JsonValue[]) {
+    if (isRecord(part) && part.type === "text") {
+      const value = recStr(part, "text");
+      if (value !== undefined) text.push(value);
+      continue;
+    }
+    if (isRecord(part) && part.type === "image") {
+      const url = imageDataUri(recObj(part, "source"));
+      if (url) images.push(url);
+      continue;
+    }
     // Anthropic documents only text and image blocks here; anything else is
     // kept as text rather than dropped, so an unknown block still reaches the model.
     if (part !== undefined && part !== null) text.push(typeof part === "string" ? part : JSON.stringify(part));

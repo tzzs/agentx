@@ -20,7 +20,7 @@ function uuidOrUndefined(value: string | undefined): string | undefined {
 export function resumeSessionId(client: "claude" | "codex", commandArgs: string[]): string | undefined {
   if (client === "claude") {
     for (let i = 0; i < commandArgs.length; i++) {
-      const arg = commandArgs[i];
+      const arg = commandArgs[i] ?? "";
       if (arg === "--resume" || arg === "-r") return uuidOrUndefined(commandArgs[i + 1]);
       if (arg.startsWith("--resume=")) return uuidOrUndefined(arg.slice("--resume=".length));
     }

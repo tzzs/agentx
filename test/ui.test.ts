@@ -118,8 +118,8 @@ test("Add custom provider: registers it, persists connection metadata only, and 
   try {
     assert.equal(result, "my-local-llm");
     assert.equal(providerById("my-local-llm").custom, true);
-    assert.equal(providerById("my-local-llm").models[0].protocol, "anthropic");
-    assert.equal(providerById("my-local-llm").models[0].endpoint, "http://localhost:11434/v1/messages");
+    assert.equal(providerById("my-local-llm").models[0]?.protocol, "anthropic");
+    assert.equal(providerById("my-local-llm").models[0]?.endpoint, "http://localhost:11434/v1/messages");
     const persisted = await loadCustomProviders();
     assert.deepEqual(persisted["my-local-llm"], { name: "My Local LLM", baseUrl: "http://localhost:11434", protocol: "anthropic", model: "custom-model" });
     // Never anything key-shaped in the persisted record.
@@ -146,8 +146,8 @@ test("Add custom provider: the single Protocol screen maps each choice to the up
   const result = await resultPromise;
   try {
     assert.equal(result, "openai-responses");
-    assert.equal(providerById("openai-responses").models[0].protocol, "responses");
-    assert.equal(providerById("openai-responses").models[0].endpoint, "https://api.openai.com/v1/responses");
+    assert.equal(providerById("openai-responses").models[0]?.protocol, "responses");
+    assert.equal(providerById("openai-responses").models[0]?.endpoint, "https://api.openai.com/v1/responses");
   } finally {
     unregisterCustomProvider("openai-responses");
   }
@@ -195,8 +195,8 @@ test("runProviderManager: adds a custom provider, prints its key guidance, and e
 
   await manager;
   try {
-    assert.equal(providerById("config-test-llm").models[0].protocol, "chat-completions");
-    assert.equal(providerById("config-test-llm").models[0].endpoint, "http://localhost:11434/chat/completions");
+    assert.equal(providerById("config-test-llm").models[0]?.protocol, "chat-completions");
+    assert.equal(providerById("config-test-llm").models[0]?.endpoint, "http://localhost:11434/chat/completions");
     assert.ok((await loadCustomProviders())["config-test-llm"]);
     // No launch follows, so the manager must print how to persist the key.
     assert.match(tty.text, /AGENTX_CONFIG_TEST_LLM_API_KEY/);

@@ -14,11 +14,22 @@ export function periodStart(period: UsagePeriod, now = Date.now()): number | und
 }
 
 interface SqliteApi { DatabaseSync: new (location: string) => SqliteDatabase; }
+type SqlValue = string | number | bigint | null;
+/** node:sqlite returns one object per row; our aggregates alias every numeric column to its `TokenUsageRow` field name. */
+type SqlRow = { [column: string]: SqlValue };
+interface SqliteStatement {
+  run(...params: SqlValue[]): void;
+  get(...params: SqlValue[]): SqlRow | undefined;
+  all(...params: SqlValue[]): SqlRow[];
+}
 interface SqliteDatabase {
   exec(sql: string): void;
-  prepare(sql: string): { run(...args: any[]): void; get(...args: any[]): any; all(...args: any[]): any[] };
+  prepare(sql: string): SqliteStatement;
   close(): void;
 }
+
+/** Sums arrive as numbers, or as BigInts once a column outgrows the safe double range. */
+function num(value: SqlValue | undefined): number { return Number(value ?? 0); }
 
 let sqlitePromise: Promise<SqliteApi | undefined> | undefined;
 async function loadSqlite(): Promise<SqliteApi | undefined> {
@@ -30,7 +41,7 @@ export function sqliteAvailable(): Promise<boolean> { return loadSqlite().then((
 
 export class SqliteUsageStore implements UsageStore {
   private readonly db: SqliteDatabase;
-  private readonly insert: { run(...args: any[]): void };
+  private readonly insert: SqliteStatement;
 
   constructor(db: SqliteDatabase) {
     this.db = db;
@@ -49,7 +60,7 @@ export class SqliteUsageStore implements UsageStore {
       created_at INTEGER NOT NULL
     )`);
     // Older databases predate the cache_write_tokens column.
-    const columns = (this.db.prepare(`PRAGMA table_info(token_usage)`).all() as any[]).map((column) => column.name);
+    const columns = this.db.prepare(`PRAGMA table_info(token_usage)`).all().map((column) => String(column.name));
     if (!columns.includes("cache_write_tokens")) {
       this.db.exec(`ALTER TABLE token_usage ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0`);
     }
@@ -71,26 +82,26 @@ export class SqliteUsageStore implements UsageStore {
   }
 
   async sessionTotals(sessionId: string): Promise<UsageTotals> {
-    const row = this.db.prepare(`SELECT COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens, COALESCE(SUM(total_tokens),0) AS totalTokens FROM token_usage WHERE session_id = ?`).get(sessionId) as any;
-    return { inputTokens: Number(row.inputTokens), outputTokens: Number(row.outputTokens), totalTokens: Number(row.totalTokens) };
+    const row = this.db.prepare(`SELECT COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens, COALESCE(SUM(total_tokens),0) AS totalTokens FROM token_usage WHERE session_id = ?`).get(sessionId);
+    return { inputTokens: num(row?.inputTokens), outputTokens: num(row?.outputTokens), totalTokens: num(row?.totalTokens) };
   }
 
   async providerStats(period?: UsagePeriod): Promise<ProviderUsageStat[]> {
     const { clause, args } = this.where(period);
-    const rows = this.db.prepare(`SELECT provider, COALESCE(SUM(total_tokens),0) AS tokens, COUNT(*) AS requests FROM token_usage ${clause} GROUP BY provider ORDER BY tokens DESC, provider ASC`).all(...args) as any[];
-    return rows.map((row) => ({ provider: row.provider, tokens: Number(row.tokens), requests: Number(row.requests) }));
+    const rows = this.db.prepare(`SELECT provider, COALESCE(SUM(total_tokens),0) AS tokens, COUNT(*) AS requests FROM token_usage ${clause} GROUP BY provider ORDER BY tokens DESC, provider ASC`).all(...args);
+    return rows.map((row) => ({ provider: String(row.provider), tokens: num(row.tokens), requests: num(row.requests) }));
   }
 
   async modelStats(period?: UsagePeriod): Promise<ModelUsageStat[]> {
     const { clause, args } = this.where(period);
-    const rows = this.db.prepare(`SELECT provider, model, COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens, COALESCE(SUM(cached_tokens),0) AS cachedTokens, COALESCE(SUM(cache_write_tokens),0) AS cacheWriteTokens, COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens, COALESCE(SUM(total_tokens),0) AS tokens, COUNT(*) AS requests FROM token_usage ${clause} GROUP BY provider, model ORDER BY tokens DESC, provider ASC, model ASC`).all(...args) as any[];
-    return rows.map((row) => ({ provider: row.provider, model: row.model, inputTokens: Number(row.inputTokens), outputTokens: Number(row.outputTokens), cachedTokens: Number(row.cachedTokens), cacheWriteTokens: Number(row.cacheWriteTokens), reasoningTokens: Number(row.reasoningTokens), tokens: Number(row.tokens), requests: Number(row.requests) }));
+    const rows = this.db.prepare(`SELECT provider, model, COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens, COALESCE(SUM(cached_tokens),0) AS cachedTokens, COALESCE(SUM(cache_write_tokens),0) AS cacheWriteTokens, COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens, COALESCE(SUM(total_tokens),0) AS tokens, COUNT(*) AS requests FROM token_usage ${clause} GROUP BY provider, model ORDER BY tokens DESC, provider ASC, model ASC`).all(...args);
+    return rows.map((row) => ({ provider: String(row.provider), model: String(row.model), inputTokens: num(row.inputTokens), outputTokens: num(row.outputTokens), cachedTokens: num(row.cachedTokens), cacheWriteTokens: num(row.cacheWriteTokens), reasoningTokens: num(row.reasoningTokens), tokens: num(row.tokens), requests: num(row.requests) }));
   }
 
   async totals(period?: UsagePeriod): Promise<UsageTotals> {
     const { clause, args } = this.where(period);
-    const row = this.db.prepare(`SELECT COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens, COALESCE(SUM(total_tokens),0) AS totalTokens FROM token_usage ${clause}`).get(...args) as any;
-    return { inputTokens: Number(row.inputTokens), outputTokens: Number(row.outputTokens), totalTokens: Number(row.totalTokens) };
+    const row = this.db.prepare(`SELECT COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens, COALESCE(SUM(total_tokens),0) AS totalTokens FROM token_usage ${clause}`).get(...args);
+    return { inputTokens: num(row?.inputTokens), outputTokens: num(row?.outputTokens), totalTokens: num(row?.totalTokens) };
   }
 
   async close(): Promise<void> { this.db.close(); }
@@ -153,7 +164,7 @@ export function defaultUsageLocation(backend: StoreBackend): string {
   return join(base, backend === "json" ? "usage.json" : "usage.db");
 }
 
-export function defaultStoreBackend(): StoreBackend {
+function defaultStoreBackend(): StoreBackend {
   const value = process.env.AGENTX_USAGE_BACKEND;
   return value === "json" || value === "memory" || value === "sqlite" ? value : "sqlite";
 }

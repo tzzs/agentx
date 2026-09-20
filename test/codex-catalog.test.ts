@@ -57,7 +57,7 @@ test("includes a custom provider's free-form model id so Codex can resolve it", 
     registerCustomProvider({ name: "Catalog Custom", baseUrl: "http://catalog.invalid", protocol: "chat-completions" });
     const models = catalogModels({ provider: "catalog-custom", model: "deepseek-flash" }, []);
     assert.deepEqual(models.map((item) => item.model), ["deepseek-flash"]);
-    assert.equal(models[0].provider, "catalog-custom");
+    assert.equal(models[0]?.provider, "catalog-custom");
   } finally { unregisterCustomProvider("catalog-custom"); }
 });
 

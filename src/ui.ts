@@ -21,7 +21,6 @@ function stdio() { return { input: io.input, output: io.output }; }
  * Test-only seam: point every prompt this module renders at fake streams
  * instead of real process stdio, so the interactive flows (Add/Remove custom
  * provider, provider/model pickers, …) are actually drivable in tests.
- * Mirrors the `setCachedOpenRouter` isolation seam in providers/registry.ts.
  */
 export function __setTestIO(next: { input: NodeJS.ReadStream; output: NodeJS.WriteStream }): void { io = next; }
 /** Restore real process stdio after a test that called `__setTestIO`. */
@@ -437,7 +436,7 @@ async function selectModel(provider: string, current: string): Promise<string | 
   }
   // A fresh custom endpoint has no real registry model and no saved id: asking
   // for the model id directly beats a picker whose only entry is free-form.
-  if (custom && options.length === 1 && options[0].value === CUSTOM_MODEL_OPTION) {
+  if (custom && options.length === 1 && options[0]?.value === CUSTOM_MODEL_OPTION) {
     return promptCustomModelId(providerLabel(provider), "");
   }
   // A stale saved default may hold the removed "auto" marker; show a concrete
@@ -574,7 +573,7 @@ async function selectTopLevelAction(
   // "Start" to fall back to; cases without a saved default always default
   // the cursor to the primary (first) option instead.
   const lastAction = defaultApplied ? await loadLastQuickAction(client) : undefined;
-  const initialValue = lastAction === "native" && nativeCapable ? "native" : options[0].value;
+  const initialValue = lastAction === "native" && nativeCapable ? "native" : options[0]?.value;
 
   return select({ message: "", options, initialValue, ...stdio() });
 }
