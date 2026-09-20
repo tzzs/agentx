@@ -1,7 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { chatResponseFailure, fromAnthropicResponse, fromAnthropicResponseToChat, fromChatResponse, fromChatResponseToResponses, fromResponsesResponse, fromResponsesResponseToChat, responsesResponseFailure, toAnthropicRequest, toAnthropicRequestFromChat, toChatCompletionsRequest, toChatRequest, toResponsesRequest, toResponsesRequestFromChat } from "./convert/index.js";
+import { asAnthropicRequest, chatResponseFailure, fromAnthropicResponse, fromAnthropicResponseToChat, fromChatResponse, fromChatResponseToResponses, fromResponsesResponse, fromResponsesResponseToChat, responsesResponseFailure, toAnthropicRequest, toAnthropicRequestFromChat, toChatCompletionsRequest, toChatRequest, toResponsesRequest, toResponsesRequestFromChat } from "./convert/index.js";
+import type { JsonRecord } from "./json.js";
+import { jsonRecord, recStr } from "./json.js";
 import { pipeAnthropicPassthrough, pipeAnthropicStreamToChat, pipeAnthropicStreamToResponses, pipeChatPassthrough, pipeChatStreamToResponses, pipeResponsesPassthrough, pipeResponsesStream, pipeResponsesStreamToChat, type StreamUsageOptions } from "./streaming/index.js";
 import type { ProviderModel, ProviderProtocol } from "./providers/types.js";
 import type { TokenUsage } from "./usage/types.js";
@@ -188,16 +190,16 @@ async function proxyRequest(
   response: ServerResponse,
   token: string,
   fallbackModel: string,
-  payload: (input: any, model: string, provider: ProviderModel) => unknown,
+  payload: (input: JsonRecord, model: string, provider: ProviderModel) => unknown,
   maxBodyBytes = MAX_BODY_BYTES,
-): Promise<{ input: any; model: string; provider: ProviderModel; watched: Response } | undefined> {
+): Promise<{ input: JsonRecord; model: string; provider: ProviderModel; watched: Response } | undefined> {
   if (!authorized(request, token)) { json(response, 401, { error: { message: "Invalid API key", type: "authentication_error" } }); return undefined; }
   try {
-    const input = JSON.parse(await body(request, maxBodyBytes));
+    const input = jsonRecord(JSON.parse(await body(request, maxBodyBytes)));
     // The endpoint decides which model id counts as "configured"; clients
     // that echo a preferred model (e.g. Codex sending OPENAI_MODEL=auto back)
     // are honored per honorRequestedModel's rules.
-    const model = honorRequestedModel(input.model, fallbackModel, config.provider);
+    const model = honorRequestedModel(recStr(input, "model"), fallbackModel, config.provider);
     debug(config, `POST ${request.url} model=${model}`);
     const provider = providerFor(model, config.provider); const apiKey = apiKeyFor(provider, config.apiKey);
     const payloadBody = payload(input, model, provider);
@@ -224,12 +226,12 @@ async function proxyRequest(
  * to the Anthropic pipe, never the Responses one).
  */
 interface EndpointSpec {
-  payloads: Record<ProviderProtocol, (input: any, model: string, provider: ProviderModel) => unknown>;
+  payloads: Record<ProviderProtocol, (input: JsonRecord, model: string, provider: ProviderModel) => unknown>;
   pipes: Record<ProviderProtocol, (upstream: Response, response: ServerResponse, model: string, options: StreamUsageOptions) => Promise<void>>;
   /** Non-stream JSON translation; an upstream-reported failure maps to a 502 instead. */
-  finish(upstream: unknown, provider: ProviderModel, model: string): unknown;
+  finish(upstream: JsonRecord, provider: ProviderModel, model: string): unknown;
   /** In-band failure message carried by a non-OK-shaped 200 payload, if any. */
-  failure?(upstream: unknown, provider: ProviderModel): string | undefined;
+  failure?(upstream: JsonRecord, provider: ProviderModel): string | undefined;
 }
 
 const ENDPOINT_SPECS: Record<"responses" | "chat" | "messages", EndpointSpec> = {
@@ -267,8 +269,8 @@ const ENDPOINT_SPECS: Record<"responses" | "chat" | "messages", EndpointSpec> = 
   },
   messages: {
     payloads: {
-      "responses": (input, model) => toResponsesRequest(input, model),
-      "chat-completions": (input, model, provider) => toChatRequest(input, model, provider.provider),
+      "responses": (input, model) => toResponsesRequest(asAnthropicRequest(input), model),
+      "chat-completions": (input, model, provider) => toChatRequest(asAnthropicRequest(input), model, provider.provider),
       // already Anthropic-shaped; zero conversion
       "anthropic": (input, model) => ({ ...input, model }),
     },
@@ -295,10 +297,10 @@ export async function startAdapter(config: Config, options: AdapterOptions = {})
   const maxBodyBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
   const closeGraceMs = options.closeGraceMs ?? 3_000;
   const sessionId = randomUUID();
-  const sessionFor = (input: any) => typeof input?.session_id === "string" ? input.session_id : sessionId;
+  const sessionFor = (input: JsonRecord) => recStr(input, "session_id") ?? sessionId;
   /** Record one usage row, swallowing persistence errors into debug logs. */
   const safeRecord = (usage: TokenUsage) => { void collector.record(usage).catch((error) => debug(config, `usage record error=${error instanceof Error ? error.message : "unknown"}`)); };
-  const recordUsage = (value: any, provider: ProviderModel, session: string) => { const usage = extractUsage(value, provider, { sessionId: session }); if (usage) safeRecord(usage); };
+  const recordUsage = (value: JsonRecord, provider: ProviderModel, session: string) => { const usage = extractUsage(value, provider, { sessionId: session }); if (usage) safeRecord(usage); };
   const handleRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     debug(config, `${request.method} ${request.url}`);
     const url = new URL(request.url ?? "/", "http://localhost");

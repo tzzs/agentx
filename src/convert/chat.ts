@@ -4,85 +4,99 @@
  * Completions protocol.
  */
 import type { AnthropicMessage, AnthropicRequest } from "./shared.js";
-import { chatControlParams, imageDataUri, parse, samplingParams } from "./shared.js";
+import type { JsonRecord, JsonValue } from "../json.js";
+import { isRecord, parse, recNum, recObj, recObjs, recStr } from "../json.js";
+import { chatControlParams, collapseAnthropicContent, imageDataUri, samplingParams } from "./shared.js";
 import { isDeepSeekLongContextModel } from "../providers/registry.js";
 
+/** One Chat Completions message as sent upstream (or received back). */
+type ChatMessage = JsonRecord;
+
 export function toChatRequest(input: AnthropicRequest, model: string, provider?: string) {
-  const messages: any[] = [];
+  const messages: ChatMessage[] = [];
   if (input.system) messages.push({ role: "system", content: typeof input.system === "string" ? input.system : input.system.map((part) => part.text ?? "").join("\n") });
   const deepSeek = provider === "deepseek" || isDeepSeekLongContextModel(model);
   for (const message of input.messages) messages.push(...toChatMessages(message, deepSeek));
-  return { model, messages, ...(input.max_tokens === undefined ? {} : { max_tokens: input.max_tokens }), ...(input.stream ? { stream: true } : {}), ...samplingParams(input as any), ...chatControlParams(input, deepSeek), ...(input.tools ? { tools: input.tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })) } : {}) };
+  return { model, messages, ...(input.max_tokens === undefined ? {} : { max_tokens: input.max_tokens }), ...(input.stream ? { stream: true } : {}), ...samplingParams(input), ...chatControlParams(input, deepSeek), ...(input.tools ? { tools: input.tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } })) } : {}) };
 }
 
-function toChatImagePart(part: any): any | undefined {
-  const url = imageDataUri(part?.source);
+function toChatImagePart(part: JsonRecord | undefined): ChatMessage | undefined {
+  const url = imageDataUri(recObj(part, "source"));
   return url ? { type: "image_url", image_url: { url } } : undefined;
 }
 
-function toChatMessages(message: AnthropicMessage, preserveReasoning = false): any[] {
+function toChatMessages(message: AnthropicMessage, preserveReasoning = false): ChatMessage[] {
   if (!Array.isArray(message.content)) return [{ role: message.role, content: message.content ?? "" }];
-  const parts: any[] = [];
-  const toolCalls: any[] = [];
-  const toolResults: any[] = [];
+  const parts: ChatMessage[] = [];
+  const toolCalls: ChatMessage[] = [];
+  const toolResults: ChatMessage[] = [];
   let reasoning = "";
   const pushText = (text: string) => {
     if (!text) return;
     const last = parts[parts.length - 1];
-    if (last?.type === "text") last.text += text;
+    if (last?.type === "text") last.text = `${recStr(last, "text") ?? ""}${text}`;
     else parts.push({ type: "text", text });
   };
-  for (const part of message.content) {
+  for (const raw of message.content) {
+    if (!isRecord(raw)) continue;
+    const part = raw;
     if (part.type === "tool_use") {
-      toolCalls.push({ id: part.id, type: "function", function: { name: part.name, arguments: JSON.stringify(part.input ?? {}) } });
+      toolCalls.push({ id: recStr(part, "id"), type: "function", function: { name: recStr(part, "name"), arguments: JSON.stringify(part.input ?? {}) } });
     } else if (part.type === "tool_result") {
       toolResults.push({ role: "tool", tool_call_id: part.tool_use_id, content: typeof part.content === "string" ? part.content : JSON.stringify(part.content ?? "") });
     } else if (part.type === "text") {
-      pushText(part.text ?? "");
+      pushText(recStr(part, "text") ?? "");
     } else if (part.type === "thinking" && preserveReasoning && message.role === "assistant") {
-      if (typeof part.thinking === "string") reasoning += part.thinking;
+      const thinking = recStr(part, "thinking");
+      if (thinking) reasoning += thinking;
     } else if (part.type === "image") {
       const image = toChatImagePart(part);
       if (image) parts.push(image);
     }
   }
-  const output: any[] = [];
+  const output: ChatMessage[] = [];
   if (message.role === "assistant" && (parts.length || toolCalls.length || reasoning)) {
-    const assistant: any = {
+    output.push({
       role: "assistant",
-      content: parts.length
-        ? parts.every((part) => part.type === "text") ? parts.map((part) => part.text).join("") : parts
-        : null,
+      content: parts.length ? collapseAnthropicContent(parts) : null,
       ...(reasoning ? { reasoning_content: reasoning } : {}),
       ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
-    };
-    output.push(assistant);
+    });
   } else if (parts.length) {
-    output.push({ role: message.role, content: parts.every((part) => part.type === "text") ? parts.map((part) => part.text).join("") : parts });
+    output.push({ role: message.role, content: collapseAnthropicContent(parts) });
   }
   output.push(...toolResults);
   return output;
 }
 /** Plain text of a chat message content, ignoring non-text parts (images etc.). */
-function chatText(content: any): string {
+function chatText(content: unknown): string {
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.filter((part) => part?.type === "text").map((part) => part.text ?? "").join("");
+  if (Array.isArray(content)) return content.filter(isRecord).filter((part) => part.type === "text").map((part) => recStr(part, "text") ?? "").join("");
   return "";
 }
 
-export function fromChatResponse(response: any, model: string): Record<string, unknown> {
-  const choice = response.choices?.[0] ?? {}; const message = choice.message ?? {}; const content = [];
-  if (message.reasoning_content) content.push({ type: "thinking", thinking: message.reasoning_content });
+/** Nested usage details of a Chat Completions response (`prompt_tokens_details`, …). */
+function chatUsageDetails(response: JsonRecord, usageKey: string, detailKey: string, field: string): number | undefined {
+  return recNum(recObj(recObj(response, usageKey), detailKey), field);
+}
+
+export function fromChatResponse(response: JsonRecord, model: string): JsonRecord {
+  const choice = recObjs(response, "choices")[0] ?? {}; const message = recObj(choice, "message") ?? {}; const content: JsonRecord[] = [];
+  const reasoningContent = recStr(message, "reasoning_content");
+  if (reasoningContent) content.push({ type: "thinking", thinking: reasoningContent });
   const text = chatText(message.content);
   if (text) content.push({ type: "text", text });
-  for (const call of message.tool_calls ?? []) content.push({ type: "tool_use", id: call.id, name: call.function?.name, input: parse(call.function?.arguments) });
+  for (const call of recObjs(message, "tool_calls")) content.push({ type: "tool_use", id: recStr(call, "id"), name: recStr(recObj(call, "function"), "name"), input: parse(recStr(recObj(call, "function"), "arguments")) });
   const finishReason = choice.finish_reason;
-  return { id: response.id ?? `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model, content, stop_reason: message.tool_calls?.length ? "tool_use" : finishReason === "length" ? "max_tokens" : finishReason === "stop" || finishReason === undefined ? "end_turn" : "max_tokens", stop_sequence: null, usage: { input_tokens: response.usage?.prompt_tokens ?? 0, output_tokens: response.usage?.completion_tokens ?? 0, cache_creation_input_tokens: 0, cache_read_input_tokens: response.usage?.prompt_tokens_details?.cached_tokens ?? 0 } };
+  const usage = recObj(response, "usage");
+  const toolCallCount = recObjs(message, "tool_calls").length;
+  return { id: recStr(response, "id") ?? `msg_${crypto.randomUUID()}`, type: "message", role: "assistant", model, content, stop_reason: toolCallCount ? "tool_use" : finishReason === "length" ? "max_tokens" : finishReason === "stop" || finishReason === undefined ? "end_turn" : "max_tokens", stop_sequence: null, usage: { input_tokens: recNum(usage, "prompt_tokens") ?? 0, output_tokens: recNum(usage, "completion_tokens") ?? 0, cache_creation_input_tokens: 0, cache_read_input_tokens: chatUsageDetails(response, "usage", "prompt_tokens_details", "cached_tokens") ?? 0 } };
 }
 
 /** Return a failure for a provider completion that is not a normal stop. */
-export function chatResponseFailure(response: any): string | undefined {
-  const reason = response?.choices?.[0]?.finish_reason;
+export function chatResponseFailure(response: unknown): string | undefined {
+  if (!isRecord(response)) return undefined;
+  const reason = recObjs(response, "choices")[0]?.finish_reason;
   if (reason === undefined || reason === null || reason === "stop" || reason === "length" || reason === "tool_calls" || reason === "function_call") return undefined;
   if (reason === "insufficient_system_resource") return "The upstream model stopped because inference resources were insufficient.";
   if (reason === "content_filter") return "The upstream model stopped because the response was filtered.";
@@ -97,22 +111,26 @@ export function chatResponseFailure(response: any): string | undefined {
  * dropped rather than forwarded as nameless function entries, which strict
  * upstreams reject as invalid parameters.
  */
-function toChatTools(tools: unknown): any[] {
-  return Array.isArray(tools) ? tools.flatMap((tool: any) => {
-    if (Array.isArray(tool?.tools)) return toChatTools(tool.tools);
+function toChatTools(tools: unknown): JsonRecord[] {
+  return Array.isArray(tools) ? tools.flatMap((raw: unknown) => {
+    if (!isRecord(raw)) return [];
+    if (Array.isArray(raw.tools)) return toChatTools(raw.tools);
     // Server-side built-ins (typed, no nested function) have no chat
     // representation; everything else must resolve to a named function.
-    if (tool?.type !== undefined && tool.type !== "function" && !tool.function) return [];
-    const source = tool?.function ?? tool;
-    if (!source || typeof source.name !== "string" || !source.name) return [];
-    return [{ type: "function", function: { name: source.name, ...(source.description === undefined ? {} : { description: source.description }), ...(source.parameters === undefined ? {} : { parameters: source.parameters }) } }];
+    if (raw.type !== undefined && raw.type !== "function" && !raw.function) return [];
+    const source = recObj(raw, "function") ?? raw;
+    const name = recStr(source, "name");
+    if (!name) return [];
+    return [{ type: "function", function: { name, ...(source.description === undefined ? {} : { description: source.description }), ...(source.parameters === undefined ? {} : { parameters: source.parameters }) } }];
   }) : [];
 }
 
-export function toChatCompletionsRequest(input: any, model: string, provider?: string) {
-  const messages: any[] = [];
-  if (input.instructions) messages.push({ role: "system", content: input.instructions });
-  const items = typeof input.input === "string" ? [{ role: "user", content: input.input }] : input.input ?? [];
+export function toChatCompletionsRequest(input: JsonRecord, model: string, provider?: string) {
+  const messages: ChatMessage[] = [];
+  const instructions = recStr(input, "instructions");
+  if (instructions) messages.push({ role: "system", content: instructions });
+  const rawInput = input.input;
+  const items: JsonRecord[] = typeof rawInput === "string" ? [{ role: "user", content: rawInput }] : Array.isArray(rawInput) ? rawInput.filter(isRecord) : [];
   // reasoning_content is a DeepSeek-specific extension; forwarding it to other
   // chat-completions upstreams risks a strict schema rejecting the request.
   const deepSeek = provider === "deepseek" || isDeepSeekLongContextModel(model);
@@ -121,12 +139,12 @@ export function toChatCompletionsRequest(input: any, model: string, provider?: s
     if (item.type === "reasoning") {
       if (deepSeek) pendingReasoning += responseReasoningText(item);
     } else if (item.type === "function_call") {
-      const call = { id: item.call_id ?? item.id, type: "function", function: { name: item.name, arguments: item.arguments ?? "{}" } };
+      const call = { id: recStr(item, "call_id") ?? recStr(item, "id"), type: "function", function: { name: recStr(item, "name"), arguments: recStr(item, "arguments") ?? "{}" } };
       messages.push({ role: "assistant", content: null, ...(pendingReasoning ? { reasoning_content: pendingReasoning } : {}), tool_calls: [call] });
       pendingReasoning = "";
     } else if (item.type === "function_call_output") {
       messages.push({ role: "tool", tool_call_id: item.call_id, content: typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "") });
-    } else if (item.role) {
+    } else if (typeof item.role === "string") {
       const role = item.role === "developer" ? "system" : item.role;
       messages.push({ role, content: responseContent(item.content), ...(role === "assistant" && pendingReasoning ? { reasoning_content: pendingReasoning } : {}) });
       pendingReasoning = "";
@@ -137,34 +155,39 @@ export function toChatCompletionsRequest(input: any, model: string, provider?: s
   return { model, messages, ...(input.max_output_tokens === undefined ? {} : { max_tokens: input.max_output_tokens }), ...(input.stream ? { stream: true } : {}), ...samplingParams(input), ...chatControlParams(input, deepSeek), ...(tools.length ? { tools } : {}) };
 }
 
-function responseReasoningText(item: any): string {
-  return (item.summary ?? [])
-    .filter((part: any) => part?.type === "summary_text" && typeof part.text === "string")
-    .map((part: any) => part.text)
+function responseReasoningText(item: JsonRecord): string {
+  return recObjs(item, "summary")
+    .filter((part) => part.type === "summary_text" && typeof part.text === "string")
+    .map((part) => recStr(part, "text") ?? "")
     .join("");
 }
 
-export function fromChatResponseToResponses(response: any, model: string): Record<string, unknown> {
-  const choice = response.choices?.[0] ?? {}; const message = choice.message ?? {}; const output: any[] = [];
-  if (message.reasoning_content) output.push({ type: "reasoning", id: `rs_${crypto.randomUUID()}`, summary: [{ type: "summary_text", text: message.reasoning_content }] });
+export function fromChatResponseToResponses(response: JsonRecord, model: string): JsonRecord {
+  const choice = recObjs(response, "choices")[0] ?? {}; const message = recObj(choice, "message") ?? {}; const output: JsonRecord[] = [];
+  const reasoningContent = recStr(message, "reasoning_content");
+  if (reasoningContent) output.push({ type: "reasoning", id: `rs_${crypto.randomUUID()}`, summary: [{ type: "summary_text", text: reasoningContent }] });
   const text = chatText(message.content);
   if (text) output.push({ type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text }] });
-  for (const call of message.tool_calls ?? []) output.push({ type: "function_call", call_id: call.id, name: call.function?.name, arguments: call.function?.arguments ?? "{}", status: "completed" });
-  const cached = response.usage?.prompt_tokens_details?.cached_tokens;
-  const reasoning = response.usage?.completion_tokens_details?.reasoning_tokens;
+  for (const call of recObjs(message, "tool_calls")) output.push({ type: "function_call", call_id: recStr(call, "id"), name: recStr(recObj(call, "function"), "name"), arguments: recStr(recObj(call, "function"), "arguments") ?? "{}", status: "completed" });
+  const usage = recObj(response, "usage");
+  const cached = chatUsageDetails(response, "usage", "prompt_tokens_details", "cached_tokens");
+  const reasoningTokens = chatUsageDetails(response, "usage", "completion_tokens_details", "reasoning_tokens");
   const incomplete = choice.finish_reason === "length";
-  return { id: response.id ?? `resp_${crypto.randomUUID()}`, object: "response", status: incomplete ? "incomplete" : "completed", model, output, usage: { input_tokens: response.usage?.prompt_tokens ?? 0, output_tokens: response.usage?.completion_tokens ?? 0, total_tokens: response.usage?.total_tokens ?? 0, ...(cached !== undefined && cached !== null ? { input_tokens_details: { cached_tokens: Number(cached) } } : {}), ...(reasoning !== undefined && reasoning !== null ? { output_tokens_details: { reasoning_tokens: Number(reasoning) } } : {}) }, ...(incomplete ? { incomplete_details: { reason: "max_output_tokens" } } : {}) };
+  return { id: recStr(response, "id") ?? `resp_${crypto.randomUUID()}`, object: "response", status: incomplete ? "incomplete" : "completed", model, output, usage: { input_tokens: recNum(usage, "prompt_tokens") ?? 0, output_tokens: recNum(usage, "completion_tokens") ?? 0, total_tokens: recNum(usage, "total_tokens") ?? 0, ...(cached !== undefined ? { input_tokens_details: { cached_tokens: Number(cached) } } : {}), ...(reasoningTokens !== undefined ? { output_tokens_details: { reasoning_tokens: Number(reasoningTokens) } } : {}) }, ...(incomplete ? { incomplete_details: { reason: "max_output_tokens" } } : {}) };
 }
 
-function responseContent(content: any): any {
+function responseContent(content: JsonValue): JsonValue {
   if (!Array.isArray(content)) return content ?? "";
-  const parts = content.map((part) => {
-    if (part == null || part === "") return undefined;
-    if (part.type === "input_text" || part.type === "output_text") return part.text ?? "" ? { type: "text", text: part.text ?? "" } : undefined;
-    if (part.type === "input_image" && part.image_url) return { type: "image_url", image_url: { url: part.image_url } };
-    return typeof part === "string" ? { type: "text", text: part } : part;
-  }).filter((part) => part !== undefined);
-  if (!parts.length) return "";
-  // Plain text stays a string; anything structured keeps the content array.
-  return parts.every((part) => part.type === "text") ? parts.map((part) => part.text).join("") : parts;
+  const parts: JsonRecord[] = [];
+  for (const raw of content) {
+    // Bare strings are the common shorthand for a text part.
+    if (typeof raw === "string") { if (raw) parts.push({ type: "text", text: raw }); continue; }
+    if (!isRecord(raw)) continue;
+    const text = recStr(raw, "text") ?? "";
+    if (raw.type === "input_text" || raw.type === "output_text") { if (text) parts.push({ type: "text", text }); continue; }
+    const url = recStr(raw, "image_url");
+    if (raw.type === "input_image" && url) { parts.push({ type: "image_url", image_url: { url } }); continue; }
+    parts.push(raw);
+  }
+  return collapseAnthropicContent(parts);
 }

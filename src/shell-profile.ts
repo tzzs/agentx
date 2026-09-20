@@ -45,6 +45,7 @@ export function parseCredentialExports(content: string): Map<string, string> {
   const block = /# >>> agentx credentials: ([A-Za-z_][A-Za-z0-9_]*) >>>\nexport ([A-Za-z_][A-Za-z0-9_]*)=('(?:[^']|'\\'')*')\n# <<< agentx credentials: ([A-Za-z_][A-Za-z0-9_]*) <<</g;
   for (const match of content.matchAll(block)) {
     const [, startName, exportName, raw, endName] = match;
+    if (!startName || !raw) continue;
     if (startName !== exportName || startName !== endName) continue;
     credentials.set(startName, raw.slice(1, -1).replaceAll("'\\''", "'"));
   }

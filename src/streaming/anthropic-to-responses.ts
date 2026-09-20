@@ -5,6 +5,7 @@ import {
   newUsageCapture, reportUsage, usageCapture, withSsePipe, UpstreamFailure,
   type ReasoningState, type StreamUsageOptions,
 } from "./common.js";
+import { jsonRecord, recNum, recObj, recStr } from "../json.js";
 
 /**
  * Pipe a native Anthropic Messages SSE stream into Codex-style Responses
@@ -34,39 +35,47 @@ export async function pipeAnthropicStreamToResponses(upstream: Response, respons
       const value = dataLine(line);
       if (!value) return;
       try {
-        const item = JSON.parse(value);
+        const item = jsonRecord(JSON.parse(value));
         const failure = failureMessage(item);
         if (failure) throw new UpstreamFailure(failure);
-        if (item.type === "message_start" && item.message?.usage) usage.usage(item.message.usage);
+        const startUsage = recObj(recObj(item, "message"), "usage");
+        if (item.type === "message_start" && startUsage) usage.usage(startUsage);
+        const index = recNum(item, "index") ?? 0;
+        const contentBlock = recObj(item, "content_block");
         if (item.type === "content_block_start") {
-          const blockType = item.content_block?.type;
+          const blockType = recStr(contentBlock, "type");
           if (blockType === "tool_use") {
-            const call = { id: item.content_block.id ?? `call_${item.index}`, name: item.content_block.name ?? "", arguments: "" };
-            calls.set(item.index, call);
-            event(response, "response.output_item.added", { type: "response.output_item.added", output_index: item.index, item: { type: "function_call", id: `fc_${item.index}`, call_id: call.id, name: call.name, arguments: "", status: "in_progress" } });
+            const call = { id: recStr(contentBlock, "id") ?? `call_${index}`, name: recStr(contentBlock, "name") ?? "", arguments: "" };
+            calls.set(index, call);
+            event(response, "response.output_item.added", { type: "response.output_item.added", output_index: index, item: { type: "function_call", id: `fc_${index}`, call_id: call.id, name: call.name, arguments: "", status: "in_progress" } });
           } else if (blockType === "thinking") {
             announceReasoning(response, reasoning);
           }
         }
+        const delta = recObj(item, "delta");
         if (item.type === "content_block_delta") {
-          const delta = item.delta ?? {};
-          if (delta.type === "text_delta" && typeof delta.text === "string") {
+          const deltaType = recStr(delta, "type");
+          const textDelta = recStr(delta, "text");
+          const thinkingDelta = recStr(delta, "thinking");
+          const partialJson = recStr(delta, "partial_json");
+          if (deltaType === "text_delta" && textDelta !== undefined) {
             announceMessageItem(response, msgId, messageAnnounced);
-            text += delta.text; capture.output++;
-            emitTextDelta(response, msgId, delta.text);
-          } else if (delta.type === "thinking_delta" && typeof delta.thinking === "string") {
-            emitReasoningDelta(response, reasoning, delta.thinking);
-          } else if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
-            const call = calls.get(item.index);
+            text += textDelta; capture.output++;
+            emitTextDelta(response, msgId, textDelta);
+          } else if (deltaType === "thinking_delta" && thinkingDelta !== undefined) {
+            emitReasoningDelta(response, reasoning, thinkingDelta);
+          } else if (deltaType === "input_json_delta" && partialJson !== undefined) {
+            const call = calls.get(index);
             if (call) {
-              call.arguments += delta.partial_json;
-              emitFunctionCallDelta(response, { itemId: `fc_${item.index}`, outputIndex: item.index, callId: call.id, delta: delta.partial_json });
+              call.arguments += partialJson;
+              emitFunctionCallDelta(response, { itemId: `fc_${index}`, outputIndex: index, callId: call.id, delta: partialJson });
             }
           }
         }
         if (item.type === "message_delta") {
-          if (item.delta?.stop_reason === "max_tokens") truncated = true;
-          if (item.usage) usage.usage(item.usage);
+          if (recStr(recObj(item, "delta"), "stop_reason") === "max_tokens") truncated = true;
+          const deltaUsage = recObj(item, "usage");
+          if (deltaUsage) usage.usage(deltaUsage);
         }
         if (item.type === "message_stop") sawMessageStop = true;
       } catch (error) {

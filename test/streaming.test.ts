@@ -258,8 +258,8 @@ test("pipeAnthropicPassthrough forwards a native Anthropic SSE stream byte-for-b
   await pipeAnthropicPassthrough(upstream, output as never, "claude-x", { provider: "custom", model: "claude-x", protocol: "anthropic", onUsage: (usage) => usages.push(usage) });
   // Byte-faithful: every upstream chunk appears verbatim in the forwarded output.
   for (const chunk of chunks) assert.ok(output.text.includes(chunk));
-  assert.equal(usages[0].inputTokens, 10);
-  assert.equal(usages[0].outputTokens, 5);
+  assert.equal(usages[0]?.inputTokens, 10);
+  assert.equal(usages[0]?.outputTokens, 5);
 });
 
 test("pipeAnthropicPassthrough emits an Anthropic error event on upstream failure", async () => {
@@ -331,9 +331,9 @@ test("pipeAnthropicStreamToResponses reports input/output/cached usage from mess
   const output = sink();
   const usages: TokenUsage[] = [];
   await pipeAnthropicStreamToResponses(upstream, output as never, "claude-x", { provider: "custom", model: "claude-x", protocol: "anthropic", onUsage: (usage) => usages.push(usage) });
-  assert.equal(usages[0].inputTokens, 50);
-  assert.equal(usages[0].outputTokens, 9);
-  assert.equal(usages[0].cachedInputTokens, 40);
+  assert.equal(usages[0]?.inputTokens, 50);
+  assert.equal(usages[0]?.outputTokens, 9);
+  assert.equal(usages[0]?.cachedInputTokens, 40);
 });
 
 test("pipeAnthropicStreamToResponses emits response.failed when the upstream stream fails mid-flight", async () => {

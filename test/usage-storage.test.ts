@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createUsageStore, defaultUsageStore, defaultUsageLocation, periodStart, sqliteAvailable } from "../src/usage/storage.js";
+import { createUsageStore, defaultUsageStore, periodStart, sqliteAvailable } from "../src/usage/storage.js";
 import { TokenUsageCollector, normalizeUsage } from "../src/usage/collector.js";
 import type { TokenUsage } from "../src/usage/types.js";
 
@@ -109,7 +109,7 @@ test("json file store handles concurrent reads after a write", async () => {
     const [models, totals] = await Promise.all([store.modelStats("all"), store.totals("all")]);
     assert.equal(totals.inputTokens, 100);
     assert.equal(totals.outputTokens, 25);
-    assert.equal(models[0].tokens, 125);
+    assert.equal(models[0]?.tokens, 125);
     await store.close();
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
@@ -139,7 +139,7 @@ test("cache write tokens survive normalization, storage, and stats", async () =>
   await store.record(normalizeUsage(sample({ provider: "anthropic", model: "claude-sonnet-4", cachedInputTokens: 500, cacheWriteTokens: 200 })));
   await store.record(normalizeUsage(sample({ provider: "anthropic", model: "claude-sonnet-4", cachedInputTokens: 100 })));
   const models = await store.modelStats("all");
-  assert.equal(models[0].cachedTokens, 600);
-  assert.equal(models[0].cacheWriteTokens, 200);
+  assert.equal(models[0]?.cachedTokens, 600);
+  assert.equal(models[0]?.cacheWriteTokens, 200);
   await store.close();
 });

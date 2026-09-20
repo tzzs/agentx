@@ -3,6 +3,7 @@ import {
   dataLine, drain, emitAnthropicError, newUsageCapture, reportUsage,
   usageCapture, withSsePipe, type StreamUsageOptions,
 } from "./common.js";
+import { jsonRecord, recObj } from "../json.js";
 
 /**
  * Forward a native Anthropic Messages SSE stream byte-for-byte. Used for
@@ -14,7 +15,7 @@ import {
  * carries the final output token count (and cache token fields) once the
  * turn completes.
  */
-export async function pipeAnthropicPassthrough(upstream: Response, response: ServerResponse, model: string, options?: StreamUsageOptions) {
+export async function pipeAnthropicPassthrough(upstream: Response, response: ServerResponse, _model: string, options?: StreamUsageOptions) {
   await withSsePipe(upstream, response, async (reader) => {
     const capture = newUsageCapture();
     const usage = usageCapture(capture, options?.protocol ?? "anthropic", !!options);
@@ -22,11 +23,11 @@ export async function pipeAnthropicPassthrough(upstream: Response, response: Ser
       const value = dataLine(line);
       if (!value) return;
       try {
-        const item = JSON.parse(value);
-        if (item.type === "message_start" && item.message?.usage) usage.usage(item.message.usage);
+        const item = jsonRecord(JSON.parse(value));
+        if (item.type === "message_start") { const startUsage = recObj(recObj(item, "message"), "usage"); if (startUsage) usage.usage(startUsage); }
         // message_delta is the turn's final usage; presence of options gates
         // capture exactly as before (no options → nothing to report to).
-        if (item.type === "message_delta" && item.usage && options) usage.usage(item.usage);
+        if (item.type === "message_delta") { const deltaUsage = recObj(item, "usage"); if (deltaUsage && options) usage.usage(deltaUsage); }
       } catch { /* Ignore incomplete provider events. */ }
     };
     try {

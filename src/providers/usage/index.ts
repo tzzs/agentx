@@ -1,5 +1,6 @@
 import type { ProviderModel } from "../types.js";
 import type { TokenUsage, UsageContext } from "../../usage/types.js";
+import type { JsonRecord } from "../../json.js";
 import { extractResponsesUsage, extractChatUsage, mapResponsesUsage, mapChatUsage } from "./openai.js";
 import { extractAnthropicUsage, mapAnthropicUsage } from "./anthropic.js";
 
@@ -9,7 +10,7 @@ export type { TokenUsage, UsageContext } from "../../usage/types.js";
 // own copy of these field names.
 export { mapResponsesUsage, mapChatUsage, mapAnthropicUsage };
 
-export function extractUsage(response: any, model: ProviderModel, ctx: UsageContext): TokenUsage | null {
+export function extractUsage(response: JsonRecord, model: ProviderModel, ctx: UsageContext): TokenUsage | null {
   const context = { ...ctx, provider: model.provider, model: model.model };
   switch (model.protocol) {
     case "responses": return extractResponsesUsage(response, context);

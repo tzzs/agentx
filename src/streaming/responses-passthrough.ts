@@ -1,8 +1,9 @@
 import type { ServerResponse } from "node:http";
 import {
-  dataLine, drain, emitResponsesError, event, newUsageCapture, reportUsage,
+  dataLine, drain, emitResponsesError, newUsageCapture, reportUsage,
   usageCapture, withSsePipe, type StreamUsageOptions,
 } from "./common.js";
+import { jsonRecord, recObj, recStr } from "../json.js";
 
 /**
  * Forward a Responses-protocol SSE stream byte-for-byte. Usage is captured from
@@ -18,9 +19,10 @@ export async function pipeResponsesPassthrough(upstream: Response, response: Ser
       const value = dataLine(line);
       if (!value || value === "[DONE]") return;
       try {
-        const item = JSON.parse(value);
-        if (item.type === "response.output_text.delta" && typeof item.delta === "string") outputTokens++;
-        if (item.response?.usage) usage.usage(item.response.usage);
+        const item = jsonRecord(JSON.parse(value));
+        if (item.type === "response.output_text.delta" && recStr(item, "delta") !== undefined) outputTokens++;
+        const completedUsage = recObj(recObj(item, "response"), "usage");
+        if (completedUsage) usage.usage(completedUsage);
       } catch { /* Ignore incomplete provider events. */ }
     };
     try {

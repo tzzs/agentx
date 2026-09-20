@@ -1,5 +1,6 @@
 import type { ServerResponse } from "node:http";
 import { chatResponseFailure } from "../convert/index.js";
+import { jsonRecord, recNum, recObj, recObjs, recStr } from "../json.js";
 import {
   cacheTokensOf, dataLine, drain, emitAnthropicError, event, failureMessage, newUsageCapture, reasoningDeltaOf,
   reportUsage, usageCapture, withSsePipe, UpstreamFailure, type StreamUsageOptions,
@@ -57,49 +58,59 @@ export async function pipeResponsesStream(upstream: Response, response: ServerRe
       if (!value) return;
       if (value === "[DONE]") { sawDone = true; return; }
       try {
-        const item = JSON.parse(value);
+        const item = jsonRecord(JSON.parse(value));
         const failure = failureMessage(item);
         if (failure) throw new UpstreamFailure(failure);
-        const choice = item.choices?.[0];
+        const choice = recObjs(item, "choices")[0];
+        const delta = recObj(choice, "delta");
+        const finishReason = recStr(choice, "finish_reason");
         if (Array.isArray(item.choices)) {
           sawChatShape = true;
-          if (choice?.finish_reason != null) {
+          if (finishReason !== undefined) {
             sawFinishReason = true;
             const chatFailure = chatResponseFailure(item);
-            if (chatFailure) { options?.onDiagnostic?.(`chat completions finish_reason=${choice.finish_reason}: ${chatFailure}`); throw new UpstreamFailure(chatFailure); }
+            if (chatFailure) { options?.onDiagnostic?.(`chat completions finish_reason=${finishReason}: ${chatFailure}`); throw new UpstreamFailure(chatFailure); }
           }
         }
-        if (choice?.finish_reason === "length") truncated = true;
+        if (finishReason === "length") truncated = true;
         const reasoning = reasoningDeltaOf(item);
-        if (typeof reasoning === "string") { startThinking(); event(response, "content_block_delta", { type: "content_block_delta", index: blockIndex, delta: { type: "thinking_delta", thinking: reasoning } }); }
-        const text = item.type === "response.output_text.delta"
-          ? item.delta
-          : choice?.delta?.content;
-        if (typeof text === "string" && text) { startText(); capture.output++; event(response, "content_block_delta", { type: "content_block_delta", index: blockIndex, delta: { type: "text_delta", text } }); }
-        const itemTool = item.type === "response.output_item.added" && item.item?.type === "function_call" ? item.item : undefined;
-        const responseArgs = item.type === "response.function_call_arguments.delta" ? item.delta : undefined;
-        for (const tool of choice?.delta?.tool_calls ?? []) {
-          const key = tool.index ?? 0;
-          const call = calls.get(key) ?? { id: tool.id ?? `call_${key}`, name: "" };
-          if (tool.id) call.id = tool.id;
-          if (tool.function?.name) call.name = tool.function.name;
+        if (reasoning) { startThinking(); event(response, "content_block_delta", { type: "content_block_delta", index: blockIndex, delta: { type: "thinking_delta", thinking: reasoning } }); }
+        const text = item.type === "response.output_text.delta" ? recStr(item, "delta") : recStr(delta, "content");
+        if (text) { startText(); capture.output++; event(response, "content_block_delta", { type: "content_block_delta", index: blockIndex, delta: { type: "text_delta", text } }); }
+        const addedItem = recObj(item, "item");
+        const itemTool = item.type === "response.output_item.added" && addedItem?.type === "function_call" ? addedItem : undefined;
+        const responseArgs = item.type === "response.function_call_arguments.delta" ? recStr(item, "delta") : undefined;
+        for (const tool of recObjs(delta, "tool_calls")) {
+          const key = recNum(tool, "index") ?? 0;
+          const call = calls.get(key) ?? { id: recStr(tool, "id") ?? `call_${key}`, name: "" };
+          const toolId = recStr(tool, "id");
+          if (toolId) call.id = toolId;
+          const toolFunction = recObj(tool, "function");
+          const toolName = recStr(toolFunction, "name");
+          if (toolName) call.name = toolName;
           calls.set(key, call);
           openTool(key, call.id, call.name);
-          if (tool.function?.arguments) event(response, "content_block_delta", { type: "content_block_delta", index: blockIndex, delta: { type: "input_json_delta", partial_json: tool.function.arguments } });
+          const partialJson = recStr(toolFunction, "arguments");
+          if (partialJson) event(response, "content_block_delta", { type: "content_block_delta", index: blockIndex, delta: { type: "input_json_delta", partial_json: partialJson } });
         }
         if (itemTool) {
-          const key = itemTool.call_id ?? itemTool.id ?? `call_${blockIndex}`;
-          calls.set(key, { id: key, name: itemTool.name ?? "" });
-          openTool(key, key, itemTool.name ?? "");
+          const key = recStr(itemTool, "call_id") ?? recStr(itemTool, "id") ?? `call_${blockIndex}`;
+          const name = recStr(itemTool, "name") ?? "";
+          calls.set(key, { id: key, name });
+          openTool(key, key, name);
         }
-        if (typeof responseArgs === "string") {
-          const key = item.call_id ?? item.item_id ?? activeTool ?? "";
+        if (responseArgs) {
+          const key = recStr(item, "call_id") ?? recStr(item, "item_id") ?? activeTool ?? "";
           const known = calls.get(key);
-          openTool(key, key, item.name ?? known?.name ?? "");
+          // Anthropic tool-use ids are strings; a Responses event that carries
+          // none falls back to a numeric chat index, which must not leak through.
+          openTool(key, String(key), recStr(item, "name") ?? known?.name ?? "");
           event(response, "content_block_delta", { type: "content_block_delta", index: blockIndex, delta: { type: "input_json_delta", partial_json: responseArgs } });
         }
-        if (item.response?.usage) responses.usage(item.response.usage);
-        if (item.usage) chat.usage(item.usage);
+        const responseUsage = recObj(recObj(item, "response"), "usage");
+        if (responseUsage) responses.usage(responseUsage);
+        const itemUsage = recObj(item, "usage");
+        if (itemUsage) chat.usage(itemUsage);
       } catch (error) {
         // In-band upstream failures must end the stream; only parse noise is ignored.
         if (error instanceof UpstreamFailure) throw error;

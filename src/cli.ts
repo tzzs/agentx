@@ -5,7 +5,7 @@ import { CLAUDE_EFFORT_LEVELS, CODEX_EFFORT_LEVELS, loadConfig, parseCliOptions 
 import { startAdapter } from "./server.js";
 import { runCommand, ClientNotFoundError, CLIENT_INSTALL_COMMANDS, clientEnvironment, codexLaunchArgs, nativeClientEnvironment } from "./process.js";
 import { providerEntries, runInteractiveLauncher, runProviderManager, runSavedModelManager, LaunchCancelledError, type ProviderEntry } from "./ui.js";
-import { credentialEnvName, providerById, refreshProviderCatalog, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerDisplayName, registerCustomProvider, unregisterCustomProvider } from "./providers/registry.js";
+import { credentialEnvName, providerById, refreshProviderCatalog, fetchOpenRouterModels, hydrateOpenRouterCatalog, openRouterCatalogIds, providerDisplayName, registerCustomProvider, unregisterCustomProvider, type CustomProviderDefinition } from "./providers/registry.js";
 import type { ProviderDefinition, ProviderProtocol } from "./providers/types.js";
 import { runDoctor, renderDoctor } from "./doctor.js";
 import { credentialInstructions, credentialSource, hydrateProfileCredentials, promptCredential, resolveCredential } from "./credentials.js";
@@ -144,7 +144,7 @@ const BOOLEAN_ADAPTER_FLAGS = new Set(["--verbose", "--native"]);
 export function clientArguments(args: string[]): string[] {
   const isAdapterFlag = (arg: string) => ADAPTER_FLAGS.has(arg) || (arg.startsWith("--") && arg.includes("=") && ADAPTER_FLAGS.has(`--${arg.slice(2).split("=", 1)[0]}`));
   const valueTaken = new Set<number>();
-  args.forEach((arg, index) => { if (ADAPTER_FLAGS.has(arg) && !BOOLEAN_ADAPTER_FLAGS.has(arg) && args[index + 1] !== undefined && !args[index + 1].startsWith("--")) valueTaken.add(index + 1); });
+  args.forEach((arg, index) => { const next = args[index + 1]; if (ADAPTER_FLAGS.has(arg) && !BOOLEAN_ADAPTER_FLAGS.has(arg) && next !== undefined && !next.startsWith("--")) valueTaken.add(index + 1); });
   return args.filter((arg, index) => !isAdapterFlag(arg) && !valueTaken.has(index));
 }
 
@@ -416,7 +416,7 @@ function resolveLaunchTarget(command: string, args: string[], opts: Record<strin
  * additionally defines the runtime ad hoc) and `agentx config` (where it only
  * persists). `opts.provider` doubles as the display name.
  */
-async function persistCustomProvider(opts: Record<string, string | undefined>): Promise<ProviderDefinition> {
+async function persistCustomProvider(opts: Record<string, string | undefined>): Promise<CustomProviderDefinition> {
   const baseUrl = opts["base-url"] ?? "";
   const protocol: ProviderProtocol = opts.protocol === "responses" || opts.protocol === "anthropic" ? opts.protocol : "chat-completions";
   const definition = registerCustomProvider({ name: opts.provider ?? "custom", baseUrl, protocol, model: opts.model });

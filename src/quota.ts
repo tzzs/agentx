@@ -1,3 +1,5 @@
+import { jsonRecord, recCount, recObj, recStr, recObjs } from "./json.js";
+import type { JsonRecord } from "./json.js";
 import { providerById } from "./providers/registry.js";
 import { resolveCredential } from "./credentials.js";
 
@@ -13,17 +15,17 @@ export interface UsageResult {
   message?: string;
 }
 
-export function parseDeepSeekBalance(payload: any): UsageResult {
-  const balance = payload?.balance_infos?.[0];
+export function parseDeepSeekBalance(payload: JsonRecord): UsageResult {
+  const balance = recObjs(payload, "balance_infos")[0];
   if (!balance) return { provider: "deepseek", supported: true, success: false, message: "DeepSeek returned no balance information." };
-  return { provider: "deepseek", supported: true, success: true, remaining: Number(balance.total_balance ?? 0), unit: balance.currency ?? "CNY" };
+  return { provider: "deepseek", supported: true, success: true, remaining: recCount(balance, "total_balance") ?? 0, unit: recStr(balance, "currency") ?? "CNY" };
 }
 
-export function parseOpenRouterKey(payload: any): UsageResult {
-  const data = payload?.data ?? {};
-  const used = Number(data.usage ?? 0);
-  const limit = data.limit == null ? undefined : Number(data.limit);
-  const remaining = data.limit_remaining == null ? (limit === undefined ? undefined : limit - used) : Number(data.limit_remaining);
+export function parseOpenRouterKey(payload: JsonRecord): UsageResult {
+  const data = recObj(payload, "data") ?? {};
+  const used = recCount(data, "usage") ?? 0;
+  const limit = recCount(data, "limit");
+  const remaining = recCount(data, "limit_remaining") ?? (limit === undefined ? undefined : limit - used);
   return { provider: "openrouter", supported: true, success: true, used, ...(limit === undefined ? {} : { total: limit }), ...(remaining === undefined ? {} : { remaining }), unit: "USD" };
 }
 
@@ -38,8 +40,8 @@ export async function queryProviderUsage(providerId: string, apiKey: string): Pr
   } catch (error) {
     return { provider: providerId, supported: true, success: false, message: `Failed to reach ${providerId}: ${error instanceof Error ? error.message : error}` };
   }
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) return { provider: providerId, supported: true, success: false, message: payload?.error?.message ?? `Provider returned HTTP ${response.status}.` };
+  const payload = jsonRecord(await response.json().catch(() => ({})));
+  if (!response.ok) return { provider: providerId, supported: true, success: false, message: recStr(recObj(payload, "error"), "message") ?? `Provider returned HTTP ${response.status}.` };
   return providerId === "deepseek" ? parseDeepSeekBalance(payload) : parseOpenRouterKey(payload);
 }
 

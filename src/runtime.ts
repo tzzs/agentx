@@ -290,7 +290,7 @@ export async function saveSessionRecord(sessionId: string, record: SessionRecord
   const sessions: Record<string, SessionRecord> = { ...state.sessions, [sessionId]: record };
   const ids = Object.keys(sessions);
   if (ids.length > MAX_REMEMBERED_SESSIONS) {
-    const oldest = ids.sort((a, b) => sessions[a].recordedAt - sessions[b].recordedAt).slice(0, ids.length - MAX_REMEMBERED_SESSIONS);
+    const oldest = ids.sort((a, b) => (sessions[a]?.recordedAt ?? 0) - (sessions[b]?.recordedAt ?? 0)).slice(0, ids.length - MAX_REMEMBERED_SESSIONS);
     for (const id of oldest) delete sessions[id];
   }
   state.sessions = sessions;

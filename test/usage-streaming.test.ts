@@ -54,8 +54,8 @@ test("pipeResponsesStream estimates usage when the provider sends none", async (
   let text = ""; const output = { writeHead() {}, write(value: string) { text += value; }, end() {}, on() {} };
   const opts = collect({ provider: "opencode", model: "gpt-5.6-luna", protocol: "responses" });
   await pipeResponsesStream(upstream, output as never, "gpt-5.6-luna", opts);
-  assert.equal(opts.usages[0].estimated, true);
-  assert.equal(opts.usages[0].outputTokens, 2);
+  assert.equal(opts.usages[0]?.estimated, true);
+  assert.equal(opts.usages[0]?.outputTokens, 2);
 });
 
 test("pipeChatStreamToResponses reports usage from the final chunk", async () => {
@@ -119,8 +119,8 @@ test("pipeResponsesPassthrough estimates usage from deltas when the provider sen
   const output = { writeHead() {}, write() {}, end() {}, on() {} };
   const usages: TokenUsage[] = [];
   await pipeResponsesPassthrough(upstream, output as never, "gpt-5.6-luna", { provider: "opencode", model: "gpt-5.6-luna", protocol: "responses", onUsage: (usage) => usages.push(usage) });
-  assert.equal(usages[0].estimated, true);
-  assert.equal(usages[0].outputTokens, 2);
+  assert.equal(usages[0]?.estimated, true);
+  assert.equal(usages[0]?.outputTokens, 2);
 });
 
 test("renders usage statistics for the CLI", () => {

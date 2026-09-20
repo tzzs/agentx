@@ -386,8 +386,8 @@ test("registerCustomProvider avoids clobbering a built-in provider id, but is id
     registerCustomProvider({ name: "Repeat Me", baseUrl: "http://b", protocol: "responses", model: "two" });
     const matches = providerRegistry.filter((entry) => entry.id === "repeat-me");
     assert.equal(matches.length, 1);
-    assert.equal(matches[0].models[0].endpoint, "http://b/responses");
-    assert.equal(matches[0].models[0].model, "two");
+    assert.equal(matches[0]?.models[0]?.endpoint, "http://b/responses");
+    assert.equal(matches[0]?.models[0]?.model, "two");
   } finally { if (shadowedId) unregisterCustomProvider(shadowedId); unregisterCustomProvider("repeat-me"); }
 });
 

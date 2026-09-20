@@ -109,7 +109,7 @@ test("runConfigCommand lists every provider with its credential status in non-in
 test("runConfigCommand --base-url registers and persists a custom provider without launching", async () => {
   await runConfigCommand(["--provider", "Config CLI LLM", "--base-url", "http://config.local", "--protocol", "responses", "--model", "cfg-model"]);
   try {
-    assert.equal(providerById("config-cli-llm").models[0].endpoint, "http://config.local/responses");
+    assert.equal(providerById("config-cli-llm").models[0]?.endpoint, "http://config.local/responses");
     assert.deepEqual((await loadCustomProviders())["config-cli-llm"], { name: "Config CLI LLM", baseUrl: "http://config.local", protocol: "responses", model: "cfg-model" });
     const output = logs.join("\n");
     assert.match(output, /Config CLI LLM configured/);
@@ -229,7 +229,7 @@ test("exec --base-url registers and persists a custom provider, reusable without
   const deps = { runCommand: async (_cmd: string, _args: string[], env: NodeJS.ProcessEnv) => { capturedEnv = env; return 0; } };
   try {
     await runClientLaunch("exec", ["--provider", "Bench Exec", "--base-url", "http://bench.local", "--protocol", "responses", "--model", "m1", "--", "some-command"], deps);
-    assert.equal(providerById("bench-exec").models[0].endpoint, "http://bench.local/responses");
+    assert.equal(providerById("bench-exec").models[0]?.endpoint, "http://bench.local/responses");
     const persisted = await loadCustomProviders();
     assert.deepEqual(persisted["bench-exec"], { name: "Bench Exec", baseUrl: "http://bench.local", protocol: "responses", model: "m1" });
     assert.ok(capturedEnv?.ANTHROPIC_AUTH_TOKEN, "the launch itself still proceeds through the adapter as normal");

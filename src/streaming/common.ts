@@ -1,6 +1,8 @@
 import type { ServerResponse } from "node:http";
 import type { TokenUsage } from "../usage/types.js";
 import type { ProviderProtocol } from "../providers/types.js";
+import type { JsonRecord } from "../json.js";
+import { recCount, recObj, recObjs, recStr } from "../json.js";
 import { mapAnthropicUsage, mapChatUsage, mapResponsesUsage } from "../providers/usage/index.js";
 
 export const SSE_HEADERS = { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" };
@@ -65,11 +67,11 @@ export function dataLine(line: string): string | undefined {
 export class UpstreamFailure extends Error {}
 
 /** Message of an in-band upstream error payload, if the parsed event carries one. */
-export function failureMessage(item: any): string | undefined {
-  if (item.type === "response.failed") return item.response?.error?.message ?? item.response?.error ?? "Upstream response failed";
-  if (item.type === "error") return item.error?.message ?? (typeof item.message === "string" ? item.message : undefined) ?? "Upstream stream failed";
-  if (typeof item.error?.message === "string") return item.error.message;
-  return undefined;
+export function failureMessage(item: JsonRecord): string | undefined {
+  const response = recObj(item, "response");
+  if (item.type === "response.failed") return recStr(recObj(response, "error"), "message") ?? recStr(response, "error") ?? "Upstream response failed";
+  if (item.type === "error") return recStr(recObj(item, "error"), "message") ?? recStr(item, "message") ?? "Upstream stream failed";
+  return recStr(recObj(item, "error"), "message");
 }
 
 export function event(response: ServerResponse, type: string, data: unknown) {
@@ -129,12 +131,11 @@ export async function drain(reader: ReadableStreamDefaultReader<Uint8Array>, con
  * and keeps the first hit; each mapper's own field list is the single source
  * of truth (providers/usage/*.ts), not duplicated here.
  */
-export function cacheTokensOf(usage: any): { cached?: number; reasoning?: number } {
+export function cacheTokensOf(usage: JsonRecord | undefined): { cached?: number; reasoning?: number } {
   const chat = mapChatUsage(usage, {});
   const responses = mapResponsesUsage(usage, {});
   const anthropic = mapAnthropicUsage(usage, {});
-  const cached = chat?.cachedInputTokens ?? responses?.cachedInputTokens ?? anthropic?.cachedInputTokens
-    ?? (usage?.cached_tokens === undefined || usage?.cached_tokens === null ? undefined : Number(usage.cached_tokens));
+  const cached = chat?.cachedInputTokens ?? responses?.cachedInputTokens ?? anthropic?.cachedInputTokens ?? recCount(usage, "cached_tokens");
   const reasoning = chat?.reasoningTokens ?? responses?.reasoningTokens;
   return {
     ...(cached === undefined ? {} : { cached }),
@@ -143,7 +144,7 @@ export function cacheTokensOf(usage: any): { cached?: number; reasoning?: number
 }
 
 /** Attach captured cache/reasoning tokens to a usage record when present. */
-export function withCacheTokens(usage: TokenUsage, source: any): TokenUsage {
+export function withCacheTokens(usage: TokenUsage, source: JsonRecord | undefined): TokenUsage {
   const { cached, reasoning } = cacheTokensOf(source);
   if (cached !== undefined) usage.cachedInputTokens = cached;
   if (reasoning !== undefined) usage.reasoningTokens = reasoning;
@@ -155,7 +156,7 @@ export interface UsageCapture {
   input: number;
   output: number;
   /** The most recent raw upstream usage payload, for protocol-shape-dependent emission (e.g. Anthropic cache_read). */
-  raw?: any;
+  raw?: JsonRecord;
   sawUsage: boolean;
   /** Cache/reasoning fields mapped from the latest raw usage via the provider field mappers. */
   cached?: number;
@@ -167,8 +168,7 @@ export function newUsageCapture(): UsageCapture {
   return { input: 0, output: 0, sawUsage: false };
 }
 
-function mapRawUsage(raw: any, protocol: ProviderProtocol): TokenUsage | null {
-  if (!raw || typeof raw !== "object") return null;
+function mapRawUsage(raw: JsonRecord | undefined, protocol: ProviderProtocol): TokenUsage | null {
   switch (protocol) {
     // Bare-usage field lists live in providers/usage/*; the core never parses
     // provider payloads itself (CLAUDE.md architecture rule).
@@ -187,7 +187,7 @@ function mapRawUsage(raw: any, protocol: ProviderProtocol): TokenUsage | null {
  * `reportUsage`'s fallback then reports.
  */
 export function usageCapture(capture: UsageCapture, protocol: ProviderProtocol, enabled = true): {
-  usage(raw: any): void;
+  usage(raw: JsonRecord | undefined): void;
   total(): number;
 } {
   return {
@@ -204,7 +204,7 @@ export function usageCapture(capture: UsageCapture, protocol: ProviderProtocol, 
       if (mapped.cacheWriteTokens !== undefined) capture.cacheWrite = mapped.cacheWriteTokens;
     },
     total() {
-      return Number(capture.raw?.total_tokens ?? capture.input + capture.output);
+      return recCount(capture.raw, "total_tokens") ?? capture.input + capture.output;
     },
   };
 }
@@ -214,13 +214,13 @@ function estimatedUsage(provider: string, model: string, inputTokens: number, ou
 }
 
 /** Reasoning text shared by Responses (`reasoning_summary_text`/`reasoning_text`) and chat (`reasoning_content`/`reasoning`) deltas. */
-export function reasoningDeltaOf(item: any): string | undefined {
-  const delta = item.choices?.[0]?.delta;
-  const chat = delta?.reasoning_content ?? delta?.reasoning;
-  if (typeof chat === "string" && chat) return chat;
-  if (item.type === "response.reasoning_summary_text.delta" || item.type === "response.reasoning_text.delta") {
-    const value = item.delta;
-    if (typeof value === "string" && value) return value;
+export function reasoningDeltaOf(item: JsonRecord): string | undefined {
+  const delta = recObj(recObjs(item, "choices")[0], "delta");
+  const chat = recStr(delta, "reasoning_content") ?? recStr(delta, "reasoning");
+  if (chat) return chat;
+  const type = recStr(item, "type");
+  if (type === "response.reasoning_summary_text.delta" || type === "response.reasoning_text.delta") {
+    return recStr(item, "delta") || undefined;
   }
   return undefined;
 }

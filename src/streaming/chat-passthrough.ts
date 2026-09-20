@@ -3,6 +3,7 @@ import {
   createChatEmitter, dataLine, drain, emitChatError, newUsageCapture,
   reportUsage, usageCapture, withSsePipe, type StreamUsageOptions,
 } from "./common.js";
+import { jsonRecord, recObj, recObjs, recStr } from "../json.js";
 
 /**
  * Forward a Chat Completions SSE stream byte-for-byte. Used for the local
@@ -24,10 +25,11 @@ export async function pipeChatPassthrough(upstream: Response, response: ServerRe
       const value = dataLine(line);
       if (!value || value === "[DONE]") return;
       try {
-        const item = JSON.parse(value);
-        const delta = item.choices?.[0]?.delta?.content;
-        if (typeof delta === "string" && delta) countedOutput++;
-        if (item.usage) usage.usage(item.usage);
+        const item = jsonRecord(JSON.parse(value));
+        const delta = recStr(recObj(recObjs(item, "choices")[0], "delta"), "content");
+        if (delta) countedOutput++;
+        const itemUsage = recObj(item, "usage");
+        if (itemUsage) usage.usage(itemUsage);
       } catch { /* Ignore incomplete provider events. */ }
     };
     try {

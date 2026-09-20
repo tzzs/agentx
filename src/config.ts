@@ -40,7 +40,7 @@ export function parseCliOptions(args: string[]): Record<string, string | undefin
   for (let i = 0; i < args.length; i++) {
     const key = args[i];
     if (!key?.startsWith("--")) continue;
-    const [name, inline] = key.slice(2).split("=", 2);
+    const [name = "", inline] = key.slice(2).split("=", 2);
     if (inline !== undefined) { out[name] = inline; continue; }
     const value = args[i + 1];
     out[name] = value === undefined || value.startsWith("--") ? "true" : (i++, value);
